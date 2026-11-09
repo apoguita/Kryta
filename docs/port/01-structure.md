@@ -75,6 +75,27 @@ the client is the judge, not a test.
 8. **`game/` nouns** - one directory at a time, each its own commit.
 9. **`modules/`** - the first `mod-*` crate, and the cargo member line that names it.
 
+## Where the port stands
+
+Updated as stages land, because this is a statement of today and not of intent.
+
+| stage | state, and what proves it |
+|---|---|
+| `common/` Configuration | done - both programs read their conf file; `5ac97ba` |
+| `common/` Logging | done - both programs log through the appender chain, and write the same lines to console and file; `8475380` |
+| `common/` Utilities | partly - `GetPID` and `CreatePIDFile`; the rest arrives with the stage that calls it; `9087e75` |
+| `database/` settings | done - the three logical databases and the connection string, in the reference's shape; `c39113a` |
+| `database/` Updater, file half | done - which `.sql` files exist, ordered by name, five states; `6a98037` |
+| `database/` connection and pool | done - the pool opens, pings, and runs a deferred statement on a worker; `eab6be5` |
+| `database/` Updater, apply half | not started - needs the schema, which needs the tables this game has |
+| `shared/Network/` | done as a library - a client is accepted, answered and counted; `4596b27` |
+| `shared/Secrets/` | not started - the reference's only secret is WoW's TOTP master key, so what this game's secret is has not been decided |
+| `authserver/` | through stage 5 (the login database); stops at stage 6 with a reason |
+| everything after | not started |
+
+`common/Platform`, `common/Threading` and the rest of `common/` are not started; nothing yet calls
+them.
+
 ## Where the wire lives, measured
 
 The reference keeps its protocol in four places, and this is the arrangement the port copies:
