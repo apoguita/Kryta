@@ -1,12 +1,15 @@
-//! The auth conversation and the manager that owns its listener.
+//! The session on a connected client, and the exchange that starts it.
 //!
-//! Reference: `src/server/apps/authserver/Server/AuthSession.{h,cpp}` and `AuthSocketMgr.h`.
-//! `AuthSocketMgr` is `SocketMgr<AuthSession>` and nothing else: the socket layer is
-//! `shared/Network/`, and this program supplies only the session type. Not ported yet.
+//! Reference: `src/server/apps/authserver/Server/AuthSocket.{h,cpp}`, which is the object a
+//! connection becomes and where the reference's own key exchange lives.
+
+#[path = "handshake.rs"]
+pub mod handshake;
 
 /// One connected client, from the first byte to disconnect.
 ///
-/// Reference: `AuthSession : Socket<AuthSession>`.
+/// Reference: `AuthSession : Socket<AuthSession>`. The socket layer is `shared/Network/`, which
+/// supplies the connection; this object is what it is handed to.
 #[derive(Debug, Default)]
 pub struct AuthSession {
     _private: (),

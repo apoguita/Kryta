@@ -21,3 +21,5 @@ database = { path = "../database" }
 common = { path = "../common" }
 # The reference's signal handler, which is what its io loop returns on.
 ctrlc = "3"
+# The key exchange raises a 512-bit number to a 511-bit exponent modulo a 512-bit prime.
+num-bigint = "0.4"
