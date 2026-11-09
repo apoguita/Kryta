@@ -67,19 +67,35 @@ the client is the judge, not a test.
    the reference uses.
 5. **`authserver/`** - the stages in the order the table above gives, ending at the auth
    conversation. **This is the first stage whose bytes a client reads**, and Tyria's protocol -
-   not the reference's - is what goes on the wire; `shared/Packets/` is that stage.
+   not the reference's - is what goes on the wire, and the four places below are where the
+   reference keeps it.
 6. **`game/Server/`** - `WorldSocket`, `WorldSession`, `WorldSocketMgr`. The world program's
    listener, inside the game library, exactly as the reference arranges it.
 7. **`scripts/`** - `ScriptMgr` and its hooks, then the world program's two loader calls.
 8. **`game/` nouns** - one directory at a time, each its own commit.
 9. **`modules/`** - the first `mod-*` crate, and the cargo member line that names it.
 
+## Where the wire lives, measured
+
+The reference keeps its protocol in four places, and this is the arrangement the port copies:
+
+| what | where | measured |
+|---|---|---|
+| the byte buffer | `src/server/shared/Packets/ByteBuffer.{h,cpp}` | 2 files |
+| the packet | `src/server/game/Server/WorldPacket.h` | 1 file |
+| the opcode table | `src/server/game/Server/Protocol/Opcodes.{h,cpp}`, `ServerPktHeader.h`, `PacketLog.{h,cpp}` | 5 files |
+| one file pair per message family | `src/server/game/Server/Packets/` | 18 pairs: `AllPackets.h`, `PacketUtilities`, and 17 families - Bank, Calendar, Character, Chat, Combat, CombatLog, Guild, Instance, Item, LFG, Misc, NPC, Pet, Query, Quest, Totem, WorldState |
+
+The buffer is shared, the packet and the opcode table are the game library's, and the message
+structs are grouped by family rather than by direction or by connection. A single table holding
+every message in both directions is the arrangement this project exists to avoid.
+
 ## Two facts that stop a careless port
 
-- **`shared/Packets/` cannot be ported from the reference.** Its message table is Azeroth's
-  protocol. Tyria's is measured material, and ASURA's `recordings/` and `docs/reference/` are
-  where it is written down. The reference supplies the *shape* of the layer - a byte buffer, a
-  header-keyed table, framing - and nothing about its contents.
+- **The wire's contents cannot come from the reference.** Its message table is Azeroth's protocol.
+  Tyria's - headers, sizes, field order, direction - is measured from this client, and the
+  captures under `C:\Users\Apo\Documents\GitHub\ASURA\recordings\` are where that was recorded.
+  The reference supplies the arrangement above and nothing about its contents.
 - **`shared/Worlds/` is the reference's `Realms/`.** A realm there is the server a player picks;
   in this game that thing is a world. The rename is the only one in `shared/`.
 

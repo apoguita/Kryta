@@ -3,53 +3,63 @@
 Binding rules for any agent working in this repository. Read this file before the first edit of
 a session.
 
-The one sentence: **AzerothCore's server, in Rust, serving Guild Wars.** Every rule below serves
-it.
+The one sentence: **AzerothCore's server, in Rust, serving Guild Wars.**
 
 ## The task
 
-Port the reference server into Rust: the same structure, the same services, the same behaviour,
-with the game it serves being Tyria's rather than Azeroth's.
+Port AzerothCore into Rust - the same structure, the same services, the same arrangements - with
+Guild Wars in place of Azeroth.
 
 | | |
 |---|---|
-| the reference, and the specification | `C:\Users\Apo\Documents\GitHub\WowWarband` = `github.com/mod-playerbots/azerothcore-wotlk` at `30a36ec4d`. Its measured structure, and the port order, are in `docs/port/01-structure.md`. |
-| the function's facts | `C:\Users\Apo\Documents\GitHub\ASURA` at `ca9f532`, frozen. It is a **record, not a source to copy**: the headers, sizes, field orders and client behaviours its code established, each with the recording that proves it, and the account of what its arrangement got wrong. Its single 2,106-line, 782-row wire table is the failure this tree exists to prevent. |
-| the layering | `docs/port/02-layers.md`: ASURA's 18 layers in dependency order, and the directory here that owns each. |
+| the design authority | `C:\Users\Apo\Documents\GitHub\WowWarband`, `github.com/mod-playerbots/azerothcore-wotlk` at `30a36ec4d`. Where a file goes, what a program starts, how a layer is arranged, what a service owns: this tree answers it. Its measured structure is `docs/port/01-structure.md`. |
+| the game | Guild Wars. Tyria's client, protocol, nouns and content replace Azeroth's. |
+| consulted per question | `C:\Users\Apo\Documents\GitHub\ASURA` at `ca9f532`, a previous server for this client, declared failed. Opened only when one specific in-game fact is needed - what this client sends, expects or does. Never for design, structure, process or planning. Its documents describe its own function; they are not rules here. |
 
-Three sources, three questions: the reference answers *what the structure is*, ASURA answers *what
-was measured and what failed*, and a running Tyria client answers *whether the code is right*.
+When the reference and another source disagree about design, the reference wins. When the question
+is what the client sends or expects, the client wins, and the recordings under
+`C:\Users\Apo\Documents\GitHub\ASURA\recordings\` are where that was measured.
 
-Nothing is copied from ASURA. Its code is not a template and its files are not moved. What crosses
-is a fact with its evidence - a header, a size, a field order, a behaviour, and the capture that
-proves it - written again in the reference's shape. A commit that takes code from ASURA has taken
-the defect with it.
+A port means the reference's structure, behaviour, field order, sizes and order of operations,
+translated into Rust. It does not mean the reference's comments, its C++ idioms, or its Azeroth
+content.
 
 ## The rules
 
-1. **Two halves never share a commit.** Infrastructure - processes, sockets, packets, database,
+1. **The reference decides design.** An arrangement it has is the answer. A deviation is written
+   down with its reason in the same commit.
+2. **Two halves never share a commit.** Infrastructure - processes, sockets, packets, database,
    secrets, the script manager, modules, configuration - and game mechanics - agents, terrain,
-   maps, spawns, movement, combat. A commit that needs both sentences is two commits.
-2. **The client is the judge.** Where a running Tyria client and a document disagree, the client
-   wins and the disagreement is reported, not split.
-3. **Do exactly the command.** A measurement or an explanation is evidence for reading the
+   maps, spawns, movement, combat.
+3. **The client is the judge.** Where a running client and a document disagree, the client wins
+   and the disagreement is reported, not split.
+4. **Do exactly the command.** A measurement or an explanation is evidence for reading the
    reference. It is not permission to change behaviour.
-4. **One change, one subject.** The commit message is the sentence you would say out loud.
-5. **A stage is done when the reference's behaviour is reproduced and nothing else moved** - not
-   when the tests pass and not when the log looks right.
-6. **Values are files, decisions are code.** Every number lives in the program's conf file or in
+5. **One change, one subject.** The commit message is the sentence you would say out loud.
+6. **A stage is done when it works** - the reference's behaviour reproduced, and the client's
+   judgement wherever the client can see it. Not when the tests pass, and not when the log looks
+   right.
+7. **Values are files, decisions are code.** Every number lives in a program's conf file or in
    `data/`. A rule that needs a number takes it as an argument.
-7. **Every file is ASCII.** Write `-`, `->`, `=>`, `"`, `'`, `...`, `#`. Never rewrite a file
-   with a `Get-Content` / `Set-Content` round trip.
-8. **A move inside this tree is additive.** Copy into the new home, re-export at the old path,
-   delete the old copy in one commit. The compiler is then the complete list of callers. Nothing is
-   ever moved into this tree from ASURA.
+8. **Every file is ASCII.** Write `-`, `->`, `=>`, `"`, `'`, `...`, `#`. Never rewrite a file with
+   a `Get-Content` / `Set-Content` round trip.
+9. **A move inside this tree is additive.** Copy into the new home, re-export at the old path,
+   delete the old copy in one commit. The compiler is then the complete list of callers.
 
 ### Before any change: the pre-flight sentence
 
 One sentence: what changes, in which message or code path, and why it is not simply copying the
 reference. If it contains anything the command did not ask for, stop and ask. Name the source as
-a `file:line` in the reference and quote it. "I believe" is not a source.
+`file:line` in the reference and quote it. "I believe" is not a source.
+
+## Why the separation is the point
+
+This project exists because the previous attempt at this client's server fused the two halves into
+one arrangement that could not be separated afterwards, and rebuilding it in place failed. So the
+structure is not decoration around working code. Two programs, a shared core, a database layer, a
+game library by noun with its socket layer inside it, scripts written against hooks, modules out of
+tree, one config file per program - that separation is the deliverable. A commit that blurs it is a
+regression against the whole project, whatever it makes work.
 
 ## The tree
 
@@ -76,49 +86,20 @@ authserver links shared;   worldserver links shared, game, scripts
 The socket layer is not a program. Sockets and sessions live in `game/Server/`, which is why one
 process owns one listener and still keeps the network as a subsystem.
 
-## How a cut lands
+## Where the wire lives
 
-Kryta exists because fixing ASURA in place failed. ASURA works - a live client logged in, entered
-a map, walked, chatted and travelled - but one process answered login and relayed gameplay, one
-library held the whole world, and server and game were fused into the same files. The attempt to
-re-cut it in place reached phase 4 of 6 and never proved a single phase with a client before it
-was stopped. So the function is **rebuilt** against the reference's shape, from the facts a client
-established - not moved, and not redesigned.
+The reference does not keep its protocol in one table, and the split it uses is the one this tree
+uses. Measured in its `src/server/`:
 
-**A layer is covered only when all six hold** (ASURA, `docs/work/layer-rework-checklist.md`):
+| what | where |
+|---|---|
+| the byte buffer | `shared/Packets/ByteBuffer.{h,cpp}` |
+| the packet | `game/Server/WorldPacket.h` |
+| the opcode table | `game/Server/Protocol/Opcodes.{h,cpp}`, `ServerPktHeader.h` |
+| one file pair per message family | `game/Server/Packets/`: `AllPackets.h`, `PacketUtilities`, and 17 families - Bank, Calendar, Character, Chat, Combat, CombatLog, Guild, Instance, Item, LFG, Misc, NPC, Pet, Query, Quest, Totem, WorldState |
 
-1. The file is the source of truth: the value lives in `data/` or a program's conf file, and
-   nowhere in code.
-2. Every reader reads the file.
-3. The old source is deleted, in its own commit.
-4. The equivalence diff is empty, and the command that says so is named in the commit.
-5. Every file is ASCII, and the tests the change touches pass.
-6. **A real client was tested**, wherever the layer is client-visible.
-
-**The rules for every cut:**
-
-1. **Additive.** One cut, one subject. Here there is no old path to keep serving: ASURA is frozen
-   and nothing is copied out of it. A cut writes its layer in this tree's shape, and this tree
-   stays green after every commit.
-2. **The packet stream is frozen.** No cut changes a byte a client receives.
-3. **One cut, one commit, green.** Build succeeds, tests pass, the client does the thing where the
-   client can see it. No cut carries a feature.
-4. **A cut that cannot be built beside what runs is split again** rather than forced.
-5. **A structural cut names no in-game noun** - no map, no spawn, no agent, no walk, no tick. A
-   suite that fails on a game value stays red, and the reason belongs to the mechanics
-   workstream. This is the rule the last project broke most often, and it is why infrastructure
-   work turned into arguments about map kinds.
-
-Rule 5 is what separates the two halves the first rule of this file keeps apart: layers 1 to 7 and
-16 to 18 are structure, and a cut there names no game noun. Layers 8 to 15 are the mechanics
-themselves, where the nouns are the subject - and they land only after a client is already inside
-a map on the structural tree.
-
-## The function inventory
-
-ASURA measured 18 layers in dependency order, and they are what this server has to do. Every
-layer, its files and the directory here that owns it are in `docs/port/02-layers.md`. The order is
-the bottom of the dependency graph first, not the order a client meets them.
+One table holding every message in every direction is the arrangement this project exists to
+avoid.
 
 ## The naming
 
