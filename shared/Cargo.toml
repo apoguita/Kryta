@@ -9,5 +9,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+# The runtime the reference gets from boost::asio. A current-thread runtime per network thread is
+# the same arrangement: one event loop, many connections, one thread.
+tokio = { version = "1", features = ["rt", "net", "sync", "io-util"] }
 common = { path = "../common" }
 database = { path = "../database" }
