@@ -130,15 +130,19 @@ unassigned directory needs the owner's word before it appears.
 
 ## How to state progress
 
-The tree, the two programs' command line, and nothing else is ported. A stage that has not landed
-stops with a reason and exit code 1 instead of printing that it ran. No claim of a stage is made
-without the command that proves it, and prefer the client over a green test.
+What runs today, and what proves it, is the table in `docs/port/01-structure.md`. Read it before
+claiming anything: it is a statement of today, updated in the same commit as the change.
+
+A stage that has not landed stops with a reason and exit code 1 instead of printing that it ran. No
+claim of a stage is made without the command that proves it, and where a client can see the stage,
+the client is the judge rather than a test.
 
 ## Where things are
 
 | need | path |
 |---|---|
 | the reference's measured structure, and the port order | `docs/port/01-structure.md` |
+| the wire facts this tree uses, and what it does not know yet | `docs/port/02-wire.md` |
 | a decision taken away from the reference, and why | `docs/decisions/` |
 | workspace, dependency order, lint policy | `Cargo.toml` |
 | the byte buffer | `shared/Packets/` |

@@ -84,17 +84,26 @@ Updated as stages land, because this is a statement of today and not of intent.
 | `common/` Configuration | done - both programs read their conf file; `5ac97ba` |
 | `common/` Logging | done - both programs log through the appender chain, and write the same lines to console and file; `8475380` |
 | `common/` Utilities | partly - `GetPID` and `CreatePIDFile`; the rest arrives with the stage that calls it; `9087e75` |
+| `common/` Cryptography | started - RC4, against three published vectors; `3463ed2` |
+| `common/` Platform, Threading, the rest | not started; nothing calls them |
 | `database/` settings | done - the three logical databases and the connection string, in the reference's shape; `c39113a` |
 | `database/` Updater, file half | done - which `.sql` files exist, ordered by name, five states; `6a98037` |
 | `database/` connection and pool | done - the pool opens, pings, and runs a deferred statement on a worker; `eab6be5` |
-| `database/` Updater, apply half | not started - needs the schema, which needs the tables this game has |
+| `database/` Updater, apply half | done - a file runs once, is recorded with its sha1, and a changed file is refused; `22767f7` |
+| `database/` the login schema | done - `realmlist` and `updates`, applied by the program itself from `data/sql/base/db_auth/`; `22767f7`, `9ebbb45` |
+| `database/` world and character schemas | not started - the tables are Tyria's and are a decision, not a port |
 | `shared/Network/` | done as a library - a client is accepted, answered and counted; `4596b27` |
+| `shared/Packets/` | started - the byte buffer; the opcode table and the message families are not written; `9f456f1` |
+| `shared/Worlds/` | done - the world list is read from `realmlist` and a login refuses to start on an empty one; `7adbe37` |
 | `shared/Secrets/` | not started - the reference's only secret is WoW's TOTP master key, so what this game's secret is has not been decided |
-| `authserver/` | through stage 5 (the login database); stops at stage 6 with a reason |
-| everything after | not started |
+| `authserver/` | stages 1 to 8 - config, log, PID file, login database and its schema, world list, listener; `5086987` |
+| the auth conversation | the plaintext half - version, seed, answer - on a real socket; `13b5287` |
+| `worldserver/` | stages 1 to 4 - config, log, PID file; stops at its databases; `b604814` |
+| `game/`, `scripts/`, `modules/` | not started |
 
-`common/Platform`, `common/Threading` and the rest of `common/` are not started; nothing yet calls
-them.
+What "done" means here is narrower than a finished server: it means the stage behaves as the
+reference behaves and this tree's own tests or a real run prove it. `docs/port/02-wire.md` says what
+the wire knows and what it does not.
 
 ## Where the wire lives, measured
 
