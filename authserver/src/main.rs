@@ -15,6 +15,7 @@ mod authentication;
 mod server;
 
 use common::configuration::{Complaint, Config, Policy, PolicyOverride, Severity};
+use common::logging::{Log, LogLevel};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -93,15 +94,42 @@ fn run(args: &[String]) -> Result<(), String> {
 
     // Stage 3. Reference: `sLog->RegisterAppender<AppenderDB>()` then `sLog->Initialize(nullptr)`.
     //
+    // The database appender belongs to `database/Logging/` and arrives with that crate; until then
+    // a configuration that names one is reported and the rest of the log still works.
+    let log = Log::new();
+    let notes = log.initialize(&config).map_err(|error| error.to_string())?;
+    for note in notes {
+        println!("warning: {note}");
+    }
+
+    // Reference: `Acore::Banner::Show("authserver", ...)`, whose first line names the configuration
+    // file it is using.
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        format!(
+            "> Using configuration file       {}",
+            config.filename().display()
+        ),
+    );
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        format!("Kryta authserver {}", env!("CARGO_PKG_VERSION")),
+    );
+
+    log.shutdown();
+
+    // Stage 4. Reference: `CreatePIDFile(pidFile)`, when `PidFile` is set.
+    //
     // Stages after it, in the reference's order, and none exists yet:
-    //   CreatePIDFile               the PID file, when `PidFile` is set
     //   StartDB                     the login database
     //   sSecretMgr->Initialize      secrets
     //   sRealmList->Initialize      the world list, refreshed on `RealmsStateUpdateDelay`
     //   sAuthSocketMgr.StartNetwork the listener, on `RealmServerPort` (3724)
     //   ioContext->run              the io loop, until SIGINT or SIGTERM
     Err(format!(
-        "stage 3 'logging' is not ported (reference: sLog->Initialize); dry run: {}",
+        "stage 4 'the pid file' is not ported (reference: CreatePIDFile); dry run: {}",
         config.is_dry_run()
     ))
 }

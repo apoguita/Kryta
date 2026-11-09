@@ -9,3 +9,6 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+# The reference reads the clock through `<ctime>` and `localtime`. This is that call, and no
+# behaviour depends on it beyond the timestamp a log line and a backup file's name carry.
+chrono = "0.4"

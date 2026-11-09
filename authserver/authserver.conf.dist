@@ -32,3 +32,22 @@ MaxPingTime = 30
 # How often expired bans are cleared, in seconds.
 # Reference: `BanExpiryCheckInterval` (60).
 BanExpiryCheckInterval = 60
+
+###################################################################################################################
+
+# Logging. Reference: the same four lines in
+# src/server/apps/authserver/authserver.conf.dist, with the same values.
+#
+# LogsDir is where file appenders write. Empty means the working directory.
+LogsDir = ""
+
+# Appender.<name> = Type,Level,Flags,optional...
+#   Type  1 is the console; its optional field is the colour list for
+#         "fatal error warn info debug trace".
+#   Type  2 is a file: the name, then the mode (a append, w overwrite).
+Appender.Console = 1,5,0,"1 9 3 6 5 8"
+Appender.Auth    = 2,5,0,Auth.log,w
+
+# Logger.<name> = Level,AppenderList
+# A logger inherits from its dotted parent and finally from root.
+Logger.root = 4,Console Auth

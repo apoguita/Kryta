@@ -41,3 +41,24 @@ SOAP.Port = 7878
 # Where the world's own data files are read from.
 DataDir = "."
 LogsDir = ""
+
+###################################################################################################################
+
+# Logging. Reference: the logging block of
+# src/server/apps/worldserver/worldserver.conf.dist, without the loggers that name a subsystem
+# this program does not have yet. Those - the module logger, the spell-script logger, the
+# playerbot logger, the map-diff logger - arrive with the subsystems they name, or are dropped
+# with them.
+
+# Appender.<name> = Type,Level,Flags,optional...
+Appender.Console = 1,4,0,"1 9 3 6 5 8"
+Appender.Server  = 2,5,0,Server.log,w
+Appender.Errors  = 2,2,0,Errors.log,w
+
+# Logger.<name> = Level,AppenderList
+Logger.root        = 2,Console Server
+Logger.server      = 4,Console Server
+Logger.sql         = 4,Console Server
+Logger.sql.sql     = 2,Console Errors
+Logger.sql.updates = 4,Console Server Errors
+Logger.time.update = 4,Console Server
