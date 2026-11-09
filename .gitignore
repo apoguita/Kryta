@@ -1,0 +1,14 @@
+# Build output
+/target
+**/*.rs.bk
+*.pdb
+*.ilk
+
+# Logs and local config
+/logs
+*.log
+/env
+.env
+
+# The reference's client archive is never committed
+*.dat

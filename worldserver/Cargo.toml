@@ -1,0 +1,20 @@
+[package]
+name = "worldserver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "worldserver"
+path = "src/main.rs"
+
+# Reference: `target_link_libraries(worldserver PUBLIC modules scripts game ...)`. `modules`
+# appears when the first mod-* crate exists.
+[dependencies]
+game = { path = "../game" }
+scripts = { path = "../scripts" }
+shared = { path = "../shared" }

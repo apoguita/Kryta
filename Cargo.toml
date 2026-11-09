@@ -1,0 +1,38 @@
+# Kryta: AzerothCore's server, in Rust, serving Guild Wars (Tyria).
+#
+# The members are the reference's libraries and programs, flattened out of AzerothCore's
+# `src/` into the top level. The dependency order is the reference's own, read from its
+# CMakeLists files at 30a36ec4d:
+#
+#   common <- database <- shared <- game <- scripts
+#
+#   authserver links shared;  worldserver links shared, game and scripts.
+#
+# `modules/*` joins this list when the first mod-* crate exists. An empty glob is a cargo
+# error, so the line arrives with the module rather than before it.
+
+[workspace]
+resolver = "3"
+members = [
+  "common",
+  "database",
+  "shared",
+  "game",
+  "scripts",
+  "authserver",
+  "worldserver",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-2.0-or-later"
+publish = false
+
+# One lint policy, opted into per crate with `[lints] workspace = true`.
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"

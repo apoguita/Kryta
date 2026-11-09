@@ -1,0 +1,18 @@
+[package]
+name = "authserver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "authserver"
+path = "src/main.rs"
+
+# Reference: `target_link_libraries(authserver PUBLIC shared)`. `shared` links `database`,
+# which links `common`, so one dependency here is the reference's whole auth chain.
+[dependencies]
+shared = { path = "../shared" }

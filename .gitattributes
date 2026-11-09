@@ -1,0 +1,8 @@
+# One line ending everywhere, decided here rather than by the platform's default.
+* text=auto eol=lf
+
+# Recordings and data dumps are bytes, never text.
+*.bin binary
+*.dat binary
+*.jsonl -text
+*.log -text

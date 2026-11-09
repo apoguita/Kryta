@@ -1,0 +1,34 @@
+# authserver.conf.dist - the auth program's own configuration.
+#
+# Reference: src/server/apps/authserver/authserver.conf.dist. One config file per program:
+# this program reads this file and no other, and a key it does not know is a start-up error
+# unless --config-policy says otherwise.
+#
+# Only the keys the ported stages read are here. A stage that lands adds the keys it reads,
+# with the reference's own default. The format is the reference's: `Key = value`.
+
+[worldserver]
+
+###################################################################################################################
+
+# Where this program answers login connections.
+# Reference: `GetOption<int32>("RealmServerPort", 3724)`.
+RealmServerPort = 3724
+
+# The address the listener binds. 0.0.0.0 is every interface.
+BindIP = "0.0.0.0"
+
+# Written when a PID is wanted for a service manager. Empty writes nothing.
+PidFile = ""
+
+# How often the world list is refreshed, in seconds.
+# Reference: `RealmsStateUpdateDelay` (20).
+RealmsStateUpdateDelay = 20
+
+# How often the login database is pinged, in minutes.
+# Reference: `MaxPingTime` (30).
+MaxPingTime = 30
+
+# How often expired bans are cleared, in seconds.
+# Reference: `BanExpiryCheckInterval` (60).
+BanExpiryCheckInterval = 60

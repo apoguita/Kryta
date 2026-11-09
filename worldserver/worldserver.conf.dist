@@ -1,0 +1,43 @@
+# worldserver.conf.dist - the game program's own configuration.
+#
+# Reference: src/server/apps/worldserver/worldserver.conf.dist. One config file per program:
+# this program reads this file and no other.
+#
+# Only the keys the ported stages read are here, with the reference's own defaults.
+
+[worldserver]
+
+###################################################################################################################
+
+# The world this process represents. The reference's `realm`, this server's world.
+RealmID = 1
+
+# Where game connections are accepted.
+WorldServerPort = 8085
+
+# The address the listener binds.
+BindIP = "0.0.0.0"
+
+# Network threads serving the accepted sockets. Must be greater than 0.
+Network.Threads = 1
+
+# Worker threads behind the world loop.
+ThreadPool = 2
+
+# Threads updating maps.
+MapUpdate.Threads = 1
+
+# How long an empty instance lives, in milliseconds.
+Instance.UnloadDelay = 1800000
+
+# The console the operator types into.
+Console.Enable = 1
+
+# The SOAP endpoint.
+SOAP.Enabled = 0
+SOAP.IP = "127.0.0.1"
+SOAP.Port = 7878
+
+# Where the world's own data files are read from.
+DataDir = "."
+LogsDir = ""
