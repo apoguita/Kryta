@@ -76,11 +76,11 @@ impl ConnectionKind {
     }
 }
 
-/// The result of an authentication attempt.
-///
-/// Reference: `AuthResult` in `AuthCodes.{h,cpp}`. It is not declared here yet: the numbers are the
-/// client's, and a code with no caller is a guess about what the conversation will answer. It
-/// arrives with the conversation that sends it.
+// The result of an authentication attempt is not declared here yet.
+//
+// Reference: `AuthResult` in `AuthCodes.{h,cpp}`. Its numbers are the client's, and a code with no
+// caller is a guess about what the conversation will answer; it arrives with the conversation that
+// sends it.
 
 #[cfg(test)]
 mod tests {
