@@ -23,3 +23,5 @@ common = { path = "../common" }
 ctrlc = "3"
 # The key exchange raises a 512-bit number to a 511-bit exponent modulo a 512-bit prime.
 num-bigint = "0.4"
+# The master secret is 20 bytes from the operating system's entropy.
+getrandom = "0.2"

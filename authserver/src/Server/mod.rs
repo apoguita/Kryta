@@ -1,16 +1,11 @@
-//! The session on a connected client, and the exchange that starts it.
+//! The session on a connected client, the exchange that starts it, and its arithmetic.
 //!
 //! Reference: `src/server/apps/authserver/Server/AuthSocket.{h,cpp}`, which is the object a
-//! connection becomes and where the reference's own key exchange lives.
+//! connection becomes and where the reference's own key exchange and conversation live.
 
 #[path = "handshake.rs"]
 pub mod handshake;
+#[path = "session.rs"]
+pub mod session;
 
-/// One connected client, from the first byte to disconnect.
-///
-/// Reference: `AuthSession : Socket<AuthSession>`. The socket layer is `shared/Network/`, which
-/// supplies the connection; this object is what it is handed to.
-#[derive(Debug, Default)]
-pub struct AuthSession {
-    _private: (),
-}
+pub use session::AuthSession;

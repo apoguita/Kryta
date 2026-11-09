@@ -14,13 +14,13 @@ mod authentication;
 #[path = "Server/mod.rs"]
 mod server;
 
-use crate::authentication::ConnectionKind;
+use crate::server::AuthSession;
 use common::configuration::{Complaint, Config, Policy, PolicyOverride, Severity};
 use common::logging::{Log, LogLevel};
 use common::utilities::create_pid_file;
 use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
 use database::updater::{collect_files, UpdateState};
-use shared::network::socket::{Session, SessionFactory, SessionFuture, SessionIo};
+use shared::network::socket::{Session, SessionFactory};
 use shared::network::socket_mgr::SocketMgr;
 use shared::worlds::WorldList;
 use std::path::PathBuf;
@@ -242,16 +242,13 @@ fn run(args: &[String]) -> Result<(), String> {
     // Stage 8. Reference: `sAuthSocketMgr.StartNetwork(*ioContext, bindIp, port)`, then the signal
     // handlers, `SetProcessPriority`, and `ioContext->run()`.
     //
-    // The session is where stage 9 lands: the reference's `AuthSession` starts by reading the
-    // client's version message and answering with the key exchange, and Tyria's form of that is
-    // measured material, not the reference's. Until it is written, a connection is logged and
-    // closed, which is honest about what this program can do rather than leaving a socket open with
-    // nothing on the other end.
+    // The session is the reference's `AuthSession`: it reads the client's version and its seed and
+    // answers with the server's seed. What it does not do yet is anything after that point, because
+    // everything there is scrambled with a key both sides derive and that derivation is not written.
     let factory: SessionFactory = {
         let log = log.clone();
         std::sync::Arc::new(move || {
-            let log = log.clone();
-            Box::new(Unwritten(log)) as Box<dyn Session>
+            Box::new(AuthSession::with_random_master(log.clone())) as Box<dyn Session>
         })
     };
 
@@ -279,69 +276,6 @@ fn run(args: &[String]) -> Result<(), String> {
     login.close();
     log.shutdown();
 
-    Ok(())
-}
-
-/// The session a connection gets until the auth conversation is written.
-///
-/// It reads the four bytes that decide what the connection is, says what it found, and closes.
-/// Named for what it is, so nothing reads this as a working login: the conversation that follows
-/// those four bytes is the next subject.
-struct Unwritten(Log);
-
-impl Session for Unwritten {
-    fn run(self: Box<Self>, mut io: SessionIo) -> SessionFuture {
-        Box::pin(async move {
-            let peer = io
-                .peer()
-                .map(|address| address.to_string())
-                .unwrap_or_else(|| "an unknown address".to_string());
-
-            let mut first_four = [0u8; 4];
-            if let Err(error) = read_exactly(&mut io, &mut first_four).await {
-                self.0.out(
-                    LogLevel::Warn,
-                    "server.authserver",
-                    format!("Connection from {peer} closed before it said what it was: {error}"),
-                );
-                let _ = io.close().await;
-                return;
-            }
-
-            match ConnectionKind::classify(first_four) {
-                Some(kind) => self.0.out(
-                    LogLevel::Info,
-                    "server.authserver",
-                    format!(
-                        "Connection from {peer}: {} connection, first message {} bytes. The conversation is not written yet.",
-                        kind.as_str(),
-                        kind.first_message_size()
-                    ),
-                ),
-                None => self.0.out(
-                    LogLevel::Warn,
-                    "server.authserver",
-                    format!(
-                        "Connection from {peer} opened with {first_four:02X?}, which is not a connection this server recognises."
-                    ),
-                ),
-            }
-
-            let _ = io.close().await;
-        })
-    }
-}
-
-/// Read exactly as many bytes as the slice holds.
-async fn read_exactly(io: &mut SessionIo, out: &mut [u8]) -> Result<(), String> {
-    let mut filled = 0;
-    while filled < out.len() {
-        match io.read(&mut out[filled..]).await {
-            Ok(0) => return Err("the peer closed".to_string()),
-            Ok(count) => filled += count,
-            Err(error) => return Err(error.to_string()),
-        }
-    }
     Ok(())
 }
 
