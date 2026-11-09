@@ -30,6 +30,9 @@ MapUpdate.Threads = 1
 # How long an empty instance lives, in milliseconds.
 Instance.UnloadDelay = 1800000
 
+# Written when a PID is wanted for a service manager. Empty writes nothing.
+PidFile = ""
+
 # The console the operator types into.
 Console.Enable = 1
 

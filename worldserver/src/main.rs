@@ -14,6 +14,9 @@ mod command_line;
 #[path = "RemoteAccess/mod.rs"]
 mod remote_access;
 
+use common::configuration::{Complaint, Config, Policy, PolicyOverride, Severity};
+use common::logging::{Log, LogLevel};
+use common::utilities::create_pid_file;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -48,8 +51,84 @@ fn run(args: &[String]) -> Result<(), String> {
 
     // Stage 2. Reference: `sConfigMgr->Configure(...)` then `LoadAppConfigs()`.
     //
+    // The severity policy can be overridden on the command line, and a key it does not know is
+    // refused rather than ignored - the reference reports it the same way.
+    let mut policy = Policy::default();
+    if let Some(text) = &options.config_policy {
+        let control = PolicyOverride::parse(text).map_err(|error| error.to_string())?;
+        if !control.apply(&mut policy) {
+            return Err(format!(
+                "--config-policy names no value this program has: '{}'",
+                control.key
+            ));
+        }
+    }
+
+    let mut config =
+        Config::load(&options.config, false, policy).map_err(|error| error.to_string())?;
+    config.set_dry_run(options.dry_run);
+
+    for complaint in config.complaints() {
+        report(complaint);
+    }
+
+    // Stage 3. Reference: `sLog->Initialize(sConfigMgr->GetOption<bool>("Log.Async.Enable", ...))`.
+    let log = Log::new();
+    let notes = log.initialize(&config).map_err(|error| error.to_string())?;
+    for note in notes {
+        println!("warning: {note}");
+    }
+
+    // Reference: `Acore::Banner::Show("worldserver-daemon", ...)`, whose first line names the
+    // configuration file.
+    log.out(
+        LogLevel::Info,
+        "server.worldserver",
+        format!(
+            "> Using configuration file       {}",
+            config.filename().display()
+        ),
+    );
+    log.out(
+        LogLevel::Info,
+        "server.worldserver",
+        format!("Kryta worldserver {}", env!("CARGO_PKG_VERSION")),
+    );
+
+    // Stage 4. Reference: `CreatePIDFile(pidFile)`, when `PidFile` is set - the same stage the auth
+    // program has, with the same two lines.
+    let (pid_file, notes) = config
+        .value_string("PidFile", "")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    if !pid_file.is_empty() {
+        match create_pid_file(&pid_file) {
+            Some(pid) => log.out(
+                LogLevel::Info,
+                "server.worldserver",
+                format!("Daemon PID: {pid}\n"),
+            ),
+            None => {
+                log.out(
+                    LogLevel::Error,
+                    "server.worldserver",
+                    format!("Cannot create PID file {pid_file} (possible error: permission)\n"),
+                );
+                log.shutdown();
+                return Err(format!(
+                    "cannot create PID file {pid_file} (possible error: permission)"
+                ));
+            }
+        }
+    }
+
+    log.shutdown();
+
+    // Stage 5. Reference: `StartDB()`, which opens the World and Character pools.
+    //
     // Stages after it, in the reference's order, and none exists yet:
-    //   sLog->Initialize              logging
     //   ThreadPool                    the worker threads, `ThreadPool` (2)
     //   SetScriptLoader(AddScripts)   the script hooks, and the modules loader beside them
     //   sScriptMgr->Initialize
@@ -61,13 +140,26 @@ fn run(args: &[String]) -> Result<(), String> {
     //   sScriptMgr->OnStartup
     // On shutdown: `sWorldSessionMgr->KickAll`, `sMapMgr->UnloadAll`,
     // `sScriptMgr->OnAfterUnloadAllMaps`, `sScriptMgr->OnShutdown`.
+    //
+    // The world program opens two databases rather than one, and neither schema is here: the login
+    // database's `realmlist` transfers from the reference because a world list is a world list, but
+    // the world's content and a character's sheets are Tyria's and have no reference counterpart.
     Err(format!(
-        "stage 2 'config' is not ported (reference: sConfigMgr->Configure + LoadAppConfigs); \
-         it would read {} (dry run: {}, config policy: {})",
-        options.config.display(),
-        options.dry_run,
-        options.config_policy.as_deref().unwrap_or("none"),
+        "stage 5 'the world and character databases' is not ported (reference: StartDB); dry run: {}",
+        config.is_dry_run()
     ))
+}
+
+/// Print a complaint at the severity the policy gave it.
+///
+/// Reference: `LogWithSeverity`, whose first act is to say nothing at `Skip`.
+fn report(complaint: &Complaint) {
+    match complaint.severity {
+        Severity::Skip => {}
+        Severity::Warn => println!("warning: {}", complaint.message),
+        Severity::Error => eprintln!("error: {}", complaint.message),
+        Severity::Fatal => eprintln!("fatal: {}", complaint.message),
+    }
 }
 
 /// What the command line said.

@@ -18,3 +18,4 @@ path = "src/main.rs"
 game = { path = "../game" }
 scripts = { path = "../scripts" }
 shared = { path = "../shared" }
+common = { path = "../common" }
