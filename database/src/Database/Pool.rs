@@ -154,6 +154,16 @@ impl DatabaseWorkerPool {
         self.synch.query(sql)
     }
 
+    /// The pool's own synchronous connection.
+    ///
+    /// Reference: the reference's callers reach the pool's synchronous connection the same way -
+    /// the loader that opens the pool and the updater that runs on it are not the only ones; the
+    /// world list reads through it too. A caller that holds the pool may use it; a caller that does
+    /// not uses [`DatabaseWorkerPool::execute`] or [`DatabaseWorkerPool::query_sync`].
+    pub fn connection_mut(&mut self) -> &mut Connection {
+        &mut self.synch
+    }
+
     /// Bring this database up to date with the schema files given, and answer what ran.
     ///
     /// Reference: `DatabaseLoader::Load`, which opens the pool and then runs `DBUpdater` on it -

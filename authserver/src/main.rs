@@ -19,6 +19,7 @@ use common::logging::{Log, LogLevel};
 use common::utilities::create_pid_file;
 use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
 use database::updater::{collect_files, UpdateState};
+use shared::worlds::WorldList;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -185,21 +186,63 @@ fn run(args: &[String]) -> Result<(), String> {
     login
         .ping()
         .map_err(|error| format!("the login database does not answer: {error}"))?;
-    login.close();
-
-    log.shutdown();
 
     // Stage 6. Reference: `sSecretMgr->Initialize()`.
     //
-    // Stages after it, in the reference's order, and none exists yet:
-    //   sIPLocation->Load           the address lookup
-    //   sRealmList->Initialize      the world list, refreshed on `RealmsStateUpdateDelay`
-    //   sAuthSocketMgr.StartNetwork the listener, on `RealmServerPort` (3724)
-    //   the signal handlers         SIGINT, SIGTERM
-    //   SetProcessPriority          `ProcessorAffinity`, `HighPriority`
-    //   ioContext->run              the io loop
+    // Not ported, and it is not a decision this program can take: the reference's only secret is a
+    // two-factor master key for Azeroth's accounts, and this game's login carries a portal-issued
+    // identity instead. `shared/Secrets/` stays empty until that is settled, and `../AGENTS.md`
+    // records it.
+    //
+    // Stage 7. Reference: `sRealmList->Initialize(*ioContext, RealmsStateUpdateDelay)`.
+    let (update_delay, notes) = config
+        .value::<u32>("RealmsStateUpdateDelay", 20)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+
+    let mut worlds = WorldList::new();
+    let loaded = worlds.load(login.connection_mut(), &log)?;
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        format!("World list: {loaded} world(s), refreshed every {update_delay} s."),
+    );
+
+    if worlds.is_empty() {
+        // Reference: the three reasons the reference prints before it exits 1.
+        log.out(
+            LogLevel::Error,
+            "server.authserver",
+            "No valid realms specified. Possible reasons:",
+        );
+        log.out(
+            LogLevel::Error,
+            "server.authserver",
+            "- the realmlist table of the auth database is empty",
+        );
+        log.out(
+            LogLevel::Error,
+            "server.authserver",
+            "- every realm has flag 3 (REALM_FLAG_VERSION_MISMATCH | REALM_FLAG_OFFLINE), which the realm list query excludes. Reset it with: UPDATE realmlist SET flag = 0 WHERE id = <realm id>;",
+        );
+        log.out(
+            LogLevel::Error,
+            "server.authserver",
+            "- no realm address could be resolved, see the resolver errors logged above",
+        );
+        log.shutdown();
+        return Err("no valid realms specified".to_string());
+    }
+
+    login.close();
+    log.shutdown();
+
+    // Stage 8. Reference: `sAuthSocketMgr.StartNetwork(*ioContext, bindIp, port)`, then the signal
+    // handlers, `SetProcessPriority`, and `ioContext->run()`.
     Err(format!(
-        "stage 6 'secrets' is not ported (reference: sSecretMgr->Initialize); dry run: {}",
+        "stage 8 'the listener' is not ported (reference: sAuthSocketMgr.StartNetwork); dry run: {}",
         config.is_dry_run()
     ))
 }
