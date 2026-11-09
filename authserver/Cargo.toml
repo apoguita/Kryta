@@ -19,3 +19,5 @@ path = "src/main.rs"
 shared = { path = "../shared" }
 database = { path = "../database" }
 common = { path = "../common" }
+# The reference's signal handler, which is what its io loop returns on.
+ctrlc = "3"

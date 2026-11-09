@@ -19,6 +19,8 @@ use common::logging::{Log, LogLevel};
 use common::utilities::create_pid_file;
 use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
 use database::updater::{collect_files, UpdateState};
+use shared::network::socket::{Session, SessionFactory, SessionFuture, SessionIo};
+use shared::network::socket_mgr::SocketMgr;
 use shared::worlds::WorldList;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -236,15 +238,88 @@ fn run(args: &[String]) -> Result<(), String> {
         return Err("no valid realms specified".to_string());
     }
 
+    // Stage 8. Reference: `sAuthSocketMgr.StartNetwork(*ioContext, bindIp, port)`, then the signal
+    // handlers, `SetProcessPriority`, and `ioContext->run()`.
+    //
+    // The session is where stage 9 lands: the reference's `AuthSession` starts by reading the
+    // client's version message and answering with the key exchange, and Tyria's form of that is
+    // measured material, not the reference's. Until it is written, a connection is logged and
+    // closed, which is honest about what this program can do rather than leaving a socket open with
+    // nothing on the other end.
+    let factory: SessionFactory = {
+        let log = log.clone();
+        std::sync::Arc::new(move || {
+            let log = log.clone();
+            Box::new(Unwritten(log)) as Box<dyn Session>
+        })
+    };
+
+    let mut sockets = SocketMgr::new(factory);
+    let bound = sockets
+        .start_network(&bind, port, 1)
+        .map_err(|error| format!("Failed to initialize network: {error}"))?;
+
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        format!("Listening on {bind}:{bound}."),
+    );
+
+    // Reference: the signal handlers stop the acceptor and the threads; `ioContext->run()` returns
+    // and the program closes what it opened, in reverse order.
+    wait_for_shutdown();
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        "Stopping: the listener is closing.",
+    );
+
+    sockets.stop_network();
     login.close();
     log.shutdown();
 
-    // Stage 8. Reference: `sAuthSocketMgr.StartNetwork(*ioContext, bindIp, port)`, then the signal
-    // handlers, `SetProcessPriority`, and `ioContext->run()`.
-    Err(format!(
-        "stage 8 'the listener' is not ported (reference: sAuthSocketMgr.StartNetwork); dry run: {}",
-        config.is_dry_run()
-    ))
+    Ok(())
+}
+
+/// The session a connection gets until the auth conversation is written.
+///
+/// It logs the peer and closes. Named for what it is, so nothing reads this as a working login.
+struct Unwritten(Log);
+
+impl Session for Unwritten {
+    fn run(self: Box<Self>, mut io: SessionIo) -> SessionFuture {
+        Box::pin(async move {
+            let peer = io
+                .peer()
+                .map(|address| address.to_string())
+                .unwrap_or_else(|| "an unknown address".to_string());
+            self.0.out(
+                LogLevel::Warn,
+                "server.authserver",
+                format!("Connection from {peer}: the auth conversation is not written yet."),
+            );
+            let _ = io.close().await;
+        })
+    }
+}
+
+/// Block until the operator stops the program.
+///
+/// Reference: `ioContext->run()` returning when the signal handler stopped the io context. A
+/// Ctrl-C is that signal here.
+fn wait_for_shutdown() {
+    let (sender, receiver) = std::sync::mpsc::channel::<()>();
+    if ctrlc::set_handler(move || {
+        let _ = sender.send(());
+    })
+    .is_err()
+    {
+        // Without a handler the program cannot be stopped politely; it still listens, and the
+        // process can be ended from outside.
+        return;
+    }
+
+    let _ = receiver.recv();
 }
 
 /// Print a complaint at the severity the policy gave it.
