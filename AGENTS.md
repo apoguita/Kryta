@@ -145,9 +145,9 @@ the client is the judge rather than a test.
 | the wire facts this tree uses, and what it does not know yet | `docs/port/02-wire.md` |
 | a decision taken away from the reference, and why | `docs/decisions/` |
 | workspace, dependency order, lint policy | `Cargo.toml` |
-| the byte buffer | `shared/Packets/` |
-| the opcode table | `game/Server/Protocol/` |
-| one file pair per message family | `game/Server/Packets/` |
+| the byte buffer | `shared/src/Packets/` |
+| the opcode table | `game/src/Server/Protocol/` |
+| one file pair per message family | `game/src/Server/Packets/` |
 | the login conversation | `authserver/src/` |
 | the game program | `worldserver/src/` |
 | the hook registry | `scripts/src/ScriptMgr/` |

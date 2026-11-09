@@ -45,9 +45,9 @@ Six are not, and each has a named home or a named reason:
 
 | reference | here |
 |---|---|
-| `Asio` | nothing: the runtime is tokio, used directly by `shared/Network/` |
+| `Asio` | nothing: the runtime is tokio, used directly by `shared/src/Network/` |
 | `Collision`, `Navigation` | `game/Terrain/`: they are geometry, which is the game's half |
-| `DataStores` | `shared/DataStores/`, where this server's structure puts it |
+| `DataStores` | `shared/src/DataStores/`, where this server's structure puts it |
 | `Dynamic` | arrives with `scripts/`, when Lua scripts exist |
 | `PrecompiledHeaders` | a C++ build concern, no Rust equivalent |
 
@@ -60,10 +60,10 @@ the client is the judge, not a test.
    that both programs read their conf file and log what they read.
 2. **`database/`** - the connection, statements, results, the worker pool, then `Updater/`. Proof:
    the schema applies and `schema_version` records it.
-3. **`shared/Network/`** - `AsyncAcceptor` -> a listener, `NetworkThread` -> N workers, `Socket`,
+3. **`shared/src/Network/`** - `AsyncAcceptor` -> a listener, `NetworkThread` -> N workers, `Socket`,
    `SocketMgr`. Proof: a connection is accepted, assigned to the thread with the fewest
    connections, and closed cleanly.
-4. **`shared/Secrets/`** - secret retrieval. Proof: the value is read through the same interface
+4. **`shared/src/Secrets/`** - secret retrieval. Proof: the value is read through the same interface
    the reference uses.
 5. **`authserver/`** - the stages in the order the table above gives, ending at the auth
    conversation. **This is the first stage whose bytes a client reads**, and Tyria's protocol -
@@ -92,10 +92,10 @@ Updated as stages land, because this is a statement of today and not of intent.
 | `database/` Updater, apply half | done - a file runs once, is recorded with its sha1, and a changed file is refused; `22767f7` |
 | `database/` the login schema | done - `realmlist` and `updates`, applied by the program itself from `data/sql/base/db_auth/`; `22767f7`, `9ebbb45` |
 | `database/` world and character schemas | not started - the tables are Tyria's and are a decision, not a port |
-| `shared/Network/` | done as a library - a client is accepted, answered and counted; `4596b27` |
-| `shared/Packets/` | started - the byte buffer; the opcode table and the message families are not written; `9f456f1` |
-| `shared/Worlds/` | done - the world list is read from `realmlist` and a login refuses to start on an empty one; `7adbe37` |
-| `shared/Secrets/` | not started - the reference's only secret is WoW's TOTP master key, so what this game's secret is has not been decided |
+| `shared/src/Network/` | done as a library - a client is accepted, answered and counted; `4596b27` |
+| `shared/src/Packets/` | started - the byte buffer; the opcode table and the message families are not written; `9f456f1` |
+| `shared/src/Worlds/` | done - the world list is read from `realmlist` and a login refuses to start on an empty one; `7adbe37` |
+| `shared/src/Secrets/` | not started - the reference's only secret is WoW's TOTP master key, so what this game's secret is has not been decided |
 | `authserver/` | stages 1 to 8 - config, log, PID file, login database and its schema, world list, listener; `5086987` |
 | the auth conversation | the plaintext half - version, seed, answer - on a real socket; `13b5287` |
 | `worldserver/` | stages 1 to 4 - config, log, PID file; stops at its databases; `b604814` |
@@ -126,7 +126,7 @@ every message in both directions is the arrangement this project exists to avoid
   Tyria's - headers, sizes, field order, direction - is measured from this client, and the
   captures under `C:\Users\Apo\Documents\GitHub\ASURA\recordings\` are where that was recorded.
   The reference supplies the arrangement above and nothing about its contents.
-- **`shared/Worlds/` is the reference's `Realms/`.** A realm there is the server a player picks;
+- **`shared/src/Worlds/` is the reference's `Realms/`.** A realm there is the server a player picks;
   in this game that thing is a world. The rename is the only one in `shared/`.
 
 ## Open, and needing a word

@@ -6,7 +6,7 @@ disagree, the recording is right and this file is wrong.
 
 Two rules govern every line here, and both come from `AGENTS.md`:
 
-- The **arrangement** is the reference's: the byte buffer in `shared/Packets/`, the opcode table in
+- The **arrangement** is the reference's: the byte buffer in `shared/src/Packets/`, the opcode table in
   the game library's `Protocol/`, one file per message family in `Packets/`.
 - The **contents** are this client's, measured, and each fact names the document or capture that
   recorded it. None of it is Azeroth's protocol.
