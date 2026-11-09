@@ -14,15 +14,16 @@ with the game it serves being Tyria's rather than Azeroth's.
 | | |
 |---|---|
 | the reference, and the specification | `C:\Users\Apo\Documents\GitHub\WowWarband` = `github.com/mod-playerbots/azerothcore-wotlk` at `30a36ec4d`. Its measured structure, and the port order, are in `docs/port/01-structure.md`. |
-| the function, working | `C:\Users\Apo\Documents\GitHub\ASURA` at `ca9f532`, frozen. Its `crates/` is the code a real client logged in, played and travelled against - a layer **moves** from there, unchanged in behaviour. Its `recordings/` are the evidence each byte rests on. Its `docs/` are the record of what the code does and of what failed here. |
+| the function's facts | `C:\Users\Apo\Documents\GitHub\ASURA` at `ca9f532`, frozen. It is a **record, not a source to copy**: the headers, sizes, field orders and client behaviours its code established, each with the recording that proves it, and the account of what its arrangement got wrong. Its single 2,106-line, 782-row wire table is the failure this tree exists to prevent. |
 | the layering | `docs/port/02-layers.md`: ASURA's 18 layers in dependency order, and the directory here that owns each. |
 
-Three sources, three questions: the reference answers *what the structure is*, ASURA's code
-answers *what the function is*, and a running Tyria client answers *whether it is right*.
+Three sources, three questions: the reference answers *what the structure is*, ASURA answers *what
+was measured and what failed*, and a running Tyria client answers *whether the code is right*.
 
-A port means the reference's structure and the function's behaviour, field order, sizes and order
-of operations, translated into Rust. It does not mean the reference's improvements, its comments
-or its C++ idioms.
+Nothing is copied from ASURA. Its code is not a template and its files are not moved. What crosses
+is a fact with its evidence - a header, a size, a field order, a behaviour, and the capture that
+proves it - written again in the reference's shape. A commit that takes code from ASURA has taken
+the defect with it.
 
 ## The rules
 
@@ -40,8 +41,9 @@ or its C++ idioms.
    `data/`. A rule that needs a number takes it as an argument.
 7. **Every file is ASCII.** Write `-`, `->`, `=>`, `"`, `'`, `...`, `#`. Never rewrite a file
    with a `Get-Content` / `Set-Content` round trip.
-8. **Additive moves.** Copy into the new home, re-export at the old path, delete the old copy in
-   one commit. The compiler is then the complete list of callers.
+8. **A move inside this tree is additive.** Copy into the new home, re-export at the old path,
+   delete the old copy in one commit. The compiler is then the complete list of callers. Nothing is
+   ever moved into this tree from ASURA.
 
 ### Before any change: the pre-flight sentence
 
@@ -80,8 +82,8 @@ Kryta exists because fixing ASURA in place failed. ASURA works - a live client l
 a map, walked, chatted and travelled - but one process answered login and relayed gameplay, one
 library held the whole world, and server and game were fused into the same files. The attempt to
 re-cut it in place reached phase 4 of 6 and never proved a single phase with a client before it
-was stopped. So the function is moved, not redesigned, and it moves into a tree that is right
-before any of it arrives.
+was stopped. So the function is **rebuilt** against the reference's shape, from the facts a client
+established - not moved, and not redesigned.
 
 **A layer is covered only when all six hold** (ASURA, `docs/work/layer-rework-checklist.md`):
 
@@ -95,9 +97,9 @@ before any of it arrives.
 
 **The rules for every cut:**
 
-1. **Additive.** The new home is built beside the old, callers move onto it, and the old path is
-   deleted when nothing uses it. Here the old is ASURA at `ca9f532`, frozen; a cut copies what it
-   needs and this tree stays green after every commit.
+1. **Additive.** One cut, one subject. Here there is no old path to keep serving: ASURA is frozen
+   and nothing is copied out of it. A cut writes its layer in this tree's shape, and this tree
+   stays green after every commit.
 2. **The packet stream is frozen.** No cut changes a byte a client receives.
 3. **One cut, one commit, green.** Build succeeds, tests pass, the client does the thing where the
    client can see it. No cut carries a feature.
@@ -157,7 +159,9 @@ without the command that proves it, and prefer the client over a green test.
 |---|---|
 | the reference's measured structure, and the port order | `docs/port/01-structure.md` |
 | workspace, dependency order, lint policy | `Cargo.toml` |
-| the wire layer | `shared/Packets/`, `shared/Network/` |
+| the byte buffer | `shared/Packets/` |
+| the opcode table | `game/Server/Protocol/` |
+| one file pair per message family | `game/Server/Packets/` |
 | the login conversation | `authserver/src/` |
 | the game program | `worldserver/src/` |
 | the hook registry | `scripts/src/ScriptMgr/` |

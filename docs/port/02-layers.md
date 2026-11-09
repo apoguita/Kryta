@@ -7,8 +7,10 @@ server and game was not there to be found afterwards. Two attempts were made to 
 the store split and the world program - and the last plan reached phase 4 of 6 without a single
 phase proven by a client before the owner stopped it.
 
-So the function is not redesigned. It is inventoried, and each piece moves into the directory
-that owns it in a tree that is already right.
+So the function is not copied and it is not redesigned. Each layer below is a question the server
+has to answer and a set of facts a client established. The answer is written again in the
+reference's shape; ASURA's files stay where they are, and so do its arrangements, because the
+arrangements are what failed.
 
 ## The 18 layers, in dependency order
 
@@ -18,7 +20,7 @@ one. The counts and the file names are ASURA's own measurement of its code
 
 | # | layer | ASURA's files | here | half |
 |---|---|---|---|---|
-| 1 | wire and codec | `asura-protocol`, 14 files, 8,415 lines: `packets.rs` 782 rows, `client/frame.rs`, `client/handshake.rs`, `client/arc4.rs`, `client/messages.rs`, `client/version.rs` | `shared/Packets/`, and `common/Cryptography/` for the hashers | structure |
+| 1 | wire and codec | `asura-protocol`, 14 files, 8,415 lines, and the whole protocol in **one** table: `packets.rs` 2,106 lines, 782 rows | `shared/Packets/` for the byte buffer, `game/Server/Protocol/` for the opcode table, `game/Server/Packets/` for one file pair per message family | structure |
 | 2 | storage and schema | `asura-store` (identity, state, placement, catalogue) + `asura-db` (schema, 27 migrations) | `database/Database/` and `database/Updater/`; the three stores are the reference's three logical databases | structure |
 | 3 | rules | `asura-rules`, 1 file, 283 lines, 9 tests: pure placement decisions, no value of its own | `shared/Worlds/` for the list; the decision that picks one belongs to `authserver/` | structure |
 | 4 | auth service | `asura-auth`, 6 files, 2,664 lines: the login conversation | `authserver/`, a program, as the reference has it | structure |
@@ -41,31 +43,43 @@ Layers 1-7 and 16-18 are the structure: a cut there names no game noun. Layers 8
 mechanics, where the nouns are the subject, and they land only once a client is inside a map on
 the structural tree.
 
-## The first cut: layer 1, into `shared/Packets/`
+## The first cut: the wire, written in the reference's shape
 
 Layer 1 is first because nothing depends on it and it is the one layer provable with neither a
-client nor a server: the recordings replay byte for byte. That was ASURA's own build order, and
-it is the only cut in this whole port that can be finished alone.
+client nor a server: the recordings replay byte for byte.
 
-What moves: the packet table, the framing, the two handshakes and the cryptosystem, from
-`crates/asura-protocol` at `ca9f532`. What does not move with it: the four things ASURA's own
-audit found misfiled there, which are already out - the instance table (world), the file check's
-byte strings and the 591-byte login blob (configuration), the default appearance (configuration),
-and the 387-row PvP item table (items).
+**It is also the layer where the two arrangements differ most, and the reference wins.** The
+reference does not keep its protocol in one table. It keeps four things in four places, all
+measured in `src/server/`:
 
-What the layer carries that the port must not copy silently - six open findings from that audit:
+| what | where | size |
+|---|---|---|
+| the byte buffer | `shared/Packets/ByteBuffer.{h,cpp}` | 2 files |
+| the packet | `game/Server/WorldPacket.h` | 1 file |
+| the opcode table | `game/Server/Protocol/Opcodes.{h,cpp}`, `ServerPktHeader.h` | 4 files |
+| one file pair per message family | `game/Server/Packets/`: `AllPackets.h`, `PacketUtilities`, and **17 families** - Bank, Calendar, Character, Chat, Combat, CombatLog, Guild, Instance, Item, LFG, Misc, NPC, Pet, Query, Quest, Totem, WorldState | 18 pairs |
 
-| finding | where it is in ASURA |
+ASURA keeps the same facts in a single file, and its own audit records what that cost: 742 of the
+784 rows carry no evidence line (`crates/asura-protocol/src/packets.rs:215,233`).
+One table for every message, in every direction, owned by one file - that is the arrangement this
+rework exists to prevent, and it is exactly what a copy would bring back.
+
+So the cut writes: a byte buffer that does what `ByteBuffer` does, an opcode table, and one file
+pair per message family, named for Tyria's nouns rather than Azeroth's. The facts in them -
+headers, sizes, field order, direction - come from what a client accepted, each row citing the
+capture that proves it. The evidence lives under `recordings/`, copied from ASURA as bytes because
+it is evidence, not code.
+
+Six findings from ASURA's audit are answered by this cut rather than reproduced by it:
+
+| finding | what the cut does instead |
 |---|---|
-| two account facts compiled in a builder: the campaign mask and the feature block's character-slot count | `crates/asura-protocol/src/client/messages.rs:600-605` |
-| the server's private exponent is compiled, so one key serves every deployment | `crates/asura-protocol/src/client/handshake.rs:53,57` |
-| missing input written as zeros, so "no character" and "the zero uuid" are the same bytes | `crates/asura-protocol/src/client/messages.rs:481,614` |
-| a recorded reference answer sits in the crate as an oracle | `crates/asura-protocol/src/client/messages.rs:385` |
-| two handshake fields are observed and never compared | `crates/asura-protocol/src/client/version.rs:151`, `client/game_version.rs:42,55` |
-| 742 of 784 table rows carry no evidence line | `crates/asura-protocol/src/packets.rs:215,233` |
-
-The first four are decisions about *where a value lives* and the last two are the naming queue's.
-None of them is a reason to change a byte.
+| two account facts compiled in a builder: the campaign mask and the feature block's character-slot count (`client/messages.rs:600-605`) | they are configuration, read as arguments |
+| the server's private exponent is compiled, one key for every deployment (`client/handshake.rs:53,57`) | reported to the owner; the value has a file or it has a written reason |
+| missing input written as zeros, so "no character" and "the zero uuid" are one byte string (`client/messages.rs:481,614`) | the two are told apart |
+| a recorded reference answer sitting in the crate as an oracle (`client/messages.rs:385`) | not carried: an answer is evidence, not a fixture |
+| two handshake fields observed and never compared (`client/version.rs:151`, `client/game_version.rs:42,55`) | reproduced as the reference does it, and written down |
+| 742 of 784 rows with no evidence line | no row lands without one |
 
 ## Open, and needing a word
 
