@@ -16,6 +16,7 @@ mod server;
 
 use common::configuration::{Complaint, Config, Policy, PolicyOverride, Severity};
 use common::logging::{Log, LogLevel};
+use common::utilities::create_pid_file;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -118,18 +119,50 @@ fn run(args: &[String]) -> Result<(), String> {
         format!("Kryta authserver {}", env!("CARGO_PKG_VERSION")),
     );
 
+    // Stage 4. Reference: `CreatePIDFile(pidFile)`, when `PidFile` is set. A file that cannot be
+    // written stops the program, with the reference's own two lines.
+    let (pid_file, notes) = config
+        .value_string("PidFile", "")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+
+    if !pid_file.is_empty() {
+        match create_pid_file(&pid_file) {
+            Some(pid) => log.out(
+                LogLevel::Info,
+                "server.authserver",
+                format!("Daemon PID: {pid}\n"),
+            ),
+            None => {
+                log.out(
+                    LogLevel::Error,
+                    "server.authserver",
+                    format!("Cannot create PID file {pid_file} (possible error: permission)\n"),
+                );
+                log.shutdown();
+                return Err(format!(
+                    "cannot create PID file {pid_file} (possible error: permission)"
+                ));
+            }
+        }
+    }
+
     log.shutdown();
 
-    // Stage 4. Reference: `CreatePIDFile(pidFile)`, when `PidFile` is set.
+    // Stage 5. Reference: `StartDB()`.
     //
     // Stages after it, in the reference's order, and none exists yet:
-    //   StartDB                     the login database
     //   sSecretMgr->Initialize      secrets
+    //   sIPLocation->Load           the address lookup
     //   sRealmList->Initialize      the world list, refreshed on `RealmsStateUpdateDelay`
     //   sAuthSocketMgr.StartNetwork the listener, on `RealmServerPort` (3724)
-    //   ioContext->run              the io loop, until SIGINT or SIGTERM
+    //   the signal handlers         SIGINT, SIGTERM
+    //   SetProcessPriority          `ProcessorAffinity`, `HighPriority`
+    //   ioContext->run              the io loop
     Err(format!(
-        "stage 4 'the pid file' is not ported (reference: CreatePIDFile); dry run: {}",
+        "stage 5 'the login database' is not ported (reference: StartDB); dry run: {}",
         config.is_dry_run()
     ))
 }
