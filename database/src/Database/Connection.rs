@@ -106,6 +106,44 @@ impl Connection {
             .map_err(|error| format!("column 0 is not the expected type: {error}"))
     }
 
+    /// Run a script: one or more statements, as a file holds them.
+    ///
+    /// Reference: `MySQLConnection::Execute` applied to a whole file, which is what the updater
+    /// hands it. A simple query is used rather than a prepared statement, because a file is not a
+    /// parameterised statement.
+    pub fn batch_execute(&mut self, sql: &str) -> Result<(), String> {
+        self.client
+            .batch_execute(sql)
+            .map_err(|error| format!("statement failed: {error}"))
+    }
+
+    /// Record that a schema file has been applied.
+    ///
+    /// Reference: `UpdateFetcher::UpdateEntry`, which writes the name, the hash, the state, the
+    /// time and the speed into the database's own history table.
+    pub fn record_update(
+        &mut self,
+        name: &str,
+        hash: &str,
+        state: &str,
+        speed: i32,
+    ) -> Result<(), String> {
+        let name_owned = name.to_string();
+        let hash_owned = hash.to_string();
+        let state_owned = state.to_string();
+
+        self.client
+            .execute(
+                "INSERT INTO \"updates\" (\"name\", \"hash\", \"state\", \"speed\") \
+                 VALUES ($1, $2, $3, $4) \
+                 ON CONFLICT (\"name\") DO UPDATE SET \
+                 \"hash\" = EXCLUDED.\"hash\", \"state\" = EXCLUDED.\"state\", \"speed\" = EXCLUDED.\"speed\"",
+                &[&name_owned, &hash_owned, &state_owned, &speed],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("cannot record the applied update '{name}': {error}"))
+    }
+
     /// Whether the server still answers.
     ///
     /// Reference: the ping the reference runs on `MaxPingTime` to keep a connection from going

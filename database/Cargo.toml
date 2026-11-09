@@ -13,3 +13,5 @@ common = { path = "../common" }
 # The PostgreSQL client, in its blocking form, because the pool keeps the reference's threads and
 # callback queue rather than a runtime (docs/decisions/0002-worker-pool-threads.md).
 postgres = "0.19"
+# The hash the schema history records, which the reference takes with sha1 as well.
+sha1 = "0.10"

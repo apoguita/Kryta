@@ -16,6 +16,9 @@
 //!
 //! The tree is walked to a fixed depth, which is the reference's own limit.
 
+#[path = "Apply.rs"]
+pub mod apply;
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
