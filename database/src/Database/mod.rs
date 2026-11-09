@@ -13,6 +13,14 @@
 
 use common::configuration::Config;
 
+#[path = "Connection.rs"]
+pub mod connection;
+#[path = "Pool.rs"]
+pub mod pool;
+
+pub use connection::Connection;
+pub use pool::DatabaseWorkerPool;
+
 /// One of the three databases a program can open.
 ///
 /// Reference: the three pools `DatabaseEnv` declares - `LoginDatabase`, `WorldDatabase` and

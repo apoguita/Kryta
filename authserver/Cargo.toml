@@ -17,4 +17,5 @@ path = "src/main.rs"
 # also named directly because the reference's include chain is public.
 [dependencies]
 shared = { path = "../shared" }
+database = { path = "../database" }
 common = { path = "../common" }

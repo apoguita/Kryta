@@ -17,6 +17,7 @@ mod server;
 use common::configuration::{Complaint, Config, Policy, PolicyOverride, Severity};
 use common::logging::{Log, LogLevel};
 use common::utilities::create_pid_file;
+use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -149,12 +150,32 @@ fn run(args: &[String]) -> Result<(), String> {
         }
     }
 
+    // Stage 5. Reference: `StartDB()` - a `DatabaseLoader` on the Login database, then the pool's
+    // own line, `Started auth database connection pool.`
+    //
+    // Reference: `DatabaseLoader loader("server.authserver"); loader.AddDatabase(LoginDatabase,
+    // "Login");` - the loader opens the pool, and a pool that cannot open stops the program.
+    let settings = read_settings(&config, DatabaseKind::Login)?;
+    let mut login = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log)?;
+
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        "Started auth database connection pool.",
+    );
+
+    // A pool that opened but cannot answer is not a pool: the reference pings it on `MaxPingTime`,
+    // and a startup that will not survive its first query is better refused here.
+    login
+        .ping()
+        .map_err(|error| format!("the login database does not answer: {error}"))?;
+    login.close();
+
     log.shutdown();
 
-    // Stage 5. Reference: `StartDB()`.
+    // Stage 6. Reference: `sSecretMgr->Initialize()`.
     //
     // Stages after it, in the reference's order, and none exists yet:
-    //   sSecretMgr->Initialize      secrets
     //   sIPLocation->Load           the address lookup
     //   sRealmList->Initialize      the world list, refreshed on `RealmsStateUpdateDelay`
     //   sAuthSocketMgr.StartNetwork the listener, on `RealmServerPort` (3724)
@@ -162,7 +183,7 @@ fn run(args: &[String]) -> Result<(), String> {
     //   SetProcessPriority          `ProcessorAffinity`, `HighPriority`
     //   ioContext->run              the io loop
     Err(format!(
-        "stage 5 'the login database' is not ported (reference: StartDB); dry run: {}",
+        "stage 6 'secrets' is not ported (reference: sSecretMgr->Initialize); dry run: {}",
         config.is_dry_run()
     ))
 }

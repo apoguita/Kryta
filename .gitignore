@@ -10,5 +10,11 @@
 /env
 .env
 
+# The configurations a machine actually runs on carry its credentials. The `.dist` files are
+# committed; these are copied from them by the operator and never leave the machine.
+/authserver/authserver.conf
+/worldserver/worldserver.conf
+*.pid
+
 # The reference's client archive is never committed
 *.dat
