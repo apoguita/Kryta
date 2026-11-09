@@ -13,6 +13,8 @@ name = "authserver"
 path = "src/main.rs"
 
 # Reference: `target_link_libraries(authserver PUBLIC shared)`. `shared` links `database`,
-# which links `common`, so one dependency here is the reference's whole auth chain.
+# which links `common`, so one dependency here is the reference's whole auth chain. `common` is
+# also named directly because the reference's include chain is public.
 [dependencies]
 shared = { path = "../shared" }
+common = { path = "../common" }

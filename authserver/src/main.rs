@@ -14,6 +14,7 @@ mod authentication;
 #[path = "Server/mod.rs"]
 mod server;
 
+use common::configuration::{Complaint, Config, Policy, PolicyOverride, Severity};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -48,8 +49,51 @@ fn run(args: &[String]) -> Result<(), String> {
 
     // Stage 2. Reference: `sConfigMgr->Configure(...)` then `LoadAppConfigs()`.
     //
-    // Stages after it, in the reference's order, and neither exists yet:
-    //   sLog->Initialize            logging
+    // The severity policy can be overridden on the command line, and a key it does not know is
+    // refused rather than ignored - the reference reports it the same way.
+    let mut policy = Policy::default();
+    if let Some(text) = &options.config_policy {
+        let control = PolicyOverride::parse(text).map_err(|error| error.to_string())?;
+        if !control.apply(&mut policy) {
+            return Err(format!(
+                "--config-policy names no value this program has: '{}'",
+                control.key
+            ));
+        }
+    }
+
+    let mut config =
+        Config::load(&options.config, false, policy).map_err(|error| error.to_string())?;
+    config.set_dry_run(options.dry_run);
+
+    for complaint in config.complaints() {
+        report(complaint);
+    }
+
+    // What the file answers, read in the reference's own order and through its own lookup:
+    // `GetOption<int32>("RealmServerPort", 3724)`, then `GetOption<std::string>("BindIP", ...)`.
+    let (port, notes) = config
+        .value::<u16>("RealmServerPort", 3724)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let (bind, notes) = config
+        .value_string("BindIP", "0.0.0.0")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+
+    println!(
+        "authserver: config {} ({} keys), would bind {bind}:{port}",
+        config.filename().display(),
+        config.keys().count()
+    );
+
+    // Stage 3. Reference: `sLog->RegisterAppender<AppenderDB>()` then `sLog->Initialize(nullptr)`.
+    //
+    // Stages after it, in the reference's order, and none exists yet:
     //   CreatePIDFile               the PID file, when `PidFile` is set
     //   StartDB                     the login database
     //   sSecretMgr->Initialize      secrets
@@ -57,12 +101,21 @@ fn run(args: &[String]) -> Result<(), String> {
     //   sAuthSocketMgr.StartNetwork the listener, on `RealmServerPort` (3724)
     //   ioContext->run              the io loop, until SIGINT or SIGTERM
     Err(format!(
-        "stage 2 'config' is not ported (reference: sConfigMgr->Configure + LoadAppConfigs); \
-         it would read {} (dry run: {}, config policy: {})",
-        options.config.display(),
-        options.dry_run,
-        options.config_policy.as_deref().unwrap_or("none"),
+        "stage 3 'logging' is not ported (reference: sLog->Initialize); dry run: {}",
+        config.is_dry_run()
     ))
+}
+
+/// Print a complaint at the severity the policy gave it.
+///
+/// Reference: `LogWithSeverity`, whose first act is to say nothing at `Skip`.
+fn report(complaint: &Complaint) {
+    match complaint.severity {
+        Severity::Skip => {}
+        Severity::Warn => println!("warning: {}", complaint.message),
+        Severity::Error => eprintln!("error: {}", complaint.message),
+        Severity::Fatal => eprintln!("fatal: {}", complaint.message),
+    }
 }
 
 /// What the command line said.
