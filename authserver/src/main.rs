@@ -18,6 +18,7 @@ use common::configuration::{Complaint, Config, Policy, PolicyOverride, Severity}
 use common::logging::{Log, LogLevel};
 use common::utilities::create_pid_file;
 use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
+use database::updater::{collect_files, UpdateState};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -157,6 +158,21 @@ fn run(args: &[String]) -> Result<(), String> {
     // "Login");` - the loader opens the pool, and a pool that cannot open stops the program.
     let settings = read_settings(&config, DatabaseKind::Login)?;
     let mut login = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log)?;
+
+    // Reference: `DatabaseLoader::Load` opens the pool and then runs the updater on it, and only
+    // after both does it report the pool as started.
+    let schema = std::path::Path::new("data/sql/base/db_auth");
+    let files = collect_files(schema, UpdateState::Released)
+        .map_err(|error| format!("the login schema at {} is not readable: {error}", schema.display()))?;
+    let summary = login.apply_updates(&files, &log)?;
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        format!(
+            "Login database: {} file(s) applied, {} already current.",
+            summary.updated, summary.skipped
+        ),
+    );
 
     log.out(
         LogLevel::Info,

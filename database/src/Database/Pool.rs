@@ -154,6 +154,19 @@ impl DatabaseWorkerPool {
         self.synch.query(sql)
     }
 
+    /// Bring this database up to date with the schema files given, and answer what ran.
+    ///
+    /// Reference: `DatabaseLoader::Load`, which opens the pool and then runs `DBUpdater` on it -
+    /// the same connection, the same order.
+    pub fn apply_updates(
+        &mut self,
+        files: &[crate::updater::UpdateFile],
+        log: &Log,
+    ) -> Result<crate::updater::apply::UpdateSummary, String> {
+        crate::updater::apply::apply(&mut self.synch, files, log)
+            .map_err(|error| format!("the {} database could not be updated: {error}", self.kind.name()))
+    }
+
     /// Whether the database still answers.
     ///
     /// Reference: the pool's keep-alive ping.
