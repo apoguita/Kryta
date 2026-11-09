@@ -3,17 +3,18 @@
 //! Reference: `src/server/apps/authserver/Main.cpp` at 30a36ec4d. The stages below are that
 //! file's order, and each one names the reference call it translates.
 //!
-//! Only the first stage exists: the command line. The program stops at the second with a
-//! reason and exit code 1 rather than printing that it ran a stage it has not ported.
+//! The program runs. It reads its configuration, logs, writes its PID file, opens the login
+//! database and brings its schema up to date, loads the world list, and listens. The conversation
+//! on that listener is the next subject; what it answers today is the four bytes that say what kind
+//! of connection arrived.
 
-// The stage that uses these is not ported yet. The module exists so the boundary exists.
-#[allow(dead_code)]
 #[path = "Authentication/mod.rs"]
 mod authentication;
 #[allow(dead_code)]
 #[path = "Server/mod.rs"]
 mod server;
 
+use crate::authentication::ConnectionKind;
 use common::configuration::{Complaint, Config, Policy, PolicyOverride, Severity};
 use common::logging::{Log, LogLevel};
 use common::utilities::create_pid_file;
@@ -283,7 +284,9 @@ fn run(args: &[String]) -> Result<(), String> {
 
 /// The session a connection gets until the auth conversation is written.
 ///
-/// It logs the peer and closes. Named for what it is, so nothing reads this as a working login.
+/// It reads the four bytes that decide what the connection is, says what it found, and closes.
+/// Named for what it is, so nothing reads this as a working login: the conversation that follows
+/// those four bytes is the next subject.
 struct Unwritten(Log);
 
 impl Session for Unwritten {
@@ -293,14 +296,53 @@ impl Session for Unwritten {
                 .peer()
                 .map(|address| address.to_string())
                 .unwrap_or_else(|| "an unknown address".to_string());
-            self.0.out(
-                LogLevel::Warn,
-                "server.authserver",
-                format!("Connection from {peer}: the auth conversation is not written yet."),
-            );
+
+            let mut first_four = [0u8; 4];
+            if let Err(error) = read_exactly(&mut io, &mut first_four).await {
+                self.0.out(
+                    LogLevel::Warn,
+                    "server.authserver",
+                    format!("Connection from {peer} closed before it said what it was: {error}"),
+                );
+                let _ = io.close().await;
+                return;
+            }
+
+            match ConnectionKind::classify(first_four) {
+                Some(kind) => self.0.out(
+                    LogLevel::Info,
+                    "server.authserver",
+                    format!(
+                        "Connection from {peer}: {} connection, first message {} bytes. The conversation is not written yet.",
+                        kind.as_str(),
+                        kind.first_message_size()
+                    ),
+                ),
+                None => self.0.out(
+                    LogLevel::Warn,
+                    "server.authserver",
+                    format!(
+                        "Connection from {peer} opened with {first_four:02X?}, which is not a connection this server recognises."
+                    ),
+                ),
+            }
+
             let _ = io.close().await;
         })
     }
+}
+
+/// Read exactly as many bytes as the slice holds.
+async fn read_exactly(io: &mut SessionIo, out: &mut [u8]) -> Result<(), String> {
+    let mut filled = 0;
+    while filled < out.len() {
+        match io.read(&mut out[filled..]).await {
+            Ok(0) => return Err("the peer closed".to_string()),
+            Ok(count) => filled += count,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(())
 }
 
 /// Block until the operator stops the program.
