@@ -27,7 +27,7 @@ content.
 ## The rules
 
 1. **The reference decides design.** An arrangement it has is the answer. A deviation is written
-   down with its reason in the same commit.
+   down with its reason, in `docs/decisions/`, in the same commit that takes it.
 2. **Two halves never share a commit.** Infrastructure - processes, sockets, packets, database,
    secrets, the script manager, modules, configuration - and game mechanics - agents, terrain,
    maps, spawns, movement, combat.
@@ -139,6 +139,7 @@ without the command that proves it, and prefer the client over a green test.
 | need | path |
 |---|---|
 | the reference's measured structure, and the port order | `docs/port/01-structure.md` |
+| a decision taken away from the reference, and why | `docs/decisions/` |
 | workspace, dependency order, lint policy | `Cargo.toml` |
 | the byte buffer | `shared/Packets/` |
 | the opcode table | `game/Server/Protocol/` |
