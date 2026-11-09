@@ -67,10 +67,9 @@ pool per logical database, prepared statements, transactions, result sets with t
 worker pool with its callback queue, and the updater with its schema version. The reference's
 structure is this port's subject; only the wire to the engine differs.
 
-## Still open
+## The pool's shape
 
-**The pool's shape.** The reference is thread-based: a `DatabaseWorkerPool` owns N worker threads,
-each with its own blocking connection, and callers hand work over a callback queue. Rust could go
-async instead, and that would change the arrangement rather than the vendor. The rule in `AGENTS.md`
-is that the reference decides design, so the default is to keep the threads and the queue with a
-blocking client, and this is decided when the layer is written - not now, and not by accident.
+Named here as the thing this record did not settle, and settled in `0002-worker-pool-threads.md`:
+the reference is thread-based - a `DatabaseWorkerPool` owns N worker threads, each with its own
+blocking connection, and callers hand work over a callback queue - and that arrangement is kept
+rather than replaced with an async runtime.
