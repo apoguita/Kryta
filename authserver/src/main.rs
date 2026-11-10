@@ -253,15 +253,60 @@ fn run(args: &[String]) -> Result<(), String> {
     };
 
     let mut sockets = SocketMgr::new(factory);
+    sockets.set_log(log.clone());
+
     let bound = sockets
         .start_network(&bind, port, 1)
         .map_err(|error| format!("Failed to initialize network: {error}"))?;
 
+    // The line that says the program is up, what it is up on, and how often it will say so again.
+    // A program that cannot say this cannot be tested by anyone, including whoever runs it.
+    let (status_interval, notes) = config
+        .value::<u64>("StatusInterval", 30)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let status_interval = status_interval.max(1);
+
     log.out(
         LogLevel::Info,
         "server.authserver",
-        format!("Listening on {bind}:{bound}."),
+        format!(
+            "READY: listening on {bind}:{bound}; status reported every {status_interval} s."
+        ),
     );
+
+    // A status line on a timer, so "is it alive and has anything reached it" is answerable from the
+    // log alone. Without this the only way to learn whether a client connected was to look at the
+    // machine by hand.
+    let stop_status = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let accepted = sockets.accepted_handle();
+    let status_writer = {
+        let log = log.clone();
+        let stop_status = std::sync::Arc::clone(&stop_status);
+        let started = std::time::Instant::now();
+        std::thread::Builder::new()
+            .name("status".to_string())
+            .spawn(move || {
+                while !stop_status.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_secs(status_interval));
+                    if stop_status.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    log.out(
+                        LogLevel::Info,
+                        "server.authserver",
+                        format!(
+                            "status: up {} s, listening on {bind}:{bound}, {} connection(s) accepted.",
+                            started.elapsed().as_secs(),
+                            accepted.load(std::sync::atomic::Ordering::Relaxed)
+                        ),
+                    );
+                }
+            })
+            .map_err(|error| format!("cannot start the status writer: {error}"))?
+    };
 
     // Reference: the signal handlers stop the acceptor and the threads; `ioContext->run()` returns
     // and the program closes what it opened, in reverse order.
@@ -272,8 +317,19 @@ fn run(args: &[String]) -> Result<(), String> {
         "Stopping: the listener is closing.",
     );
 
+    stop_status.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = status_writer.join();
+
     sockets.stop_network();
     login.close();
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        format!(
+            "Stopped. {} connection(s) were accepted while it ran.",
+            sockets.accepted_count()
+        ),
+    );
     log.shutdown();
 
     Ok(())

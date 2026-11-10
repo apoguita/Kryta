@@ -7,7 +7,10 @@
 //! the acceptor, stops every thread and waits, in that order.
 
 use std::net::TcpStream;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+
+use common::logging::{Log, LogLevel};
 
 use super::async_acceptor::{AsyncAcceptor, Dispatch};
 use super::network_thread::{NetworkThread, NetworkThreadHandle};
@@ -18,6 +21,13 @@ pub struct SocketMgr {
     acceptor: Option<AsyncAcceptor>,
     threads: Vec<NetworkThread>,
     factory: SessionFactory,
+    /// Every connection this listener has accepted since it started, whether or not it spoke.
+    ///
+    /// This is the number that answers "did anything reach us at all", which a session cannot: a
+    /// connection that opens and closes without sending a byte never becomes one.
+    accepted: Arc<AtomicUsize>,
+    /// Where a connection is reported as it arrives, at the layer that accepts it.
+    log: Option<Log>,
 }
 
 impl SocketMgr {
@@ -27,6 +37,35 @@ impl SocketMgr {
             acceptor: None,
             threads: Vec::new(),
             factory,
+            accepted: Arc::new(AtomicUsize::new(0)),
+            log: None,
+        }
+    }
+
+    /// Report each accepted connection, and what the listener is doing, to this log.
+    ///
+    /// Set before `start_network`; a manager without one stays silent about its own traffic, which
+    /// is what the library's own tests want.
+    pub fn set_log(&mut self, log: Log) {
+        self.log = Some(log);
+    }
+
+    /// How many connections have been accepted since the listener started.
+    pub fn accepted_count(&self) -> usize {
+        self.accepted.load(Ordering::Relaxed)
+    }
+
+    /// A handle on that count, for a thread that reports while the manager is busy serving.
+    ///
+    /// The manager itself is not shared - it owns the threads - so a status writer takes this
+    /// instead of the manager.
+    pub fn accepted_handle(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.accepted)
+    }
+
+    fn say(&self, level: LogLevel, text: impl Into<String>) {
+        if let Some(log) = self.log.as_ref() {
+            log.out(level, "network", text);
         }
     }
 
@@ -57,9 +96,26 @@ impl SocketMgr {
         // Reference: `GetSocketForAccept` -> `SelectThreadWithMinConnections`. The factory builds a
         // session per connection; the thread a connection lands on is the one serving fewest.
         let factory = Arc::clone(&self.factory);
+        let accepted = Arc::clone(&self.accepted);
+        let log = self.log.clone();
         let dispatch: Dispatch = {
             let handles = Arc::clone(&handles);
             Arc::new(move |stream: TcpStream| {
+                // Counted and reported before the protocol sees anything: a client that connects
+                // and says nothing is still a client that reached this port.
+                let count = accepted.fetch_add(1, Ordering::Relaxed) + 1;
+                let peer = stream
+                    .peer_addr()
+                    .map(|address| address.to_string())
+                    .unwrap_or_else(|_| "an unreadable address".to_string());
+                if let Some(log) = log.as_ref() {
+                    log.out(
+                        LogLevel::Info,
+                        "network",
+                        format!("accepted connection #{count} from {peer}"),
+                    );
+                }
+
                 let index = select_thread_with_min_connections(&handles);
                 let session: Box<dyn Session> = (factory)();
                 if !handles[index].submit(stream, session) {
@@ -74,6 +130,11 @@ impl SocketMgr {
 
         self.acceptor = Some(acceptor);
         self.threads = threads;
+
+        self.say(
+            LogLevel::Info,
+            format!("listening on {bind_ip}:{bound} with {thread_count} network thread(s)"),
+        );
 
         Ok(bound)
     }

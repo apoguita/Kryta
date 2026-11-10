@@ -18,6 +18,11 @@ RealmServerPort = 3724
 # The address the listener binds. 0.0.0.0 is every interface.
 BindIP = "0.0.0.0"
 
+# How often the program reports that it is alive and how many connections it has accepted, in
+# seconds. This key is this project's own: the reference has no such line, and this server cannot be
+# tested without one.
+StatusInterval = 30
+
 # Written when a PID is wanted for a service manager. Empty writes nothing.
 PidFile = ""
 
