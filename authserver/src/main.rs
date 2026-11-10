@@ -125,6 +125,23 @@ fn run(args: &[String]) -> Result<(), String> {
         format!("Kryta authserver {}", env!("CARGO_PKG_VERSION")),
     );
 
+    // What this process actually took from its configuration, when asked. Masked: a connection
+    // string holds a password and a log line gets pasted into issue reports.
+    let (show_config, notes) = config
+        .value_bool("Log.EffectiveConfig", false)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    if show_config {
+        for (key, value) in config.describe() {
+            log.out(
+                LogLevel::Debug,
+                "server.loading",
+                format!("> Config: {key} = {value}"),
+            );
+        }
+    }
     // Stage 4. Reference: `CreatePIDFile(pidFile)`, when `PidFile` is set. A file that cannot be
     // written stops the program, with the reference's own two lines.
     let (pid_file, notes) = config

@@ -343,6 +343,20 @@ impl Config {
         self.critical.insert(name.to_string());
     }
 
+    /// Every key this configuration holds, with the values an operator may see and the ones that
+    /// must not leave the machine masked.
+    ///
+    /// A configuration that cannot be read back is a configuration nobody can debug: an operator who
+    /// cannot see which file was read, or which keys it held, is left guessing at a running process.
+    /// The masking is not decoration - a `*DatabaseInfo` value holds a password, and a log line is
+    /// copied into issue reports.
+    pub fn describe(&self) -> Vec<(String, String)> {
+        self.options
+            .iter()
+            .map(|(key, value)| (key.clone(), masked(key, value)))
+            .collect()
+    }
+
     /// The raw text of a key, if the file has it.
     pub fn raw(&self, name: &str) -> Option<&str> {
         self.options.get(name).map(String::as_str)
@@ -523,6 +537,26 @@ pub fn ini_key_to_env_var_key(key: &str) -> String {
     result
 }
 
+/// A value as it may appear in a log line.
+///
+/// `LoginDatabaseInfo` and its siblings are `host;port;user;password;database`, so the fourth field is
+/// a password. Everything else is shown as it is; a value that is not a connection string is not a
+/// secret this server knows how to recognise, and hiding it would make the dump useless.
+pub fn masked(key: &str, value: &str) -> String {
+    if !key.ends_with("DatabaseInfo") {
+        return value.to_string();
+    }
+
+    let fields: Vec<&str> = value.split(';').collect();
+    if fields.len() < 5 {
+        return value.to_string();
+    }
+
+    let mut masked: Vec<String> = fields.iter().map(|field| field.to_string()).collect();
+    masked[3] = "********".to_string();
+    masked.join(";")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,5 +683,36 @@ mod tests {
         };
         let config = Config::load("does-not-exist.conf", false, lenient).unwrap();
         assert_eq!(config.keys().count(), 0);
+    }
+    #[test]
+    fn a_connection_string_has_its_password_masked_and_nothing_else() {
+        let described = masked(
+            "LoginDatabaseInfo",
+            "127.0.0.1;5432;kryta;hunter2;kryta_login",
+        );
+        assert_eq!(described, "127.0.0.1;5432;kryta;********;kryta_login");
+        assert!(!described.contains("hunter2"));
+    }
+
+    #[test]
+    fn other_values_are_shown_as_they_are() {
+        assert_eq!(masked("RealmServerPort", "6112"), "6112");
+        assert_eq!(masked("LogsDir", ""), "");
+        // A key that is not a connection string is not touched even when it looks like one.
+        assert_eq!(masked("SomeInfo", "a;b;c;d;e"), "a;b;c;d;e");
+    }
+
+    #[test]
+    fn a_configuration_describes_its_keys_with_the_password_hidden() {
+        let config = Config::parse(
+            "RealmServerPort = 6112\nLoginDatabaseInfo = \"127.0.0.1;5432;kryta;secret;kryta_login\"\n",
+            PathBuf::from("test.conf"),
+            Policy::default(),
+        );
+        let described = config.describe();
+        assert_eq!(described.len(), 2);
+        assert!(described.iter().any(|(key, value)| key == "RealmServerPort" && value == "6112"));
+        assert!(described.iter().any(|(key, value)| key == "LoginDatabaseInfo" && value.contains("********")));
+        assert!(!described.iter().any(|(_, value)| value.contains("secret")));
     }
 }

@@ -52,6 +52,7 @@ one is on and its logger is not, the program says so and names the line to add.
 |---|---|---|---|
 | every byte of every connection | `Network.Trace = 1` | `Logger.network.trace = 6,Console Auth` | `trace ADDRESS in  4 bytes: 00 04 0C 00` and the outgoing side, plus a close line with the totals |
 | every database statement | `Database.Trace = 1` | `Logger.sql.trace = 6,Console Auth` | `query [database] SELECT ...` and `rows [database] 1`, `batch`, `execute`, `affected` |
+| every key the configuration held | `Log.EffectiveConfig = 1` | `Logger.server.loading = 6,Console Auth` | `> Config: LoginDatabaseInfo = 127.0.0.1;5432;kryta;********;kryta_login` - a connection string's password is masked, because a log line gets pasted into issue reports |
 
 The byte trace is the one that turns an unexplained client into evidence: whatever a client sends,
 including traffic this server does not understand, appears byte for byte with its direction. The

@@ -30,6 +30,10 @@ MapUpdate.Threads = 1
 # How long an empty instance lives, in milliseconds.
 Instance.UnloadDelay = 1800000
 
+# Every key this program read from this file, with any database password masked, at debug.
+# Off by default, and it needs its logger: Logger.server.loading = 6,Console Auth
+Log.EffectiveConfig = 0
+
 # Written when a PID is wanted for a service manager. Empty writes nothing.
 PidFile = ""
 
