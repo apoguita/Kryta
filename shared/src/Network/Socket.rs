@@ -157,6 +157,11 @@ pub fn hex(bytes: &[u8]) -> String {
     out
 }
 
+
+
+/// What the manager calls to build a session for a new connection.
+pub type SessionFactory = Arc<dyn Fn() -> Box<dyn Session> + Send + Sync>;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,6 +172,3 @@ mod tests {
         assert_eq!(hex(&[]), "");
     }
 }
-
-/// What the manager calls to build a session for a new connection.
-pub type SessionFactory = Arc<dyn Fn() -> Box<dyn Session> + Send + Sync>;
