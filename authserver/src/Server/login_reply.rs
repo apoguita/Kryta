@@ -251,4 +251,89 @@ mod tests {
         write_counted_utf16(&mut long, &"x".repeat(40), 20);
         assert_eq!(long.len(), 2 + 40, "a name over the field is cut to the field");
     }
+    /// The reference's own bytes, from the send trace of one login.
+    ///
+    /// `ASURA/recordings/gwps/world/load-stream.log` prints each reply's header, its size and its first
+    /// 24 bytes. Everything the trace shows, these builders must produce exactly - which is the only
+    /// check of the packet stream that needs no client.
+    mod against_the_reference_trace {
+        use super::*;
+
+        /// The request id the traced login used.
+        const REQUEST: u32 = 1;
+
+        /// The character id the trace shows: `A6 D0 EA 4E 01 6A 0B 43 30 88 13 51 59 9A EB BA`.
+        const TRACED_CHARACTER: [u8; 16] = [
+            0xA6, 0xD0, 0xEA, 0x4E, 0x01, 0x6A, 0x0B, 0x43, 0x30, 0x88, 0x13, 0x51, 0x59, 0x9A,
+            0xEB, 0xBA,
+        ];
+
+        fn hex(bytes: &[u8]) -> String {
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02X}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+
+        fn settings() -> Vec<u8> {
+            crate::server::account_settings::load("../data/account_settings.conf").unwrap()
+        }
+
+        #[test]
+        fn the_request_response_is_the_traced_ten_bytes() {
+            // 03 00 01 00 00 00 00 00 00 00
+            assert_eq!(
+                hex(&request_response(REQUEST, GM_ERROR_NONE)),
+                "03 00 01 00 00 00 00 00 00 00"
+            );
+        }
+
+        #[test]
+        fn the_friend_stream_end_is_the_traced_ten_bytes() {
+            // 14 00 01 00 00 00 01 00 00 00
+            assert_eq!(
+                hex(&friend_stream_end(REQUEST)),
+                "14 00 01 00 00 00 01 00 00 00"
+            );
+        }
+
+        #[test]
+        fn the_account_settings_are_the_traced_599_bytes() {
+            // 16 00 | 01 00 00 00 | 4F 02 | the first 16 bytes of the block
+            let frame = account_settings_frame(REQUEST, &settings());
+            assert_eq!(frame.len(), 599);
+            assert_eq!(
+                hex(&frame[..24]),
+                "16 00 01 00 00 00 4F 02 08 00 66 21 00 10 38 43 7F DE 68 8E F5 93 FF FF"
+            );
+        }
+
+        #[test]
+        fn the_account_info_starts_with_the_traced_twenty_four_bytes() {
+            // 11 00 | 01 00 00 00 | 00 00 00 00 | 04 00 00 00 | 3F 00 00 00 00 00 00 00 | 80 3F
+            let frame = account_info(REQUEST, [0x11; 16], None, 0);
+            assert_eq!(frame.len(), 81);
+            assert_eq!(
+                hex(&frame[..24]),
+                "11 00 01 00 00 00 00 00 00 00 04 00 00 00 3F 00 00 00 00 00 00 00 80 3F"
+            );
+        }
+
+        #[test]
+        fn the_character_info_starts_with_the_traced_twenty_four_bytes() {
+            // 07 00 | 01 00 00 00 | the character id | 00 00 ...
+            let character = ReplyCharacter {
+                id: TRACED_CHARACTER,
+                name: "Asur".to_string(),
+                settings: [0u8; 64],
+            };
+            let frame = character_info(REQUEST, &character);
+            assert_eq!(frame.len(), 102);
+            assert_eq!(
+                hex(&frame[..24]),
+                "07 00 01 00 00 00 A6 D0 EA 4E 01 6A 0B 43 30 88 13 51 59 9A EB BA 00 00"
+            );
+        }
+    }
 }

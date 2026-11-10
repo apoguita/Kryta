@@ -77,6 +77,33 @@ reference's own: a missing or unknown session is `401`, a provider that is not `
   still has no account table - that is the identity question, and it is the owner's.
 - Not built: the HTTP listener on 6601, and which program hosts it. `game/Portal/` is the code's home
   by this tree's naming; a third program is not in the naming, and the reference has two.
+## The answer to the login
+
+After the exchange and a `0x8038`, the client is owed five messages in this order, and each is sent
+whatever the account holds:
+
+| # | message | size |
+|---|---|---|
+| 1 | `0x0007` character info, once per character | 102 for a four-unit name |
+| 2 | `0x0016` account settings | 599 |
+| 3 | `0x0014` friend stream end | 10 |
+| 4 | `0x0011` account info | 81 |
+| 5 | `0x0003` request response | 10 |
+
+With no characters that is 700 bytes, and the client shows an empty character list; with one it is 802.
+A refusal sends only `0x0003`, with status `11`.
+
+- Source: `ASURA/recordings/gwps/world/load-stream.log`, the reference's own send trace of one login,
+  which prints each message with its header, its size and its first 24 bytes. That trace is the
+  authority for the sizes, and it is what settles a disagreement in the older notes: their arithmetic
+  sums an extra leading 10-byte message that the trace does not carry.
+- In this tree: `authserver/src/Server/login_reply.rs` and `data/account_settings.conf`, the 591-byte
+  block as a value file because it is a copied payload.
+- **Checked byte for byte against that trace**, without a client: five tests compare each builder's
+  output - all ten bytes of `0x0003` and `0x0014`, and the first 24 of `0x0016`, `0x0011` and `0x0007`
+  - with the bytes the reference printed. Every one matches.
+- What the trace does not show, and a client alone can judge: the fields inside a message past its
+  first 24 bytes, and the `eula_accepted` byte of `0x0011`.
 ## The first four bytes of a connection
 
 The client's very first bytes are a bare little-endian `u32`, not a framed message. Decoding them as
