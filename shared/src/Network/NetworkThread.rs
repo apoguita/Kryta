@@ -60,7 +60,7 @@ impl NetworkThread {
     /// Start a thread with its own runtime.
     ///
     /// Reference: `NetworkThread::Start`, which spawns the thread that runs the io context.
-    pub fn start(index: usize) -> std::io::Result<Self> {
+    pub fn start(index: usize, trace: Option<common::logging::Log>) -> std::io::Result<Self> {
         let (sender, mut receiver) = unbounded_channel::<Job>();
         let connections = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&connections);
@@ -84,8 +84,13 @@ impl NetworkThread {
                         };
 
                         let counter = Arc::clone(&counter);
+                        let trace = trace.clone();
                         tokio::spawn(async move {
-                            session.run(SessionIo::new(stream)).await;
+                            let mut io = SessionIo::new(stream);
+                            if let Some(log) = trace {
+                                io.enable_trace(log);
+                            }
+                            session.run(io).await;
                             counter.fetch_sub(1, Ordering::Relaxed);
                         });
                     }

@@ -28,6 +28,8 @@ pub struct SocketMgr {
     accepted: Arc<AtomicUsize>,
     /// Where a connection is reported as it arrives, at the layer that accepts it.
     log: Option<Log>,
+    /// Where every byte is reported, when the caller asked for a trace.
+    trace: Option<Log>,
 }
 
 impl SocketMgr {
@@ -39,6 +41,7 @@ impl SocketMgr {
             factory,
             accepted: Arc::new(AtomicUsize::new(0)),
             log: None,
+            trace: None,
         }
     }
 
@@ -48,6 +51,14 @@ impl SocketMgr {
     /// is what the library's own tests want.
     pub fn set_log(&mut self, log: Log) {
         self.log = Some(log);
+    }
+
+    /// Report every byte of every connection to this log.
+    ///
+    /// Off unless asked for: it is an instrument for an investigation, not a default. Set before
+    /// `start_network`.
+    pub fn set_trace(&mut self, log: Log) {
+        self.trace = Some(log);
     }
 
     /// How many connections have been accepted since the listener started.
@@ -84,7 +95,7 @@ impl SocketMgr {
 
         let mut threads = Vec::with_capacity(thread_count);
         for index in 0..thread_count {
-            let thread = NetworkThread::start(index)
+            let thread = NetworkThread::start(index, self.trace.clone())
                 .map_err(|error| format!("cannot start network thread {index}: {error}"))?;
             threads.push(thread);
         }

@@ -255,6 +255,34 @@ fn run(args: &[String]) -> Result<(), String> {
     let mut sockets = SocketMgr::new(factory);
     sockets.set_log(log.clone());
 
+    // Optional and off by default: with it on, every byte a client sends and receives is one line
+    // in the log. It is the difference between "the client said nothing useful" and knowing exactly
+    // what it said.
+    let (trace, notes) = config
+        .value_bool("Network.Trace", false)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    if trace {
+        sockets.set_trace(log.clone());
+        // The bytes are logged at debug, which the shipped configuration filters out. A switch that
+        // silently does nothing is worse than no switch, so the program says which line to add.
+        if log.enabled("network.trace", LogLevel::Debug) {
+            log.out(
+                LogLevel::Info,
+                "server.authserver",
+                "Network.Trace is on: every byte in and out is logged at debug.",
+            );
+        } else {
+            log.out(
+                LogLevel::Warn,
+                "server.authserver",
+                "Network.Trace is on, but no logger named 'network.trace' is enabled, so nothing will be traced. Add this line to the configuration file: Logger.network.trace = 6,Console Auth",
+            );
+        }
+    }
+
     let bound = sockets
         .start_network(&bind, port, 1)
         .map_err(|error| format!("Failed to initialize network: {error}"))?;

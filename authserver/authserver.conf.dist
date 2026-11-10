@@ -21,6 +21,10 @@ BindIP = "0.0.0.0"
 # How often the program reports that it is alive and how many connections it has accepted, in
 # seconds. This key is this project's own: the reference has no such line, and this server cannot be
 # tested without one.
+# Every byte of every connection, in and out, as a debug line.
+# Off by default: it is an instrument for an investigation, not a default.
+Network.Trace = 0
+
 StatusInterval = 30
 
 # Written when a PID is wanted for a service manager. Empty writes nothing.
@@ -55,4 +59,8 @@ Appender.Auth    = 2,5,0,Auth.log,w
 
 # Logger.<name> = Level,AppenderList
 # A logger inherits from its dotted parent and finally from root.
+# The byte trace's own logger. Its level is what decides whether Network.Trace shows anything:
+# 6 is Trace, which is where the bytes are written.
+Logger.network.trace = 6,Console Auth
+
 Logger.root = 4,Console Auth
