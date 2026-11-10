@@ -213,9 +213,7 @@ fn parse_head(head: &str) -> Option<(Request, usize)> {
     let mut body_length = 0usize;
 
     for line in lines {
-        let Some((name, value)) = line.split_once(':') else {
-            return None;
-        };
+        let (name, value) = line.split_once(':')?;
         let name = name.trim().to_ascii_lowercase();
         let value = value.trim();
         match name.as_str() {
