@@ -23,7 +23,9 @@
 use common::logging::{Log, LogLevel};
 use shared::network::socket::{Session, SessionFuture, SessionIo};
 
-use crate::authentication::ConnectionKind;
+use common::cryptography::Arc4;
+
+use crate::authentication::{ConnectionKind, PORTAL_ACCOUNT_LOGIN};
 use crate::server::file_check::FileCheck;
 use crate::server::handshake::{
     self, CLIENT_SEED_HEADER, CLIENT_SEED_LEN, MASTER_SECRET_LEN, SERVER_SEED_LEN,
@@ -257,9 +259,43 @@ impl AuthSession {
         self.say(
             LogLevel::Info,
             format!(
-                "Connection from {peer}: the plaintext half of the exchange is answered. Everything after it is scrambled, and the key derivation is not written yet."
+                "Connection from {peer}: the plaintext half of the exchange is answered. Everything after it is scrambled."
             ),
         );
+
+        // Everything from here is scrambled with a key both sides derive from the master. The
+        // first message the client sends is its login, and its id is the one thing that says
+        // whether the derivation matches: a wrong key produces two bytes that are not a message id.
+        let key = handshake::derive_key(&self.master);
+        let mut buffer = [0u8; 512];
+        match io.read(&mut buffer).await {
+            Ok(0) => self.say(
+                LogLevel::Warn,
+                format!("Connection from {peer} closed before its first encrypted message."),
+            ),
+            Err(error) => self.say(
+                LogLevel::Warn,
+                format!("Connection from {peer} could not be read after the exchange: {error}"),
+            ),
+            Ok(count) => match first_message_id(&key, &buffer[..count]) {
+                Some(id) if id == PORTAL_ACCOUNT_LOGIN => self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Connection from {peer}: first encrypted message is 0x{id:04X} with {count} bytes - the login message. The key derivation matches what this client expects."
+                    ),
+                ),
+                Some(id) => self.say(
+                    LogLevel::Warn,
+                    format!(
+                        "Connection from {peer}: first encrypted message reads as 0x{id:04X} ({count} bytes), and the login message is 0x{PORTAL_ACCOUNT_LOGIN:04X}. Either the key derivation does not match this client, or the message is not the one expected first."
+                    ),
+                ),
+                None => self.say(
+                    LogLevel::Warn,
+                    format!("Connection from {peer} sent {count} bytes, which is too few to be a message."),
+                ),
+            },
+        }
     }
 }
 
@@ -282,6 +318,21 @@ pub async fn read_exactly(io: &mut SessionIo, out: &mut [u8]) -> Result<(), Stri
         }
     }
     Ok(())
+}
+
+/// The id of the first encrypted message, when the bytes arrive with it.
+///
+/// The first bytes after the server seed are scrambled with RC4 keyed from the derived session key,
+/// and the first two of them are the message id. A wrong derivation gives two bytes that are not a
+/// message id, which is why this number is the answer to "did the key derivation match".
+pub fn first_message_id(key: &[u8; crate::server::handshake::KEY_LEN], scrambled: &[u8]) -> Option<u16> {
+    if scrambled.len() < 2 {
+        return None;
+    }
+    let mut cipher = Arc4::new(key);
+    let mut plain = scrambled.to_vec();
+    cipher.apply(&mut plain);
+    Some(u16::from_le_bytes([plain[0], plain[1]]))
 }
 
 #[cfg(test)]
@@ -426,5 +477,32 @@ mod tests {
 
         manager.stop_network();
         log.shutdown();
+    }
+    #[test]
+    fn the_first_encrypted_message_id_is_read_through_the_derived_key() {
+        use crate::authentication::PORTAL_ACCOUNT_LOGIN;
+        use crate::server::handshake::{derive_key, KEY_LEN};
+        use common::cryptography::Arc4;
+
+        let master = [0x33u8; MASTER_SECRET_LEN];
+        let key: [u8; KEY_LEN] = derive_key(&master);
+
+        // What the client would send, encrypted with the key both sides derive.
+        let mut plain = Vec::new();
+        plain.extend_from_slice(&PORTAL_ACCOUNT_LOGIN.to_le_bytes());
+        plain.extend_from_slice(&[0u8; 20]);
+
+        let mut cipher = Arc4::new(&key);
+        let mut scrambled = plain.clone();
+        cipher.apply(&mut scrambled);
+
+        assert_eq!(
+            first_message_id(&key, &scrambled),
+            Some(PORTAL_ACCOUNT_LOGIN)
+        );
+
+        // A different key does not read it as a message id.
+        let other: [u8; KEY_LEN] = derive_key(&[0x44u8; MASTER_SECRET_LEN]);
+        assert_ne!(first_message_id(&other, &scrambled), Some(PORTAL_ACCOUNT_LOGIN));
     }
 }

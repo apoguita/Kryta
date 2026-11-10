@@ -96,22 +96,35 @@ Two deviations, both recorded where they are taken:
 - the master secret comes from the operating system's entropy, and a machine without any logs that
   instead of silently using zeros.
 
-## What is not written, and why that is not caution
+## The digest the connection is scrambled with, and what will prove it
 
-**The 20-byte digest the key is derived with.** It is a fixed, described algorithm - it borrows
-SHA-1's initial values and runs a small number of rounds over the 20 input bytes, adding the working
-state back onto them - and it is the one wire fact this tree has no way to check:
+After the server seed, both sides derive a 20-byte key from the master and run RC4 with it, one
+instance per direction, both from offset zero.
 
-- no capture here holds a master secret and the digest a client produced from it;
-- no published vector exists for it, unlike RC4;
-- nothing else in the server depends on its output in a way that would fail loudly.
+- Source of the shape: recorded behaviour - five rounds over the five little-endian words of the
+  master, from SHA-1's initial state, with its first two round constants and two f functions, and a
+  digest that adds the working state back onto the input words. Recorded in
+  `ASURA/docs/reference/client-protocol.md` section 3 and implemented there.
+- In this tree: `authserver/src/Server/handshake.rs` (`derive_key`) and `common/src/Cryptography/`
+  (`Arc4`). It is the one wire fact here that is **transcribed rather than derived**, because there
+  is no other record of it and nothing in this repository can prove it: no capture holds a master
+  and its digest, there is no published vector, and no other path would fail loudly if a rotation
+  constant were wrong.
+- What *is* checkable here: that it maps 20 bytes to 20, deterministically, and that a changed
+  master changes the digest; and that a message encrypted with the derived key is read back through
+  it as its own id.
 
-A transcription could be wrong in one rotation constant and every test in this repository would still
-pass. Its only judge is a client, and its failure is an opaque `007` with no diagnostic in it. So it
-lands with a check that can prove it, or with the owner's word that it is worth writing unverified.
+**The client is the proof, and the log now says what it thinks.** The first thing the client sends
+after the exchange is its login message, `0x8038`. This server decrypts the first bytes of it and
+reports one of two things:
 
-Until then every connection says so on its own log line: the plaintext half of the exchange is
-answered, and everything after it is scrambled with a key this server cannot yet derive.
+| the log line | what it means |
+|---|---|
+| `first encrypted message is 0x8038 ... the key derivation matches what this client expects` | the derivation is right, and the conversation can be built on it |
+| `first encrypted message reads as 0xXXXX ... Either the key derivation does not match this client, or the message is not the one expected first` | the derivation, or the framing after it, is wrong - and the trace has the bytes to say which |
+
+That is the whole reason the byte trace exists: a wrong digest is not a silent failure any more, it
+is a log line with the bytes beside it.
 
 ## Where a fact goes when it is learned
 

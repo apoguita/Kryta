@@ -147,9 +147,130 @@ pub fn server_seed(master: &[u8; MASTER_SECRET_LEN], shared: &[u8; PUBLIC_LEN]) 
     out
 }
 
+/// The session key: the client's own 20-byte digest of the master secret.
+///
+/// **This is a transcription, and it is the one wire fact in this tree that no test can prove.** The
+/// shape is recorded behaviour: five rounds over the five little-endian words of the 20-byte master,
+/// starting from SHA-1's initial state, with SHA-1's first two round constants and its first two
+/// f functions, and a digest that *adds* the working state back onto the input words instead of
+/// emitting a chaining value. No padding, no length encoding, one block, always the same size.
+///
+/// It is recorded in ASURA's `client/handshake.rs` (`derive_key`), itself ported from the reference
+/// server's `AuthSrv.c`, and there is no other record of it here. That is why it is transcribed
+/// rather than derived: a different digest means a keystream the client does not recognise, and the
+/// client answers with an opaque `007` and nothing else.
+///
+/// What can be checked in this repository: that it is deterministic, that it maps 20 bytes to 20,
+/// and that it changes when the master changes. What cannot: that it is the digest *this* client
+/// computes. That answer comes from a running client - and with the byte trace on, a wrong digest
+/// shows as garbage where the first encrypted message should be a message id.
+pub fn derive_key(master: &[u8; MASTER_SECRET_LEN]) -> [u8; KEY_LEN] {
+    fn word(bytes: &[u8]) -> u32 {
+        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    }
+
+    let input = [
+        word(&master[0..4]),
+        word(&master[4..8]),
+        word(&master[8..12]),
+        word(&master[12..16]),
+        word(&master[16..20]),
+    ];
+
+    // SHA-1's initial state, as five working registers.
+    let mut a: u32 = 0x6745_2301;
+    let mut b: u32 = 0xEFCD_AB89;
+    let mut c: u32 = 0x98BA_DCFE;
+    let mut d: u32 = 0x1032_5476;
+    let mut e: u32 = 0xC3D2_E1F0;
+
+    // Three rounds of f(x, y, z) = z ^ (y & (x ^ z)) with SHA-1's first constant.
+    let constant = 0x5A82_7999;
+
+    e = e
+        .wrapping_add(input[0])
+        .wrapping_add(a.rotate_left(5))
+        .wrapping_add(d ^ (b & (c ^ d)))
+        .wrapping_add(constant);
+    b = b.rotate_left(30);
+
+    d = d
+        .wrapping_add(input[1])
+        .wrapping_add(e.rotate_left(5))
+        .wrapping_add(c ^ (a & (b ^ c)))
+        .wrapping_add(constant);
+    a = a.rotate_left(30);
+
+    c = c
+        .wrapping_add(input[2])
+        .wrapping_add(d.rotate_left(5))
+        .wrapping_add(b ^ (e & (a ^ b)))
+        .wrapping_add(constant);
+    e = e.rotate_left(30);
+
+    // Two rounds of parity with SHA-1's second constant.
+    let constant = 0x6ED9_EBA1;
+
+    e = e
+        .wrapping_add(input[3])
+        .wrapping_add(a.rotate_left(5))
+        .wrapping_add(b ^ c ^ d)
+        .wrapping_add(constant);
+    b = b.rotate_left(30);
+
+    d = d
+        .wrapping_add(input[4])
+        .wrapping_add(e.rotate_left(5))
+        .wrapping_add(a ^ b ^ c)
+        .wrapping_add(constant);
+    a = a.rotate_left(30);
+
+    // The digest: the input words with the working state added onto them.
+    let digest = [
+        input[0].wrapping_add(a),
+        input[1].wrapping_add(b),
+        input[2].wrapping_add(c),
+        input[3].wrapping_add(d),
+        input[4].wrapping_add(e),
+    ];
+
+    let mut key = [0u8; KEY_LEN];
+    for (index, part) in digest.iter().enumerate() {
+        key[index * 4..index * 4 + 4].copy_from_slice(&part.to_le_bytes());
+    }
+    key
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_key_is_twenty_bytes_and_deterministic() {
+        let master = [0x11u8; MASTER_SECRET_LEN];
+        let first = derive_key(&master);
+        let second = derive_key(&master);
+        assert_eq!(first.len(), KEY_LEN);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn a_different_master_gives_a_different_key() {
+        let mut master = [0x11u8; MASTER_SECRET_LEN];
+        let before = derive_key(&master);
+        master[0] ^= 0x01;
+        let after = derive_key(&master);
+        assert_ne!(before, after, "one flipped bit must change the digest");
+    }
+
+    #[test]
+    fn the_digest_adds_the_state_back_onto_the_input() {
+        // The derivation's documented shape: digest = input + state, word by word. With a master of
+        // zeros the first digest word is the first working register's final value, which is not
+        // zero - a hash that emitted a chaining value instead would differ here.
+        let key = derive_key(&[0u8; MASTER_SECRET_LEN]);
+        assert_ne!(key, [0u8; KEY_LEN]);
+    }
 
     #[test]
     fn the_sizes_are_the_measured_ones_and_add_up() {

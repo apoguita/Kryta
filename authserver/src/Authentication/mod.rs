@@ -37,6 +37,13 @@ pub enum ConnectionKind {
 pub const AUTH_VERSION_HEADER: u32 = 0x000C_0400;
 /// The four bytes of a gameplay connection.
 pub const GAME_VERSION_HEADER: u32 = 0x000C_0500;
+/// The header of the client's login message, the first thing it sends once the exchange is done.
+///
+/// Evidence: `ASURA/docs/reference/client-protocol.md` section 4, which records it as
+/// `AUTH_CMSG_PORTAL_ACCOUNT_LOGIN` (`0x8038`, 150 bytes on the wire) carrying the portal's
+/// `user_id` and `session_id`, a character name and a type.
+pub const PORTAL_ACCOUNT_LOGIN: u16 = 0x8038;
+
 /// The four bytes of a control connection.
 pub const CONTROL_VERSION_HEADER: u32 = 0x000C_0FFF;
 
