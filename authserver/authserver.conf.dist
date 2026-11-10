@@ -73,6 +73,10 @@ Appender.Auth    = 2,5,0,Auth.log,w
 
 # Logger.<name> = Level,AppenderList
 # A logger inherits from its dotted parent and finally from root.
+# What the client sent after unscrambling it, one line per message at debug. Without it nothing in
+# the log says what a client asked for: the raw trace shows ciphertext and the key is per connection.
+Logger.auth.trace = 6,Console Auth
+
 # The byte trace's own logger. Its level is what decides whether Network.Trace shows anything:
 # 6 is Trace, which is where the bytes are written.
 Logger.network.trace = 6,Console Auth

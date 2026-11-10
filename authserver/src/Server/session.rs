@@ -413,6 +413,22 @@ impl AuthSession {
                     "Connection from {peer}: encrypted message {messages} is 0x{id:04X} with {count} bytes{meaning}."
                 ),
             );
+
+            // The bytes as the client sent them once unscrambled. The raw trace cannot help here: it
+            // shows the ciphertext, and the key is per connection, so without this line nothing in the
+            // log says what a client actually asked for.
+            {
+                let shown = plain.len().min(64);
+                self.log.out(
+                    LogLevel::Debug,
+                    "auth.trace",
+                    format!(
+                        "auth.trace {peer} message {messages} 0x{id:04X} body: {}{}",
+                        shared::network::socket::hex(&plain[2..shown]),
+                        if plain.len() > shown { " ..." } else { "" }
+                    ),
+                );
+            }
         }
     }
 }
