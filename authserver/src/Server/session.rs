@@ -310,6 +310,28 @@ impl AuthSession {
                 }
                 _ => "",
             };
+            if id == PORTAL_ACCOUNT_LOGIN {
+                match decode_portal_login(&plain[2..]) {
+                    Some(login) => self.say(
+                        LogLevel::Info,
+                        format!(
+                            "Connection from {peer}: login request {}, user {} session {} character '{}' type '{}'.",
+                            login.request,
+                            uuid_le_text(&login.user_id),
+                            uuid_le_text(&login.session_id),
+                            login.character,
+                            login.account_type
+                        ),
+                    ),
+                    None => self.say(
+                        LogLevel::Warn,
+                        format!(
+                            "Connection from {peer}: the login message is {} bytes, which is too few for its fields.",
+                            plain.len()
+                        ),
+                    ),
+                }
+            }
 
             self.say(
                 LogLevel::Info,
@@ -340,6 +362,89 @@ pub async fn read_exactly(io: &mut SessionIo, out: &mut [u8]) -> Result<(), Stri
         }
     }
     Ok(())
+}
+
+/// What a `0x8038` login message says, once the connection is unscrambled.
+///
+/// Layout, from the recorded shape of `AuthSrv_PortalAccountLogin`: the header, a `u32` request id the
+/// reply must echo, the portal's `user_id` and `session_id` as 16-byte little-endian UUIDs, a counted
+/// UTF-16 character name, and a counted UTF-16 account type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortalLogin {
+    /// Echoed in every reply to this request.
+    pub request: u32,
+    /// The portal user id, in the wire's little-endian UUID form.
+    pub user_id: [u8; 16],
+    /// The session id the portal answered with.
+    pub session_id: [u8; 16],
+    /// The character the client last played. Empty on a first login.
+    pub character: String,
+    /// A client-side word about the account; carried so a trace matches.
+    pub account_type: String,
+}
+
+/// Read a `0x8038` message's body.
+///
+/// Answers `None` when the bytes are too few for the fields that are required, which is the shape of a
+/// message that has not fully arrived. The counted strings are read as the client packs them: a `u16`
+/// count and that many UTF-16 units, no padding.
+pub fn decode_portal_login(body: &[u8]) -> Option<PortalLogin> {
+    if body.len() < 4 + 16 + 16 {
+        return None;
+    }
+
+    let request = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
+    let mut user_id = [0u8; 16];
+    user_id.copy_from_slice(&body[4..20]);
+    let mut session_id = [0u8; 16];
+    session_id.copy_from_slice(&body[20..36]);
+
+    let mut at = 36;
+    let counted = |at: &mut usize| -> String {
+        if *at + 2 > body.len() {
+            return String::new();
+        }
+        let count = u16::from_le_bytes([body[*at], body[*at + 1]]) as usize;
+        *at += 2;
+        let end = (*at + count * 2).min(body.len());
+        let units: Vec<u16> = (0..(end - *at) / 2)
+            .map(|index| {
+                let offset = *at + index * 2;
+                u16::from_le_bytes([body[offset], body[offset + 1]])
+            })
+            .collect();
+        *at = end;
+        String::from_utf16_lossy(&units)
+    };
+
+    let character = counted(&mut at);
+    let account_type = counted(&mut at);
+
+    Some(PortalLogin {
+        request,
+        user_id,
+        session_id,
+        character,
+        account_type,
+    })
+}
+
+/// A 16-byte UUID in the wire's order, as text: the RFC 4122 little-endian variant.
+pub fn uuid_le_text(bytes: &[u8; 16]) -> String {
+    format!(
+        "{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+        u16::from_le_bytes([bytes[4], bytes[5]]),
+        u16::from_le_bytes([bytes[6], bytes[7]]),
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15]
+    )
 }
 
 #[cfg(test)]
@@ -529,5 +634,43 @@ mod tests {
         let mut text = scrambled_preamble.clone();
         wrong.apply(&mut text);
         assert_ne!(u16::from_le_bytes([text[0], text[1]]), 0x8001);
+    }
+    #[test]
+    fn a_login_message_is_read_into_its_fields() {
+        use crate::authentication::PORTAL_ACCOUNT_LOGIN;
+
+        let mut body = Vec::new();
+        body.extend_from_slice(&PORTAL_ACCOUNT_LOGIN.to_le_bytes());
+        body.extend_from_slice(&7u32.to_le_bytes()); // the request id to echo
+
+        let mut user = [0u8; 16];
+        user[0] = 0x11;
+        user[15] = 0xAA;
+        body.extend_from_slice(&user);
+
+        let mut session = [0u8; 16];
+        session[0] = 0x22;
+        body.extend_from_slice(&session);
+
+        // The character name and the account type, as the client packs them: a u16 count and units.
+        for text in ["Asura One", "gw1"] {
+            let units: Vec<u16> = text.encode_utf16().collect();
+            body.extend_from_slice(&(units.len() as u16).to_le_bytes());
+            for unit in units {
+                body.extend_from_slice(&unit.to_le_bytes());
+            }
+        }
+
+        let login = decode_portal_login(&body[2..]).expect("the body is long enough");
+        assert_eq!(login.request, 7);
+        assert_eq!(login.character, "Asura One");
+        assert_eq!(login.account_type, "gw1");
+        assert_eq!(uuid_le_text(&login.user_id).len(), 36);
+        assert!(uuid_le_text(&login.user_id).starts_with("00000011"));
+    }
+
+    #[test]
+    fn a_body_that_is_too_short_is_not_a_login() {
+        assert!(decode_portal_login(&[0u8; 20]).is_none());
     }
 }
