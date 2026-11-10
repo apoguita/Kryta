@@ -14,7 +14,7 @@ mod authentication;
 #[path = "Server/mod.rs"]
 mod server;
 
-use crate::server::AuthSession;
+use crate::server::{AuthSession, FileCheck};
 use common::configuration::{Complaint, Config, Policy, PolicyOverride, Severity};
 use common::logging::{Log, LogLevel};
 use common::utilities::create_pid_file;
@@ -245,10 +245,27 @@ fn run(args: &[String]) -> Result<(), String> {
     // The session is the reference's `AuthSession`: it reads the client's version and its seed and
     // answers with the server's seed. What it does not do yet is anything after that point, because
     // everything there is scrambled with a key both sides derive and that derivation is not written.
+    // The file check is a value file: its bytes are the client's, and they change when the client's
+    // own files change, so they are read here rather than compiled in.
+    let file_check = FileCheck::load("data/file_check.conf").map_err(|error| {
+        format!("the file check at data/file_check.conf cannot be read: {error}")
+    })?;
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        format!(
+            "File check: {} bytes of question, {} of answer.",
+            file_check.request_len(),
+            file_check.answer().len()
+        ),
+    );
+
     let factory: SessionFactory = {
         let log = log.clone();
+        let file_check = file_check.clone();
         std::sync::Arc::new(move || {
-            Box::new(AuthSession::with_random_master(log.clone())) as Box<dyn Session>
+            Box::new(AuthSession::with_random_master(log.clone(), file_check.clone()))
+                as Box<dyn Session>
         })
     };
 

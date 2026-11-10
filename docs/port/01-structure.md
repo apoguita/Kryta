@@ -97,6 +97,7 @@ Updated as stages land, because this is a statement of today and not of intent.
 | `shared/src/Worlds/` | done - the world list is read from `realmlist` and a login refuses to start on an empty one; `7adbe37` |
 | `shared/src/Secrets/` | not started - the reference's only secret is WoW's TOTP master key, so what this game's secret is has not been decided |
 | `authserver/` | stages 1 to 8 - config, log, PID file, login database and its schema, world list, listener; it also reports its own status on a timer, because a server that cannot say whether anything reached it cannot be tested |
+| the file check | answered from `data/file_check.conf`, before the version message on the same socket: a client that asks gets its 32 bytes, or the socket closes |
 | the auth conversation | the plaintext half - version, seed, answer - on a real socket; `13b5287` |
 | `worldserver/` | stages 1 to 4 - config, log, PID file; stops at its databases; `b604814` |
 | `game/`, `scripts/`, `modules/` | not started |

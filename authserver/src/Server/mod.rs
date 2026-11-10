@@ -3,9 +3,12 @@
 //! Reference: `src/server/apps/authserver/Server/AuthSocket.{h,cpp}`, which is the object a
 //! connection becomes and where the reference's own key exchange and conversation live.
 
+#[path = "file_check.rs"]
+pub mod file_check;
 #[path = "handshake.rs"]
 pub mod handshake;
 #[path = "session.rs"]
 pub mod session;
 
+pub use file_check::FileCheck;
 pub use session::AuthSession;

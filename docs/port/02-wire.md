@@ -26,6 +26,31 @@ the record of this client's headers reports 194 client-to-server and 488 server-
 field layouts measured per message (`client-protocol.md` section 11.7). None of them is in this tree
 yet, because the conversation that uses them is not written either.
 
+## The file check
+
+Before the version message, on the same socket, the client asks which game files it should have:
+**21 bytes in, 32 bytes out**. It compares the whole answer, and treats a wrong or missing one as
+fatal.
+
+| | |
+|---|---|
+| the question | 21 bytes, `01 00 00 00 00 F1 00 10 00 01` then eleven zeros |
+| the answer | 32 bytes: header `0x02F1`, length `0x0020`, then six file ids in tight consecutive order with a zero among them |
+
+- Source of the shape: this client's protocol, recorded in `ASURA/docs/reference/client-protocol.md`
+  section 7. The reference server has no equivalent - its client does not ask this - which is why
+  `game/FileCheck/` exists in this tree's naming.
+- In this tree: `data/file_check.conf` holds both byte strings as values, and
+  `authserver/src/Server/file_check.rs` reads them and does the comparison. The bytes are not
+  compiled in because they change when the client's own files change.
+- Proved by: the shipped file's lengths (21 and 32) and header; a real socket sending the question
+  and then the preamble on the same connection; and a question that only starts like it, which is
+  refused rather than answered.
+- What the ids are not: a rule. They are a client-build fact, refreshed by capturing the reply a
+  live client accepts - never by arithmetic on the previous set.
+
+A socket that does not answer this leaves the client at "Connecting" with nothing to report, which
+is exactly what this server did to the client before the check existed.
 ## The first four bytes of a connection
 
 The client's very first bytes are a bare little-endian `u32`, not a framed message. Decoding them as
