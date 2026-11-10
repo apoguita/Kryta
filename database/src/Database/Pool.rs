@@ -79,7 +79,6 @@ impl DatabaseWorkerPool {
             let receiver = Arc::clone(&receiver);
             let log = log.clone();
             let database = settings.info.database.clone();
-            let trace = trace;
 
             let handle = std::thread::Builder::new()
                 .name(format!("db-{database}-{index}"))
