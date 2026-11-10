@@ -282,6 +282,32 @@ impl AuthSession {
         // The outbound stream starts at its own position zero, keyed the same way: one cipher per
         // direction, not one cipher shared.
         let mut encrypt = Arc4::new(&key);
+
+        // The reference answers the seed with two messages before the client asks for anything: the
+        // session info and a heartbeat. A client that does not get them waits and then gives up -
+        // a run against a server that answered only the seed sat for forty seconds and reset.
+        let mut salt = [0u8; 4];
+        if getrandom::getrandom(&mut salt).is_err() {
+            self.say(
+                LogLevel::Warn,
+                format!("Connection from {peer}: no entropy for the session salt; using zero."),
+            );
+        }
+        let mut greeting = crate::server::login_reply::greeting(u32::from_le_bytes(salt));
+        encrypt.apply(&mut greeting);
+        match io.write_all(&greeting).await {
+            Ok(()) => self.say(
+                LogLevel::Info,
+                format!(
+                    "Connection from {peer}: greeted with the session info and a heartbeat, {} bytes.",
+                    greeting.len()
+                ),
+            ),
+            Err(error) => self.say(
+                LogLevel::Warn,
+                format!("Connection from {peer} could not be greeted: {error}"),
+            ),
+        }
         let mut buffer = [0u8; 1024];
         let mut messages = 0usize;
 
@@ -726,7 +752,6 @@ mod tests {
     #[test]
     fn the_login_is_answered_with_the_five_messages_the_client_reads() {
         use crate::authentication::PORTAL_ACCOUNT_LOGIN;
-        use crate::server::handshake::derive_key;
         use common::cryptography::Arc4;
 
         let log = Log::new();
@@ -758,8 +783,18 @@ mod tests {
         client.read_exact(&mut server_seed).unwrap();
         assert_eq!(&server_seed[..2], &0x1601u16.to_le_bytes());
 
+        // Then the greeting the reference sends before the client asks anything: session info and a
+        // heartbeat, sixteen bytes, scrambled with the outbound stream's first keystream bytes.
+        let key = crate::server::handshake::derive_key(&master);
+        let mut greeting = [0u8; 16];
+        client.read_exact(&mut greeting).unwrap();
+        let mut reading = Arc4::new(&key);
+        reading.apply(&mut greeting);
+        assert_eq!(&greeting[..2], &0x0001u16.to_le_bytes(), "session info first");
+        assert_eq!(&greeting[10..12], &0x0000u16.to_le_bytes(), "then a heartbeat");
+        assert_eq!(&greeting[12..16], &16u32.to_le_bytes(), "the tick is 16");
+
         // The login, packed as the client packs it and scrambled with the key both sides derive.
-        let key = derive_key(&master);
         let mut body = Vec::new();
         body.extend_from_slice(&PORTAL_ACCOUNT_LOGIN.to_le_bytes());
         body.extend_from_slice(&0x2Au32.to_le_bytes());
@@ -782,8 +817,9 @@ mod tests {
         let mut answer = vec![0u8; 700];
         client.read_exact(&mut answer).unwrap();
 
-        let mut receiving = Arc4::new(&key);
-        receiving.apply(&mut answer);
+        // One keystream across the whole outbound direction: the greeting was its first sixteen bytes,
+        // so the answer continues from where they left off.
+        reading.apply(&mut answer);
 
         let mut at = 0usize;
         let mut frames = Vec::new();

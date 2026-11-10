@@ -161,6 +161,37 @@ fn write_counted_utf16(out: &mut Vec<u8>, text: &str, capacity: usize) {
     }
 }
 
+/// `AUTH_SMSG_SESSION_INFO` (`0x0001`): the server salt, sent straight after the seed.
+///
+/// The reference sends this before anything else on the connection, and a client that does not get it
+/// waits: a run against a server that answered only the seed sat for forty seconds and then reset the
+/// connection. Size and shape from the trace: `01 00 | salt | 00 00 00 00`, ten bytes.
+pub fn session_info(salt: u32, unknown: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(8);
+    body.extend_from_slice(&salt.to_le_bytes());
+    body.extend_from_slice(&unknown.to_le_bytes());
+    frame(0x0001, body)
+}
+
+/// `AUTH_SMSG_HEARTBEAT` (`0x0000`): the tick, which is a constant rather than a clock.
+///
+/// Size and shape from the trace: `00 00 | 10 00 00 00`, six bytes. The reference always sends 16.
+pub fn heartbeat(tick: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(4);
+    body.extend_from_slice(&tick.to_le_bytes());
+    frame(0x0000, body)
+}
+
+/// What the server sends once the seed is answered, before the client asks for anything.
+///
+/// Two messages, in the trace's order: the session info and the heartbeat. Both are scrambled with the
+/// same outbound cipher the rest of the conversation uses.
+pub fn greeting(salt: u32) -> Vec<u8> {
+    let mut out = session_info(salt, 0);
+    out.extend_from_slice(&heartbeat(16));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,5 +366,14 @@ mod tests {
                 "07 00 01 00 00 00 A6 D0 EA 4E 01 6A 0B 43 30 88 13 51 59 9A EB BA 00 00"
             );
         }
-    }
+        #[test]
+        fn the_greeting_after_the_seed_is_the_traced_sixteen_bytes() {
+            // 01 00 | salt | 00 00 00 00 then 00 00 | 10 00 00 00
+            let greeting = greeting(0xE94B_2D84);
+            assert_eq!(greeting.len(), 16);
+            assert_eq!(
+                hex(&greeting),
+                "01 00 84 2D 4B E9 00 00 00 00 00 00 10 00 00 00"
+            );
+        }    }
 }
