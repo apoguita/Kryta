@@ -263,38 +263,60 @@ impl AuthSession {
             ),
         );
 
-        // Everything from here is scrambled with a key both sides derive from the master. The
-        // first message the client sends is its login, and its id is the one thing that says
-        // whether the derivation matches: a wrong key produces two bytes that are not a message id.
+        // Everything from here is scrambled with a key both sides derive from the master, and the
+        // cipher's position carries across reads: a running stream, not one per message.
         let key = handshake::derive_key(&self.master);
-        let mut buffer = [0u8; 512];
-        match io.read(&mut buffer).await {
-            Ok(0) => self.say(
-                LogLevel::Warn,
-                format!("Connection from {peer} closed before its first encrypted message."),
-            ),
-            Err(error) => self.say(
-                LogLevel::Warn,
-                format!("Connection from {peer} could not be read after the exchange: {error}"),
-            ),
-            Ok(count) => match first_message_id(&key, &buffer[..count]) {
-                Some(id) if id == PORTAL_ACCOUNT_LOGIN => self.say(
-                    LogLevel::Info,
-                    format!(
-                        "Connection from {peer}: first encrypted message is 0x{id:04X} with {count} bytes - the login message. The key derivation matches what this client expects."
-                    ),
+        let mut decrypt = Arc4::new(&key);
+        let mut buffer = [0u8; 1024];
+        let mut messages = 0usize;
+
+        loop {
+            let count = match io.read(&mut buffer).await {
+                Ok(0) => {
+                    self.say(
+                        LogLevel::Info,
+                        format!(
+                            "Connection from {peer} closed after {messages} encrypted message(s)."
+                        ),
+                    );
+                    return;
+                }
+                Ok(count) => count,
+                Err(error) => {
+                    self.say(
+                        LogLevel::Warn,
+                        format!("Connection from {peer} could not be read after the exchange: {error}"),
+                    );
+                    return;
+                }
+            };
+
+            messages += 1;
+            let mut plain = buffer[..count].to_vec();
+            decrypt.apply(&mut plain);
+
+            let id = if plain.len() >= 2 {
+                u16::from_le_bytes([plain[0], plain[1]])
+            } else {
+                0
+            };
+
+            // The ids worth naming, because each one is a different answer to "how far did the
+            // client get": its 64-byte preamble arrives first, then the login message.
+            let meaning = match id {
+                0x8001 => " - the client's preamble, which this server does not answer",
+                PORTAL_ACCOUNT_LOGIN => {
+                    " - the login message: the key derivation matches what this client expects"
+                }
+                _ => "",
+            };
+
+            self.say(
+                LogLevel::Info,
+                format!(
+                    "Connection from {peer}: encrypted message {messages} is 0x{id:04X} with {count} bytes{meaning}."
                 ),
-                Some(id) => self.say(
-                    LogLevel::Warn,
-                    format!(
-                        "Connection from {peer}: first encrypted message reads as 0x{id:04X} ({count} bytes), and the login message is 0x{PORTAL_ACCOUNT_LOGIN:04X}. Either the key derivation does not match this client, or the message is not the one expected first."
-                    ),
-                ),
-                None => self.say(
-                    LogLevel::Warn,
-                    format!("Connection from {peer} sent {count} bytes, which is too few to be a message."),
-                ),
-            },
+            );
         }
     }
 }
@@ -318,21 +340,6 @@ pub async fn read_exactly(io: &mut SessionIo, out: &mut [u8]) -> Result<(), Stri
         }
     }
     Ok(())
-}
-
-/// The id of the first encrypted message, when the bytes arrive with it.
-///
-/// The first bytes after the server seed are scrambled with RC4 keyed from the derived session key,
-/// and the first two of them are the message id. A wrong derivation gives two bytes that are not a
-/// message id, which is why this number is the answer to "did the key derivation match".
-pub fn first_message_id(key: &[u8; crate::server::handshake::KEY_LEN], scrambled: &[u8]) -> Option<u16> {
-    if scrambled.len() < 2 {
-        return None;
-    }
-    let mut cipher = Arc4::new(key);
-    let mut plain = scrambled.to_vec();
-    cipher.apply(&mut plain);
-    Some(u16::from_le_bytes([plain[0], plain[1]]))
 }
 
 #[cfg(test)]
@@ -479,7 +486,7 @@ mod tests {
         log.shutdown();
     }
     #[test]
-    fn the_first_encrypted_message_id_is_read_through_the_derived_key() {
+    fn a_running_cipher_reads_the_clients_messages_in_order() {
         use crate::authentication::PORTAL_ACCOUNT_LOGIN;
         use crate::server::handshake::{derive_key, KEY_LEN};
         use common::cryptography::Arc4;
@@ -487,22 +494,40 @@ mod tests {
         let master = [0x33u8; MASTER_SECRET_LEN];
         let key: [u8; KEY_LEN] = derive_key(&master);
 
-        // What the client would send, encrypted with the key both sides derive.
-        let mut plain = Vec::new();
-        plain.extend_from_slice(&PORTAL_ACCOUNT_LOGIN.to_le_bytes());
-        plain.extend_from_slice(&[0u8; 20]);
+        // What the client sends: its preamble, then the login message, both through one running
+        // cipher - which is what the session reads with.
+        let mut preamble = Vec::new();
+        preamble.extend_from_slice(&0x8001u16.to_le_bytes());
+        preamble.extend_from_slice(&[0u8; 62]);
 
-        let mut cipher = Arc4::new(&key);
-        let mut scrambled = plain.clone();
-        cipher.apply(&mut scrambled);
+        let mut login = Vec::new();
+        login.extend_from_slice(&PORTAL_ACCOUNT_LOGIN.to_le_bytes());
+        login.extend_from_slice(&[0u8; 20]);
 
+        let mut sending = Arc4::new(&key);
+        let mut scrambled_preamble = preamble.clone();
+        let mut scrambled_login = login.clone();
+        sending.apply(&mut scrambled_preamble);
+        sending.apply(&mut scrambled_login);
+
+        // The same reading: one cipher, two messages, in order.
+        let mut receiving = Arc4::new(&key);
+        let mut first = scrambled_preamble.clone();
+        receiving.apply(&mut first);
+        let mut second = scrambled_login.clone();
+        receiving.apply(&mut second);
+
+        assert_eq!(u16::from_le_bytes([first[0], first[1]]), 0x8001);
         assert_eq!(
-            first_message_id(&key, &scrambled),
-            Some(PORTAL_ACCOUNT_LOGIN)
+            u16::from_le_bytes([second[0], second[1]]),
+            PORTAL_ACCOUNT_LOGIN
         );
 
-        // A different key does not read it as a message id.
+        // A different key reads neither as a message id.
         let other: [u8; KEY_LEN] = derive_key(&[0x44u8; MASTER_SECRET_LEN]);
-        assert_ne!(first_message_id(&other, &scrambled), Some(PORTAL_ACCOUNT_LOGIN));
+        let mut wrong = Arc4::new(&other);
+        let mut text = scrambled_preamble.clone();
+        wrong.apply(&mut text);
+        assert_ne!(u16::from_le_bytes([text[0], text[1]]), 0x8001);
     }
 }
