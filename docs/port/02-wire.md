@@ -51,6 +51,32 @@ fatal.
 
 A socket that does not answer this leaves the client at "Connecting" with nothing to report, which
 is exactly what this server did to the client before the check existed.
+## The portal, before the login message
+
+The client is launched with `-portal 127.0.0.1`, speaks plain HTTP to `localhost:6601`, and takes the
+pair its login message will carry from four endpoints. Between "the client reached the auth port" and
+"the client can log in" this is the step, and it is a different protocol on a different port.
+
+| # | request | answer |
+|---|---|---|
+| 1 | `GET /Spawned/WebGate/session/create.xml` | `<Reply><Session>UUID</Session></Reply>` |
+| 2 | `POST /Spawned/WebGate/users/login.xml` | the `UserId`/`LoginName`/`Provider` block |
+| 3 | `POST /Spawned/WebGate/my_account/game_accounts.xml` | a one-row array for the game code |
+| 4 | `POST /Spawned/WebGate/my_account/token.xml` | `<Reply><Token>UUID</Token></Reply>` |
+
+The session comes from call 1 and travels in `Authorization: Arena <session>`. The refusals are the
+reference's own: a missing or unknown session is `401`, a provider that is not `Portal` is
+`400 Unsupported provider`, and a login name nobody knows is `400 who are you?`.
+
+- Source: `ASURA/docs/reference/client-protocol.md` section 4, measured with a real client at build
+  39112, where all four answered `200` and the pair they returned is what the login message carried.
+- In this tree: `game/src/Portal/`, which is one of the directories the naming adds because the
+  reference has no equivalent. The arrangement is a request-to-response function with no socket in
+  it, so the same code answers a test and a program.
+- Not decided here: who an account is. `Accounts` is supplied by the caller, and the login database
+  still has no account table - that is the identity question, and it is the owner's.
+- Not built: the HTTP listener on 6601, and which program hosts it. `game/Portal/` is the code's home
+  by this tree's naming; a third program is not in the naming, and the reference has two.
 ## The first four bytes of a connection
 
 The client's very first bytes are a bare little-endian `u32`, not a framed message. Decoding them as

@@ -327,6 +327,7 @@ version = "0.1.0"
 dependencies = [
  "common",
  "database",
+ "getrandom 0.2.17",
  "shared",
 ]
 

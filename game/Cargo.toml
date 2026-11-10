@@ -12,3 +12,5 @@ workspace = true
 common = { path = "../common" }
 database = { path = "../database" }
 shared = { path = "../shared" }
+# The portal's session and token identifiers come from the operating system's entropy.
+getrandom = "0.2"

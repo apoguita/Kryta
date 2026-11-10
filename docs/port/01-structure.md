@@ -99,6 +99,7 @@ Updated as stages land, because this is a statement of today and not of intent.
 | `authserver/` | stages 1 to 8 - config, log, PID file, login database and its schema, world list, listener; it also reports its own status on a timer, because a server that cannot say whether anything reached it cannot be tested |
 | the file check | answered from `data/file_check.conf`, before the version message on the same socket: a client that asks gets its 32 bytes, or the socket closes |
 | the auth conversation | the plaintext half - version, seed, answer - on a real socket; `13b5287` |
+| the portal | the four HTTP endpoints as a library, with no listener and no identity store yet; `game/src/Portal/` |
 | `worldserver/` | stages 1 to 4 - config, log, PID file; stops at its databases; `b604814` |
 | `game/`, `scripts/`, `modules/` | not started |
 
