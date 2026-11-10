@@ -169,6 +169,16 @@ fn run(args: &[String]) -> Result<(), String> {
     for note in notes {
         report(&note);
     }
+    // Optional and off by default: with it on, every byte a client sends and receives is one line in
+    // the log. It is the difference between "the client said nothing useful" and knowing exactly what
+    // it said. Read here because both listeners use it.
+    let (trace, notes) = config
+        .value_bool("Network.Trace", false)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+
     let mut login = DatabaseWorkerPool::open_with_trace(DatabaseKind::Login, &settings, &log, sql_trace)?;
     if sql_trace {
         if log.enabled("sql.trace", LogLevel::Debug) {
@@ -283,6 +293,70 @@ fn run(args: &[String]) -> Result<(), String> {
         ),
     );
 
+    // The portal, when the configuration asks for it. It is served by this program rather than a
+    // third one: it hands out the identity this program then resolves, and a third service is a third
+    // thing to start before a client can log in - `docs/decisions/0003-portal-host.md`.
+    let (portal_enabled, notes) = config
+        .value_bool("Portal.Enable", false)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let mut portal_sockets = None;
+    if portal_enabled {
+        let (portal_bind, notes) = config
+            .value_string("Portal.Bind", "127.0.0.1:6601")
+            .map_err(|error| error.to_string())?;
+        for note in notes {
+            report(&note);
+        }
+
+        let accounts = game::portal::FileAccounts::load("data/accounts.conf")
+            .map_err(|error| format!("the portal's account file cannot be read: {error}"))?;
+        log.out(
+            LogLevel::Info,
+            "server.authserver",
+            format!(
+                "Portal: {} account(s) from data/accounts.conf, binding {portal_bind}.",
+                accounts.len()
+            ),
+        );
+
+        let portal = std::sync::Arc::new(game::portal::Portal::new(accounts));
+        let factory: SessionFactory = {
+            let portal = std::sync::Arc::clone(&portal);
+            let log = Some(log.clone());
+            std::sync::Arc::new(move || {
+                Box::new(game::portal::serve::PortalSession::new(
+                    std::sync::Arc::clone(&portal),
+                    log.clone(),
+                )) as Box<dyn Session>
+            })
+        };
+
+        let (host, port_text) = portal_bind
+            .rsplit_once(':')
+            .ok_or_else(|| format!("Portal.Bind is not 'address:port': {portal_bind}"))?;
+        let portal_port: u16 = port_text
+            .parse()
+            .map_err(|_| format!("Portal.Bind has no port: {portal_bind}"))?;
+
+        let mut sockets = SocketMgr::new(factory);
+        sockets.set_log(log.clone());
+        if trace {
+            sockets.set_trace(log.clone());
+        }
+        let bound = sockets
+            .start_network(host, portal_port, 1)
+            .map_err(|error| format!("the portal could not start: {error}"))?;
+        log.out(
+            LogLevel::Info,
+            "server.authserver",
+            format!("Portal: listening on {host}:{bound}."),
+        );
+        portal_sockets = Some(sockets);
+    }
+
     let factory: SessionFactory = {
         let log = log.clone();
         let file_check = file_check.clone();
@@ -295,15 +369,6 @@ fn run(args: &[String]) -> Result<(), String> {
     let mut sockets = SocketMgr::new(factory);
     sockets.set_log(log.clone());
 
-    // Optional and off by default: with it on, every byte a client sends and receives is one line
-    // in the log. It is the difference between "the client said nothing useful" and knowing exactly
-    // what it said.
-    let (trace, notes) = config
-        .value_bool("Network.Trace", false)
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
     if trace {
         sockets.set_trace(log.clone());
         // The bytes are logged at debug, which the shipped configuration filters out. A switch that
@@ -389,6 +454,9 @@ fn run(args: &[String]) -> Result<(), String> {
     let _ = status_writer.join();
 
     sockets.stop_network();
+    if let Some(mut portal_sockets) = portal_sockets {
+        portal_sockets.stop_network();
+    }
     login.close();
     log.out(
         LogLevel::Info,

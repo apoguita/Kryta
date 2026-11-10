@@ -21,6 +21,12 @@ BindIP = "0.0.0.0"
 # How often the program reports that it is alive and how many connections it has accepted, in
 # seconds. This key is this project's own: the reference has no such line, and this server cannot be
 # tested without one.
+# The portal the client takes its identity from before it logs in: four HTTP endpoints.
+# This program serves it (docs/decisions/0003-portal-host.md), and the accounts it answers from are
+# data/accounts.conf.
+Portal.Enable = 1
+Portal.Bind = "127.0.0.1:6601"
+
 # Every statement the database layer runs, as a debug line.
 # Off by default, and it needs its own logger: Logger.sql.trace = 6,Console Auth
 Database.Trace = 0

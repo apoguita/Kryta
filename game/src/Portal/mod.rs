@@ -24,6 +24,13 @@
 //! identity is [`Accounts`], supplied by the caller, because what an account *is* in this game is a
 //! decision this module has no business making.
 
+#[path = "accounts.rs"]
+pub mod accounts;
+#[path = "serve.rs"]
+pub mod serve;
+
+pub use accounts::FileAccounts;
+
 use std::collections::HashMap;
 use std::sync::Mutex;
 

@@ -29,6 +29,7 @@ dependencies = [
  "common",
  "ctrlc",
  "database",
+ "game",
  "getrandom 0.2.17",
  "num-bigint",
  "shared",

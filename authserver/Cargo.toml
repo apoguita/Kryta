@@ -19,6 +19,9 @@ path = "src/main.rs"
 shared = { path = "../shared" }
 database = { path = "../database" }
 common = { path = "../common" }
+# The portal lives in the game library (game/src/Portal/), and this program serves it -
+# docs/decisions/0003-portal-host.md.
+game = { path = "../game" }
 # The reference's signal handler, which is what its io loop returns on.
 ctrlc = "3"
 # The key exchange raises a 512-bit number to a 511-bit exponent modulo a 512-bit prime.

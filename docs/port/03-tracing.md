@@ -34,6 +34,8 @@ Then, while it runs:
 | `Connection from ADDRESS: the plaintext half of the exchange is answered` | the seed exchange completed |
 | `Connection from ADDRESS: first encrypted message is 0x8038 ... the key derivation matches` | the client's first scrambled message read back as the login message |
 | `status: up N s, listening on ADDRESS:PORT, N connection(s) accepted` | every `StatusInterval` seconds |
+| `Portal: listening on ADDRESS:PORT.` | when the portal is enabled, on the address it bound |
+| `ADDRESS: GET /Spawned/WebGate/session/create.xml -> 200 (N bytes)` | one line per portal request, with its status |
 | `Stopped. N connection(s) were accepted while it ran.` | on shutdown |
 
 A connection that says nothing produces `accepted connection` and then nothing else. That pair -
