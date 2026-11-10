@@ -28,11 +28,9 @@ impl FileAccounts {
     pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self, String> {
         let path = path.as_ref();
         let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default());
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(error) => return Err(format!("{}: {error}", path.display())),
+            Ok(text) => text,
         };
 
         let mut entries = BTreeMap::new();
