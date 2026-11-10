@@ -374,12 +374,25 @@ fn run(args: &[String]) -> Result<(), String> {
         portal_sockets = Some(sockets);
     }
 
+    // The 591-byte block every login is answered with: a copied payload, so a file.
+    let account_settings = crate::server::account_settings::load("data/account_settings.conf")
+        .map_err(|error| format!("the account settings block cannot be read: {error}"))?;
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        format!("Account settings: {} bytes.", account_settings.len()),
+    );
+
     let factory: SessionFactory = {
         let log = log.clone();
         let file_check = file_check.clone();
+        let account_settings = account_settings.clone();
         std::sync::Arc::new(move || {
-            Box::new(AuthSession::with_random_master(log.clone(), file_check.clone()))
-                as Box<dyn Session>
+            Box::new(AuthSession::with_random_master(
+                log.clone(),
+                file_check.clone(),
+                account_settings.clone(),
+            )) as Box<dyn Session>
         })
     };
 

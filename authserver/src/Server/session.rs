@@ -36,22 +36,34 @@ pub struct AuthSession {
     log: Log,
     master: [u8; MASTER_SECRET_LEN],
     file_check: FileCheck,
+    /// The 591-byte block every login is answered with, from `data/account_settings.conf`.
+    account_settings: Vec<u8>,
 }
 
 impl AuthSession {
     /// A session that will answer the file check with these bytes and the exchange with this master.
     ///
     /// Both are passed in rather than read or drawn here so a test can supply what it knows.
-    pub fn new(log: Log, master: [u8; MASTER_SECRET_LEN], file_check: FileCheck) -> Self {
+    pub fn new(
+        log: Log,
+        master: [u8; MASTER_SECRET_LEN],
+        file_check: FileCheck,
+        account_settings: Vec<u8>,
+    ) -> Self {
         Self {
             log,
             master,
             file_check,
+            account_settings,
         }
     }
 
     /// A session with a master drawn from the operating system's entropy.
-    pub fn with_random_master(log: Log, file_check: FileCheck) -> Self {
+    pub fn with_random_master(
+        log: Log,
+        file_check: FileCheck,
+        account_settings: Vec<u8>,
+    ) -> Self {
         let mut master = [0u8; MASTER_SECRET_LEN];
         if getrandom::getrandom(&mut master).is_err() {
             // Without entropy there is no secret to exchange. A zero master is what the protocol
@@ -62,7 +74,7 @@ impl AuthSession {
                 "no entropy available for the master secret; the exchange will use zeros",
             );
         }
-        Self::new(log, master, file_check)
+        Self::new(log, master, file_check, account_settings)
     }
 
     fn say(&self, level: LogLevel, text: impl Into<String>) {
@@ -267,6 +279,9 @@ impl AuthSession {
         // cipher's position carries across reads: a running stream, not one per message.
         let key = handshake::derive_key(&self.master);
         let mut decrypt = Arc4::new(&key);
+        // The outbound stream starts at its own position zero, keyed the same way: one cipher per
+        // direction, not one cipher shared.
+        let mut encrypt = Arc4::new(&key);
         let mut buffer = [0u8; 1024];
         let mut messages = 0usize;
 
@@ -311,24 +326,57 @@ impl AuthSession {
                 _ => "",
             };
             if id == PORTAL_ACCOUNT_LOGIN {
-                match decode_portal_login(&plain[2..]) {
-                    Some(login) => self.say(
-                        LogLevel::Info,
-                        format!(
-                            "Connection from {peer}: login request {}, user {} session {} character '{}' type '{}'.",
-                            login.request,
-                            uuid_le_text(&login.user_id),
-                            uuid_le_text(&login.session_id),
-                            login.character,
-                            login.account_type
-                        ),
-                    ),
-                    None => self.say(
+                let Some(login) = decode_portal_login(&plain[2..]) else {
+                    self.say(
                         LogLevel::Warn,
                         format!(
                             "Connection from {peer}: the login message is {} bytes, which is too few for its fields.",
                             plain.len()
                         ),
+                    );
+                    continue;
+                };
+
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Connection from {peer}: login request {}, user {} session {} character '{}' type '{}'.",
+                        login.request,
+                        uuid_le_text(&login.user_id),
+                        uuid_le_text(&login.session_id),
+                        login.character,
+                        login.account_type
+                    ),
+                );
+
+                // The answer: the five messages a client needs before it shows a character, in the
+                // order and at the sizes the records give. No characters yet, so the client is owed
+                // an empty list rather than a refusal.
+                let frames = crate::server::login_reply::reply_frames(
+                    login.request,
+                    login.user_id,
+                    &[],
+                    0,
+                    &self.account_settings,
+                );
+                let mut answer = Vec::new();
+                for frame in &frames {
+                    answer.extend_from_slice(frame);
+                }
+                encrypt.apply(&mut answer);
+
+                match io.write_all(&answer).await {
+                    Ok(()) => self.say(
+                        LogLevel::Info,
+                        format!(
+                            "Connection from {peer}: login answered with {} message(s), {} bytes.",
+                            frames.len(),
+                            answer.len()
+                        ),
+                    ),
+                    Err(error) => self.say(
+                        LogLevel::Warn,
+                        format!("Connection from {peer} could not be answered: {error}"),
                     ),
                 }
             }
@@ -467,6 +515,7 @@ mod tests {
                 log.clone(),
                 [0x5Au8; MASTER_SECRET_LEN],
                 file_check.clone(),
+                crate::server::account_settings::load("../data/account_settings.conf").unwrap(),
             )) as Box<dyn Session>
         })
     }
@@ -672,5 +721,96 @@ mod tests {
     #[test]
     fn a_body_that_is_too_short_is_not_a_login() {
         assert!(decode_portal_login(&[0u8; 20]).is_none());
+    }
+    /// The whole login answer, read the way the client reads it: one cipher, offset zero.
+    #[test]
+    fn the_login_is_answered_with_the_five_messages_the_client_reads() {
+        use crate::authentication::PORTAL_ACCOUNT_LOGIN;
+        use crate::server::handshake::derive_key;
+        use common::cryptography::Arc4;
+
+        let log = Log::new();
+        let master = [0x77u8; MASTER_SECRET_LEN];
+        let settings = crate::server::account_settings::load("../data/account_settings.conf").unwrap();
+
+        let factory: SessionFactory = {
+            let log = log.clone();
+            let file_check = shipped_file_check();
+            let settings = settings.clone();
+            Arc::new(move || {
+                Box::new(AuthSession::new(
+                    log.clone(),
+                    master,
+                    file_check.clone(),
+                    settings.clone(),
+                )) as Box<dyn Session>
+            })
+        };
+
+        let mut manager = SocketMgr::new(factory);
+        let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+
+        // The preamble, then the seed.
+        client.write_all(&preamble(2)).unwrap();
+        let mut server_seed = [0u8; SERVER_SEED_LEN];
+        client.read_exact(&mut server_seed).unwrap();
+        assert_eq!(&server_seed[..2], &0x1601u16.to_le_bytes());
+
+        // The login, packed as the client packs it and scrambled with the key both sides derive.
+        let key = derive_key(&master);
+        let mut body = Vec::new();
+        body.extend_from_slice(&PORTAL_ACCOUNT_LOGIN.to_le_bytes());
+        body.extend_from_slice(&0x2Au32.to_le_bytes());
+        body.extend_from_slice(&[0x11u8; 16]);
+        body.extend_from_slice(&[0x22u8; 16]);
+        for text in ["Asura", "gw1"] {
+            let units: Vec<u16> = text.encode_utf16().collect();
+            body.extend_from_slice(&(units.len() as u16).to_le_bytes());
+            for unit in units {
+                body.extend_from_slice(&unit.to_le_bytes());
+            }
+        }
+
+        let mut sending = Arc4::new(&key);
+        sending.apply(&mut body);
+        client.write_all(&body).unwrap();
+
+        // The answer: 700 bytes of five frames - four, with no characters - read back through a
+        // cipher at offset zero, which is where the server's outbound stream started.
+        let mut answer = vec![0u8; 700];
+        client.read_exact(&mut answer).unwrap();
+
+        let mut receiving = Arc4::new(&key);
+        receiving.apply(&mut answer);
+
+        let mut at = 0usize;
+        let mut frames = Vec::new();
+        while at + 2 <= answer.len() {
+            let header = u16::from_le_bytes([answer[at], answer[at + 1]]);
+            let size = match header {
+                0x0016 => 599,
+                0x0014 => 10,
+                0x0011 => 81,
+                0x0003 => 10,
+                other => panic!("unexpected header 0x{other:04X} at {at}"),
+            };
+            let request = u32::from_le_bytes([
+                answer[at + 2],
+                answer[at + 3],
+                answer[at + 4],
+                answer[at + 5],
+            ]);
+            assert_eq!(request, 0x2A, "the request id is echoed");
+            frames.push(header);
+            at += size;
+        }
+
+        assert_eq!(at, 700, "the five messages account for every byte");
+        assert_eq!(frames, vec![0x0016, 0x0014, 0x0011, 0x0003]);
+
+        manager.stop_network();
+        log.shutdown();
     }
 }
