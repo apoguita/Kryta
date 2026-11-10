@@ -43,6 +43,19 @@ impl DatabaseWorkerPool {
         settings: &DatabaseSettings,
         log: &Log,
     ) -> Result<Self, String> {
+        Self::open_with_trace(kind, settings, log, false)
+    }
+
+    /// The same, with every statement this pool runs reported to the log.
+    ///
+    /// The trace goes to each connection: the worker threads open their own, so a flag held only by
+    /// the pool would leave the statements nobody waits on invisible.
+    pub fn open_with_trace(
+        kind: DatabaseKind,
+        settings: &DatabaseSettings,
+        log: &Log,
+        trace: bool,
+    ) -> Result<Self, String> {
         log.out(
             common::logging::LogLevel::Info,
             "sql.driver",
@@ -52,7 +65,10 @@ impl DatabaseWorkerPool {
             ),
         );
 
-        let synch = Connection::open(&settings.info)?;
+        let mut synch = Connection::open(&settings.info)?;
+        if trace {
+            synch.set_trace(log.clone());
+        }
 
         let (sender, receiver) = channel::<Operation>();
         let receiver = Arc::new(Mutex::new(receiver));
@@ -63,6 +79,7 @@ impl DatabaseWorkerPool {
             let receiver = Arc::clone(&receiver);
             let log = log.clone();
             let database = settings.info.database.clone();
+            let trace = trace;
 
             let handle = std::thread::Builder::new()
                 .name(format!("db-{database}-{index}"))
@@ -78,6 +95,9 @@ impl DatabaseWorkerPool {
                             return;
                         }
                     };
+                    if trace {
+                        connection.set_trace(log.clone());
+                    }
 
                     loop {
                         let operation = {

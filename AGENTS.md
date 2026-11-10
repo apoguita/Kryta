@@ -143,6 +143,7 @@ the client is the judge rather than a test.
 |---|---|
 | the reference's measured structure, and the port order | `docs/port/01-structure.md` |
 | the wire facts this tree uses, and what it does not know yet | `docs/port/02-wire.md` |
+| what the server reports, and how to switch on its traces | `docs/port/03-tracing.md` |
 | a decision taken away from the reference, and why | `docs/decisions/` |
 | workspace, dependency order, lint policy | `Cargo.toml` |
 | the byte buffer | `shared/src/Packets/` |

@@ -13,6 +13,8 @@ use super::DatabaseInfo;
 pub struct Connection {
     client: Client,
     database: String,
+    /// Where every statement is reported, when tracing is on. Off unless a program asks for it.
+    trace: Option<common::logging::Log>,
 }
 
 impl std::fmt::Debug for Connection {
@@ -66,7 +68,28 @@ impl Connection {
         Ok(Self {
             client,
             database: info.database.clone(),
+            trace: None,
         })
+    }
+
+    /// Report every statement this connection runs to this log.
+    ///
+    /// This is the database's side of the same instrument the socket layer has: without it a failed
+    /// statement is an error with no statement in it, and a startup that applied the wrong file
+    /// looks like a startup that worked.
+    pub fn set_trace(&mut self, log: common::logging::Log) {
+        self.trace = Some(log);
+    }
+
+    /// Report a statement, if tracing is on.
+    fn trace_statement(&self, kind: &str, sql: &str) {
+        if let Some(log) = self.trace.as_ref() {
+            log.out(
+                common::logging::LogLevel::Debug,
+                "sql.trace",
+                format!("{kind} [{}] {sql}", self.database),
+            );
+        }
     }
 
     /// The database this connection is to.
@@ -78,18 +101,26 @@ impl Connection {
     ///
     /// Reference: `MySQLConnection::Execute` for a string.
     pub fn execute(&mut self, sql: &str) -> Result<u64, String> {
-        self.client
+        self.trace_statement("execute", &one_line(sql));
+        let rows = self
+            .client
             .execute(sql, &[])
-            .map_err(|error| format!("statement failed: {error}"))
+            .map_err(|error| format!("statement failed: {error}"))?;
+        self.trace_statement("affected", &rows.to_string());
+        Ok(rows)
     }
 
     /// Run a query and answer its rows.
     ///
     /// Reference: `MySQLConnection::Query`.
     pub fn query(&mut self, sql: &str) -> Result<Vec<postgres::Row>, String> {
-        self.client
+        self.trace_statement("query", &one_line(sql));
+        let rows = self
+            .client
             .query(sql, &[])
-            .map_err(|error| format!("query failed: {error}"))
+            .map_err(|error| format!("query failed: {error}"))?;
+        self.trace_statement("rows", &rows.len().to_string());
+        Ok(rows)
     }
 
     /// Answer one value from a one-row, one-column query.
@@ -112,6 +143,7 @@ impl Connection {
     /// hands it. A simple query is used rather than a prepared statement, because a file is not a
     /// parameterised statement.
     pub fn batch_execute(&mut self, sql: &str) -> Result<(), String> {
+        self.trace_statement("batch", &one_line(sql));
         self.client
             .batch_execute(sql)
             .map_err(|error| format!("statement failed: {error}"))
@@ -153,8 +185,20 @@ impl Connection {
     }
 }
 
+/// A statement as one line, for a log line that would otherwise be several.
+pub fn one_line(sql: &str) -> String {
+    sql.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_multi_line_statement_becomes_one_line() {
+        assert_eq!(
+            super::one_line("SELECT 1\n  FROM t\n WHERE x = 2"),
+            "SELECT 1 FROM t WHERE x = 2"
+        );
+    }
     use super::*;
 
     #[test]

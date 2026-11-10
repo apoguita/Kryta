@@ -161,7 +161,30 @@ fn run(args: &[String]) -> Result<(), String> {
     // Reference: `DatabaseLoader loader("server.authserver"); loader.AddDatabase(LoginDatabase,
     // "Login");` - the loader opens the pool, and a pool that cannot open stops the program.
     let settings = read_settings(&config, DatabaseKind::Login)?;
-    let mut login = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log)?;
+
+    // The database's own trace: every statement the pool runs, on any of its connections.
+    let (sql_trace, notes) = config
+        .value_bool("Database.Trace", false)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let mut login = DatabaseWorkerPool::open_with_trace(DatabaseKind::Login, &settings, &log, sql_trace)?;
+    if sql_trace {
+        if log.enabled("sql.trace", LogLevel::Debug) {
+            log.out(
+                LogLevel::Info,
+                "server.authserver",
+                "Database.Trace is on: every statement is logged at debug.",
+            );
+        } else {
+            log.out(
+                LogLevel::Warn,
+                "server.authserver",
+                "Database.Trace is on, but no logger named 'sql.trace' is enabled, so nothing will be traced. Add this line to the configuration file: Logger.sql.trace = 6,Console Auth",
+            );
+        }
+    }
 
     // Reference: `DatabaseLoader::Load` opens the pool and then runs the updater on it, and only
     // after both does it report the pool as started.

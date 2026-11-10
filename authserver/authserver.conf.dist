@@ -21,6 +21,10 @@ BindIP = "0.0.0.0"
 # How often the program reports that it is alive and how many connections it has accepted, in
 # seconds. This key is this project's own: the reference has no such line, and this server cannot be
 # tested without one.
+# Every statement the database layer runs, as a debug line.
+# Off by default, and it needs its own logger: Logger.sql.trace = 6,Console Auth
+Database.Trace = 0
+
 # Every byte of every connection, in and out, as a debug line.
 # Off by default: it is an instrument for an investigation, not a default.
 Network.Trace = 0
