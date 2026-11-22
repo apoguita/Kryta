@@ -6,14 +6,11 @@
 
 use shared::network::http::{Request, Response};
 
-use crate::web::{components, http, layout};
 use crate::Manage;
+use crate::web::{components, http, layout};
 
 /// The services page; `action` is a lifecycle verb's own result when a form just ran one.
-pub fn page(
-    _manage: &Manage,
-    action: Option<(&str, &str, Result<String, String>)>,
-) -> Response {
+pub fn page(_manage: &Manage, action: Option<(&str, &str, Result<String, String>)>) -> Response {
     let action_result = match action {
         Some((_verb, service, Ok(answer))) => components::note(&format!(
             "Supervisor: <strong>{}</strong> <code>{}</code>.",

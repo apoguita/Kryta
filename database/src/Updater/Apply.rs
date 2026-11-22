@@ -19,7 +19,7 @@ use std::time::Instant;
 
 use common::logging::{Log, LogLevel};
 
-use super::{read_sql_update, UpdateFile};
+use super::{UpdateFile, read_sql_update};
 
 /// What one pass did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -93,7 +93,8 @@ pub fn apply(
     let mut summary = UpdateSummary::default();
 
     for file in files {
-        let text = read_sql_update(&file.path).map_err(|error| ApplyError::Unreachable(error.to_string()))?;
+        let text = read_sql_update(&file.path)
+            .map_err(|error| ApplyError::Unreachable(error.to_string()))?;
         let hash = sha1_hex(&text);
 
         if let Some(existing) = recorded.get(&file.name()) {
@@ -101,7 +102,11 @@ pub fn apply(
                 summary.skipped += 1;
                 continue;
             }
-            return Err(ApplyError::Modified(file.path.clone(), existing.clone(), hash));
+            return Err(ApplyError::Modified(
+                file.path.clone(),
+                existing.clone(),
+                hash,
+            ));
         }
 
         let started = Instant::now();
@@ -234,7 +239,7 @@ mod tests {
     #[ignore = "needs a live database: set KRYTA_TEST_LOGIN_DB"]
     fn a_file_is_applied_once_recorded_and_a_changed_file_is_refused() {
         use crate::database::{Connection, DatabaseInfo};
-        use crate::updater::{collect_files, UpdateState};
+        use crate::updater::{UpdateState, collect_files};
 
         let Ok(info) = std::env::var("KRYTA_TEST_LOGIN_DB") else {
             return;
@@ -309,7 +314,7 @@ mod tests {
     #[ignore = "needs a live database: set KRYTA_TEST_LOGIN_DB"]
     fn the_shipped_login_schema_applies_and_is_recorded() {
         use crate::database::{Connection, DatabaseInfo};
-        use crate::updater::{collect_files, UpdateState};
+        use crate::updater::{UpdateState, collect_files};
 
         let Ok(info) = std::env::var("KRYTA_TEST_LOGIN_DB") else {
             return;
@@ -321,11 +326,18 @@ mod tests {
         // cargo runs a test from its package root, so the schema is one directory up.
         let schema = std::path::Path::new("../data/sql/base/db_auth");
         let files = collect_files(schema, UpdateState::Released).unwrap();
-        assert!(files.len() >= 2, "the base tree should hold the history and a table");
+        assert!(
+            files.len() >= 2,
+            "the base tree should hold the history and a table"
+        );
 
         // Start from nothing, so the first pass is the whole schema.
-        connection.batch_execute("DROP TABLE IF EXISTS \"updates\"").unwrap();
-        connection.batch_execute("DROP TABLE IF EXISTS \"realmlist\"").unwrap();
+        connection
+            .batch_execute("DROP TABLE IF EXISTS \"updates\"")
+            .unwrap();
+        connection
+            .batch_execute("DROP TABLE IF EXISTS \"realmlist\"")
+            .unwrap();
 
         let first = apply(&mut connection, &files, &log).unwrap();
         assert_eq!(first.updated, files.len(), "{first:?}");

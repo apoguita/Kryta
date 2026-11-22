@@ -94,7 +94,11 @@ fn parse(args: &[String]) -> Result<Mode, String> {
             }
             "-p" | "--port" => {
                 let value = rest.next().ok_or("--port needs a number")?;
-                port = Some(value.parse::<u16>().map_err(|_| "--port must be a number")?);
+                port = Some(
+                    value
+                        .parse::<u16>()
+                        .map_err(|_| "--port must be a number")?,
+                );
             }
             "--credential-file" => {
                 let value = rest.next().ok_or("--credential-file needs a path")?;
@@ -105,7 +109,10 @@ fn parse(args: &[String]) -> Result<Mode, String> {
                 let Some((name, value)) = value.split_once('=') else {
                     return Err(format!("--arg {value:?} is not name=value"));
                 };
-                if arguments.insert(name.to_string(), value.to_string()).is_some() {
+                if arguments
+                    .insert(name.to_string(), value.to_string())
+                    .is_some()
+                {
                     return Err(format!("--arg {name} is given twice"));
                 }
             }
@@ -119,7 +126,9 @@ fn parse(args: &[String]) -> Result<Mode, String> {
             Err("init-credential needs the file to create".into())
         }
         [only] if only == "list" => Ok(Mode::List),
-        [only, path] if only == "init-credential" => Ok(Mode::InitCredential(std::path::PathBuf::from(path))),
+        [only, path] if only == "init-credential" => {
+            Ok(Mode::InitCredential(std::path::PathBuf::from(path)))
+        }
         [operation, ..] => {
             if words.len() > 1 {
                 return Err(format!(
@@ -139,15 +148,21 @@ fn parse(args: &[String]) -> Result<Mode, String> {
 }
 
 /// The port and credential a call needs: the settings, then the credential file, validated.
-fn target(config_path: &std::path::Path, port: Option<u16>, credential_file: Option<&std::path::Path>) -> Result<(u16, String), String> {
+fn target(
+    config_path: &std::path::Path,
+    port: Option<u16>,
+    credential_file: Option<&std::path::Path>,
+) -> Result<(u16, String), String> {
     let config = Config::load_json(config_path, false, Policy::default())
         .map_err(|error| format!("cannot read {}: {error}", config_path.display()))?;
     let port = match port {
         Some(port) => port,
-        None => config
-            .value::<u16>("Control.Port", 7878)
-            .map_err(|error| format!("Control.Port: {error}"))?
-            .0,
+        None => {
+            config
+                .value::<u16>("Control.Port", 7878)
+                .map_err(|error| format!("Control.Port: {error}"))?
+                .0
+        }
     };
     let file = match credential_file {
         Some(file) => file.to_path_buf(),
@@ -177,14 +192,21 @@ fn target(config_path: &std::path::Path, port: Option<u16>, credential_file: Opt
 }
 
 /// Ask the running world for one operation, and answer what it said.
-fn call(port: u16, credential: &str, operation: &str, arguments: &BTreeMap<String, String>) -> Result<String, String> {
+fn call(
+    port: u16,
+    credential: &str,
+    operation: &str,
+    arguments: &BTreeMap<String, String>,
+) -> Result<String, String> {
     let arguments = serde_json::Value::Object(
         arguments
             .iter()
             .map(|(name, value)| (name.clone(), serde_json::Value::String(value.clone())))
             .collect(),
     );
-    let body = serde_json::json!({"request_id": "cli", "operation": operation, "arguments": arguments}).to_string();
+    let body =
+        serde_json::json!({"request_id": "cli", "operation": operation, "arguments": arguments})
+            .to_string();
     let mut stream = TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
         .map_err(|error| format!("no world control is listening on 127.0.0.1:{port}: {error}"))?;
     stream
@@ -207,7 +229,10 @@ fn call(port: u16, credential: &str, operation: &str, arguments: &BTreeMap<Strin
     let value: serde_json::Value = serde_json::from_str(body)
         .map_err(|_| "the world answered with something that is not JSON")?;
     if value.get("ok").and_then(|ok| ok.as_bool()) != Some(true) {
-        let code = value.pointer("/error/code").and_then(|code| code.as_str()).unwrap_or("refused");
+        let code = value
+            .pointer("/error/code")
+            .and_then(|code| code.as_str())
+            .unwrap_or("refused");
         let message = value
             .pointer("/error/message")
             .and_then(|message| message.as_str())
@@ -241,7 +266,12 @@ fn run() -> Result<(), String> {
                 call_options.port,
                 call_options.credential_file.as_deref(),
             )?;
-            let answer = call(port, &credential, &call_options.operation, &call_options.arguments)?;
+            let answer = call(
+                port,
+                &credential,
+                &call_options.operation,
+                &call_options.arguments,
+            )?;
             println!("{answer}");
             Ok(())
         }
@@ -251,18 +281,28 @@ fn run() -> Result<(), String> {
 #[cfg(windows)]
 fn init_credential(path: &std::path::Path) -> Result<(), String> {
     use std::fs::OpenOptions;
-    let mut file = OpenOptions::new().write(true).create_new(true).open(path)
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
         .map_err(|error| format!("cannot create credential file: {error}"))?;
     let script = r#"try { $ErrorActionPreference='Stop'; $p=$env:KRYTA_CONTROL_FILE; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $a=Get-Acl -LiteralPath $p; $a.SetAccessRuleProtection($true,$false); $a.SetOwner($sid); $rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','Allow'); $a.AddAccessRule($rule); Set-Acl -LiteralPath $p -AclObject $a; exit 0 } catch { exit 1 }"#;
-    let status = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .env("KRYTA_CONTROL_FILE", path).stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()
+    let status = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .env("KRYTA_CONTROL_FILE", path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
         .map_err(|_| "cannot set credential file permissions")?;
-    if !status.success() { return Err("cannot restrict credential file permissions; empty file left in place".into()); }
+    if !status.success() {
+        return Err("cannot restrict credential file permissions; empty file left in place".into());
+    }
     let mut bytes = [0u8; 32];
     getrandom::getrandom(&mut bytes).map_err(|_| "cannot generate a credential")?;
     let secret: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-    file.write_all(secret.as_bytes()).map_err(|_| "cannot write credential")?;
+    file.write_all(secret.as_bytes())
+        .map_err(|_| "cannot write credential")?;
     println!("Created restricted credential file {}.", path.display());
     Ok(())
 }
@@ -306,7 +346,10 @@ mod tests {
         match mode {
             Mode::Call(call) => {
                 assert_eq!(call.operation, "world.status");
-                assert_eq!(call.arguments.get("destination").map(String::as_str), Some("ascalon"));
+                assert_eq!(
+                    call.arguments.get("destination").map(String::as_str),
+                    Some("ascalon")
+                );
                 assert_eq!(call.config, std::path::PathBuf::from(DEFAULT_CONFIG));
                 assert_eq!(call.port, None);
             }
@@ -317,7 +360,13 @@ mod tests {
     #[test]
     fn the_port_and_the_credential_file_can_be_named() {
         let mode = parse(&args(&[
-            "--config", "somewhere.json", "--port", "7878", "--credential-file", "cred", "world.status",
+            "--config",
+            "somewhere.json",
+            "--port",
+            "7878",
+            "--credential-file",
+            "cred",
+            "world.status",
         ]))
         .unwrap();
         match mode {
@@ -351,7 +400,11 @@ mod tests {
     fn list_and_init_credential_are_their_own_modes() {
         assert_eq!(parse(&args(&["list"])).unwrap(), Mode::List);
         assert_eq!(
-            parse(&args(&["init-credential", "worldserver/control.credential"])).unwrap(),
+            parse(&args(&[
+                "init-credential",
+                "worldserver/control.credential"
+            ]))
+            .unwrap(),
             Mode::InitCredential(std::path::PathBuf::from("worldserver/control.credential"))
         );
     }

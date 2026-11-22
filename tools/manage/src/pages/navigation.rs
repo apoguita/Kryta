@@ -6,8 +6,8 @@
 
 use shared::network::http::Response;
 
-use crate::web::{components, layout};
 use crate::Manage;
+use crate::web::{components, layout};
 
 /// The navigation-cache page; `action` is a just-run dump's own result.
 pub fn page(manage: &Manage, action: Option<Result<String, String>>, inspect: bool) -> Response {

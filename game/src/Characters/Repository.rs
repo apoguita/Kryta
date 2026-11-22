@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use common::logging::{Log, LogLevel};
 use database::database::{DatabaseWorkerPool, Param};
 
-use crate::characters::{uuid_bytes, Character, CharacterSettings};
+use crate::characters::{Character, CharacterSettings, uuid_bytes};
 use crate::creation::Inventory;
 
 /// `BagModelId_EquippedItems` (`GmInventory.h`): the bag whose slots are the nine worn items.
@@ -167,13 +167,18 @@ impl DatabaseCharacters {
     /// be read is a login with no character, and saying so plainly is better than failing the
     /// conversation the client is already in.
     pub fn for_account(&self, account_uuid: &str) -> Vec<Character> {
-        self.read(&format!("{SELECT_CHARACTERS} WHERE \"account_uuid\" = $1 ORDER BY \"name\""),
-            vec![Param::Text(account_uuid.to_string())])
+        self.read(
+            &format!("{SELECT_CHARACTERS} WHERE \"account_uuid\" = $1 ORDER BY \"name\""),
+            vec![Param::Text(account_uuid.to_string())],
+        )
     }
 
     /// Every character, for the administration tool's page: the rows as they are, in name order.
     pub fn list(&self) -> Vec<Character> {
-        self.read(&format!("{SELECT_CHARACTERS} ORDER BY \"name\""), Vec::new())
+        self.read(
+            &format!("{SELECT_CHARACTERS} ORDER BY \"name\""),
+            Vec::new(),
+        )
     }
 
     /// Every character with the portal uuid of the account that owns it.
@@ -230,8 +235,10 @@ impl DatabaseCharacters {
                 vec![Param::Text(uuid.to_string())],
             ),
             Err(_) => {
-                return Err("the character database pool is poisoned; no experience can be read"
-                    .to_string());
+                return Err(
+                    "the character database pool is poisoned; no experience can be read"
+                        .to_string(),
+                );
             }
         };
         match reply.recv() {
@@ -243,23 +250,30 @@ impl DatabaseCharacters {
                 })
                 .transpose(),
             Ok(Err(error)) => Err(error),
-            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+            Err(_) => {
+                Err("the character database answered no query: it is shutting down".to_string())
+            }
         }
     }
 
     /// How many characters there are, without reading their rows.
     pub fn count(&self) -> Result<usize, String> {
-        let reply = self.pool.lock().map_err(|_| {
-            "the character database pool is poisoned; no character can be counted".to_string()
-        })?
-        .query_reply("SELECT count(*)::bigint FROM \"characters\"", Vec::new());
+        let reply = self
+            .pool
+            .lock()
+            .map_err(|_| {
+                "the character database pool is poisoned; no character can be counted".to_string()
+            })?
+            .query_reply("SELECT count(*)::bigint FROM \"characters\"", Vec::new());
         match reply.recv() {
             Ok(Ok(rows)) => rows
                 .first()
                 .map(|row| row.get::<usize, i64>(0) as usize)
                 .ok_or_else(|| "the character table counted no row".to_string()),
             Ok(Err(error)) => Err(error),
-            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+            Err(_) => {
+                Err("the character database answered no query: it is shutting down".to_string())
+            }
         }
     }
 
@@ -295,15 +309,39 @@ impl DatabaseCharacters {
 
     /// Write the creation row used by the game confirm and the operator panel.
     /// ASURA/crates/asura-world/src/creation.rs:381-475 creates the traits and character.
-    pub fn insert_creation(&self, uuid: &str, account: &str, name: &str, appearance: u32,
-        profession: u8, campaign: u8, start_map: u16) -> Result<bool, String> {
-        let reply = self.pool.lock().map_err(|_| "the character database pool is poisoned".to_string())?.query_reply(
-            INSERT_CHARACTER, vec![Param::Text(uuid.to_string()), Param::Text(account.to_string()),
-                Param::Text(name.to_string()), Param::Integer(i64::from(appearance)),
-                Param::Integer(i64::from(profession)), Param::Integer(0),
-                Param::Integer(1i64 << (profession & 0x1f)), Param::Integer(i64::from(campaign)),
-                Param::Integer(1), Param::Flag(campaign == 0), Param::Integer(1),
-                Param::Integer(0), Param::Integer(i64::from(start_map)), Param::Integer(0)]);
+    pub fn insert_creation(
+        &self,
+        uuid: &str,
+        account: &str,
+        name: &str,
+        appearance: u32,
+        profession: u8,
+        campaign: u8,
+        start_map: u16,
+    ) -> Result<bool, String> {
+        let reply = self
+            .pool
+            .lock()
+            .map_err(|_| "the character database pool is poisoned".to_string())?
+            .query_reply(
+                INSERT_CHARACTER,
+                vec![
+                    Param::Text(uuid.to_string()),
+                    Param::Text(account.to_string()),
+                    Param::Text(name.to_string()),
+                    Param::Integer(i64::from(appearance)),
+                    Param::Integer(i64::from(profession)),
+                    Param::Integer(0),
+                    Param::Integer(1i64 << (profession & 0x1f)),
+                    Param::Integer(i64::from(campaign)),
+                    Param::Integer(1),
+                    Param::Flag(campaign == 0),
+                    Param::Integer(1),
+                    Param::Integer(0),
+                    Param::Integer(i64::from(start_map)),
+                    Param::Integer(0),
+                ],
+            );
         match reply.recv() {
             Ok(Ok(rows)) => Ok(!rows.is_empty()),
             Ok(Err(error)) => Err(error),
@@ -312,11 +350,20 @@ impl DatabaseCharacters {
     }
 
     /// Rename a character only within the account selected by the operator.
-    pub fn rename_for_account(&self, account: &str, uuid: &str, name: &str) -> Result<bool, String> {
+    pub fn rename_for_account(
+        &self,
+        account: &str,
+        uuid: &str,
+        name: &str,
+    ) -> Result<bool, String> {
         let reply = self.pool.lock().map_err(|_| "the character database pool is poisoned".to_string())?.query_reply(
             "UPDATE \"characters\" SET \"name\" = $1 WHERE \"account_uuid\" = $2 AND \"uuid\" = $3 RETURNING 1",
             vec![Param::Text(name.to_string()), Param::Text(account.to_string()), Param::Text(uuid.to_string())]);
-        match reply.recv() { Ok(Ok(rows)) => Ok(!rows.is_empty()), Ok(Err(error)) => Err(error), Err(_) => Err("the character database is shutting down".to_string()) }
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err("the character database is shutting down".to_string()),
+        }
     }
 
     /// Set a character's level - the row's own column, which a load reads back into the list and the
@@ -330,11 +377,15 @@ impl DatabaseCharacters {
         let reply = match self.pool.lock() {
             Ok(pool) => pool.query_reply(
                 "UPDATE \"characters\" SET \"level\" = $1 WHERE \"uuid\" = $2 RETURNING 1",
-                vec![Param::Integer(i64::from(level)), Param::Text(uuid.to_string())],
+                vec![
+                    Param::Integer(i64::from(level)),
+                    Param::Text(uuid.to_string()),
+                ],
             ),
             Err(_) => {
-                return Err("the character database pool is poisoned; the level was not set"
-                    .to_string());
+                return Err(
+                    "the character database pool is poisoned; the level was not set".to_string(),
+                );
             }
         };
         match reply.recv() {
@@ -347,7 +398,54 @@ impl DatabaseCharacters {
                 );
                 Err(error)
             }
-            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+            Err(_) => {
+                Err("the character database answered no query: it is shutting down".to_string())
+            }
+        }
+    }
+
+    /// Write a character's progress - experience, level and the skill points held and earned - in one
+    /// row update (`ASURA/crates/asura-db/src/game.rs:207-230`, `set_progress`). The caller computes the
+    /// four numbers from the curve (`Characters/Experience.rs`); this is the row, not the rule. Answers
+    /// whether the character row is there.
+    pub fn set_progress(
+        &self,
+        uuid: &str,
+        progress: &crate::characters::experience::Progress,
+    ) -> Result<bool, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "UPDATE \"characters\" SET \"experience\" = $2, \"level\" = $3, \
+                 \"skill_points\" = $4, \"skill_points_total\" = $5 \
+                 WHERE \"uuid\" = $1 RETURNING 1",
+                vec![
+                    Param::Text(uuid.to_string()),
+                    Param::Integer(i64::from(progress.experience)),
+                    Param::Integer(i64::from(progress.level)),
+                    Param::Integer(i64::from(progress.skill_points)),
+                    Param::Integer(i64::from(progress.skill_points_total)),
+                ],
+            ),
+            Err(_) => {
+                return Err(
+                    "the character database pool is poisoned; the progress was not written"
+                        .to_string(),
+                );
+            }
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("Cannot write the progress of {uuid}: {error}"),
+                );
+                Err(error)
+            }
+            Err(_) => {
+                Err("the character database answered no query: it is shutting down".to_string())
+            }
         }
     }
 
@@ -361,11 +459,16 @@ impl DatabaseCharacters {
         let reply = match self.pool.lock() {
             Ok(pool) => pool.query_reply(
                 "UPDATE \"characters\" SET \"last_outpost\" = $1 WHERE \"uuid\" = $2",
-                vec![Param::Integer(i64::from(map_id)), Param::Text(uuid.to_string())],
+                vec![
+                    Param::Integer(i64::from(map_id)),
+                    Param::Text(uuid.to_string()),
+                ],
             ),
             Err(_) => {
-                return Err("the character database pool is poisoned; the outpost was not recorded"
-                    .to_string());
+                return Err(
+                    "the character database pool is poisoned; the outpost was not recorded"
+                        .to_string(),
+                );
             }
         };
         match reply.recv() {
@@ -378,7 +481,9 @@ impl DatabaseCharacters {
                 );
                 Err(error)
             }
-            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+            Err(_) => {
+                Err("the character database answered no query: it is shutting down".to_string())
+            }
         }
     }
 
@@ -394,8 +499,11 @@ impl DatabaseCharacters {
         let missing = crate::characters::CharacterSheet::missing(character);
         let reply = match self.pool.lock() {
             Ok(pool) => pool.query_reply(
-                "SELECT \"name\", \"campaign\", \"primary_profession\", \"gold\"::bigint, \
-                 \"appearance\"::bigint, \"level\"::bigint, \"unlocked_professions\"::bigint \
+                "SELECT \"name\", \"campaign\", \"primary_profession\", \"secondary_profession\", \
+                 \"gold\"::bigint, \"appearance\"::bigint, \"level\"::bigint, \
+                 \"unlocked_professions\"::bigint, \"prophecies_finished\", \"factions_finished\", \
+                 \"nightfall_finished\", \"last_outpost\", \"experience\"::bigint, \
+                 \"skill_points\"::bigint, \"skill_points_total\"::bigint \
                  FROM \"characters\" WHERE \"uuid\" = $1",
                 vec![Param::Text(uuid.to_string())],
             ),
@@ -425,11 +533,19 @@ impl DatabaseCharacters {
                 name: row.get::<usize, String>(0),
                 campaign: row.get::<usize, i64>(1) as u8,
                 profession: row.get::<usize, i64>(2) as u8,
+                secondary_profession: row.get::<usize, i64>(3) as u8,
                 uuid: character,
-                gold: row.get::<usize, i64>(3) as u32,
-                appearance: row.get::<usize, i64>(4) as u32,
-                level: row.get::<usize, i64>(5) as u8,
-                unlocked_professions: row.get::<usize, i64>(6) as u32,
+                gold: row.get::<usize, i64>(4) as u32,
+                appearance: row.get::<usize, i64>(5) as u32,
+                level: row.get::<usize, i64>(6) as u8,
+                unlocked_professions: row.get::<usize, i64>(7) as u32,
+                campaigns_finished: u8::from(row.get::<usize, bool>(8))
+                    | (u8::from(row.get::<usize, bool>(9)) << 1)
+                    | (u8::from(row.get::<usize, bool>(10)) << 2),
+                last_outpost: row.get::<usize, i64>(11) as u16,
+                experience: row.get::<usize, i64>(12).clamp(0, i64::from(u32::MAX)) as u32,
+                skill_points: row.get::<usize, i64>(13).clamp(0, i64::from(u32::MAX)) as u32,
+                skill_points_total: row.get::<usize, i64>(14).clamp(0, i64::from(u32::MAX)) as u32,
             })
             .unwrap_or(missing)
     }
@@ -470,10 +586,7 @@ impl DatabaseCharacters {
             return Ok(None);
         };
         Ok(Some(crate::characters::Position {
-            map_id: row
-                .get::<&str, Option<i64>>("map_id")
-                .unwrap_or(0)
-                .max(0) as u32,
+            map_id: row.get::<&str, Option<i64>>("map_id").unwrap_or(0).max(0) as u32,
             x: row.get::<&str, Option<f32>>("pos_x").unwrap_or(0.0),
             y: row.get::<&str, Option<f32>>("pos_y").unwrap_or(0.0),
             plane: plane as i16,
@@ -512,7 +625,9 @@ impl DatabaseCharacters {
         match reply.recv() {
             Ok(Ok(rows)) => Ok(!rows.is_empty()),
             Ok(Err(error)) => Err(format!("the position was not recorded: {error}")),
-            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+            Err(_) => {
+                Err("the character database answered no query: it is shutting down".to_string())
+            }
         }
     }
 
@@ -529,14 +644,17 @@ impl DatabaseCharacters {
             ),
             Err(_) => {
                 return Err(
-                    "the character database pool is poisoned; the position was not cleared".to_string(),
+                    "the character database pool is poisoned; the position was not cleared"
+                        .to_string(),
                 );
             }
         };
         match reply.recv() {
             Ok(Ok(rows)) => Ok(!rows.is_empty()),
             Ok(Err(error)) => Err(format!("the position was not cleared: {error}")),
-            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+            Err(_) => {
+                Err("the character database answered no query: it is shutting down".to_string())
+            }
         }
     }
 
@@ -801,7 +919,9 @@ impl DatabaseCharacters {
                 );
                 Err(error)
             }
-            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+            Err(_) => {
+                Err("the character database answered no query: it is shutting down".to_string())
+            }
         }
     }
 
@@ -871,7 +991,10 @@ impl DatabaseCharacters {
             Ok(pool) => pool.query_reply(
                 "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1 AND \"item_id\" = $2 \
                  RETURNING 1",
-                vec![Param::Text(uuid.to_string()), Param::Integer(i64::from(item_id))],
+                vec![
+                    Param::Text(uuid.to_string()),
+                    Param::Integer(i64::from(item_id)),
+                ],
             ),
             Err(_) => return Err("the character database pool is poisoned".to_string()),
         };
@@ -885,7 +1008,9 @@ impl DatabaseCharacters {
                 );
                 Err(error)
             }
-            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+            Err(_) => {
+                Err("the character database answered no query: it is shutting down".to_string())
+            }
         }
     }
 
@@ -930,7 +1055,9 @@ impl DatabaseCharacters {
                 return Err(error);
             }
             Err(_) => {
-                return Err("the character database answered no query: it is shutting down".to_string());
+                return Err(
+                    "the character database answered no query: it is shutting down".to_string(),
+                );
             }
         };
         if remaining == 0 && self.remove_item(uuid, item_id)? {
@@ -939,7 +1066,8 @@ impl DatabaseCharacters {
         Ok(Some(remaining))
     }
 
-    /// Remove a character and every record that is its own - its items, its unlocks, its row.
+    /// Remove a character and every record that is its own - its items, its unlocks, its guild rows,
+    /// its row.
     ///
     /// Reference: `CharacterDatabase.DeleteFromDB`, which deletes the character and the records that
     /// point at it together. The administration tool is the caller; neither a login's list nor a
@@ -949,6 +1077,11 @@ impl DatabaseCharacters {
         for statement in [
             "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1 RETURNING 1",
             "DELETE FROM \"character_unlock\" WHERE \"character_uuid\" = $1 RETURNING 1",
+            // A character's guild membership and its open invitations go with it: ASURA's
+            // `ON DELETE CASCADE` (`0029_guilds.sql`), written out because the guild tables carry no
+            // foreign key to `characters` here (`0009-guilds.sql`).
+            "DELETE FROM \"guild_members\" WHERE \"character_uuid\" = $1 RETURNING 1",
+            "DELETE FROM \"guild_invites\" WHERE \"character_uuid\" = $1 RETURNING 1",
             "DELETE FROM \"characters\" WHERE \"uuid\" = $1 RETURNING 1",
         ] {
             let reply = match self.pool.lock() {
@@ -980,11 +1113,15 @@ impl DatabaseCharacters {
     }
 
     /// Give a character one more map it may travel to (R12), answering whether the row was new.
-    pub fn unlock_map(&self, uuid: &str, map_id: u32) -> Result<bool, String> {        let reply = match self.pool.lock() {
+    pub fn unlock_map(&self, uuid: &str, map_id: u32) -> Result<bool, String> {
+        let reply = match self.pool.lock() {
             Ok(pool) => pool.query_reply(
                 "INSERT INTO \"character_unlock\" (\"character_uuid\", \"map_id\") \
                  VALUES ($1, $2::bigint) ON CONFLICT DO NOTHING RETURNING 1",
-                vec![Param::Text(uuid.to_string()), Param::Integer(i64::from(map_id))],
+                vec![
+                    Param::Text(uuid.to_string()),
+                    Param::Integer(i64::from(map_id)),
+                ],
             ),
             Err(_) => return Err("the character database pool is poisoned".to_string()),
         };
@@ -998,7 +1135,9 @@ impl DatabaseCharacters {
                 );
                 Err(error)
             }
-            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+            Err(_) => {
+                Err("the character database answered no query: it is shutting down".to_string())
+            }
         }
     }
 
@@ -1028,7 +1167,10 @@ impl DatabaseCharacters {
                 );
             }
         };
-        Ok(rows.iter().map(|row| row.get::<usize, i64>(0) as u32).collect())
+        Ok(rows
+            .iter()
+            .map(|row| row.get::<usize, i64>(0) as u32)
+            .collect())
     }
 
     /// One row, as the list reads it.
@@ -1113,7 +1255,7 @@ fn dwords(text: &str) -> Vec<u32> {
 mod tests {
     use super::*;
     use common::configuration::{Config, Policy};
-    use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
+    use database::database::{DatabaseKind, DatabaseWorkerPool, read_settings};
 
     /// The live character database, when this machine has one.
     ///
@@ -1126,10 +1268,7 @@ mod tests {
         let settings = read_settings(&config, DatabaseKind::Character).ok()?;
         let mut pool = DatabaseWorkerPool::open(DatabaseKind::Character, &settings, &log).ok()?;
         pool.ping().ok()?;
-        Some(DatabaseCharacters::new(
-            Arc::new(Mutex::new(pool)),
-            log,
-        ))
+        Some(DatabaseCharacters::new(Arc::new(Mutex::new(pool)), log))
     }
 
     #[test]
@@ -1149,11 +1288,8 @@ mod tests {
         let pool = Arc::clone(&source.pool);
         {
             let mut pool = pool.lock().unwrap();
-            pool.query_with(
-                "DELETE FROM \"characters\" WHERE \"uuid\" = $1",
-                &[&uuid],
-            )
-            .unwrap();
+            pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid])
+                .unwrap();
             pool.query_with(
                 "INSERT INTO \"characters\" (\"uuid\", \"account_uuid\", \"name\", \"appearance\", \"primary_profession\", \"unlocked_professions\", \"campaign\", \"level\") \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -1174,19 +1310,31 @@ mod tests {
         );
 
         // And a different account's characters are not in it.
-        assert!(source.for_account("00000000-0000-0000-0000-000000000000").is_empty());
+        assert!(
+            source
+                .for_account("00000000-0000-0000-0000-000000000000")
+                .is_empty()
+        );
 
         // The whole table lists it too - the administration tool's own view.
         assert!(
-            source.list().iter().any(|character| character.name == "Listed One"),
+            source
+                .list()
+                .iter()
+                .any(|character| character.name == "Listed One"),
             "the list holds the character"
         );
 
         // R14: the outpost the character is in is recorded, and the next read of the list says so.
-        source.set_last_outpost(uuid, 148).expect("the outpost is recorded");
+        source
+            .set_last_outpost(uuid, 148)
+            .expect("the outpost is recorded");
         let listed = source.list();
         assert_eq!(
-            listed.iter().find(|character| character.name == "Listed One").map(|character| character.settings.last_outpost),
+            listed
+                .iter()
+                .find(|character| character.name == "Listed One")
+                .map(|character| character.settings.last_outpost),
             Some(148),
             "the row now says the character is in map 148"
         );
@@ -1233,11 +1381,13 @@ mod tests {
         let mut world = crate::world::World::new(2);
         world
             .load_creation(
-                    "../config/World/Vanilla/creation/inventory.json",
-                    "../config/World/Vanilla/creation/equipment.json",
-                    Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
-                    &log,
-                )
+                "../config/World/Vanilla/creation/inventory.json",
+                "../config/World/Vanilla/creation/equipment.json",
+                Some(std::path::Path::new(
+                    "../config/World/Vanilla/creation/worn_slots.json",
+                )),
+                &log,
+            )
             .expect("the creation data");
         let tables = world.creation();
         let inventory = tables.inventory(0, 1);
@@ -1270,15 +1420,9 @@ mod tests {
         let written = source
             .write_starting_items(uuid, &inventory, &templates)
             .expect("the starting items are written");
-        let stored = source
-            .items_of(uuid)
-            .expect("the items are readable");
+        let stored = source.items_of(uuid).expect("the items are readable");
         // The count the confirm logs is the rows that are there.
-        assert_eq!(
-            written,
-            stored.len(),
-            "the count is the rows written"
-        );
+        assert_eq!(written, stored.len(), "the count is the rows written");
         // And every item of the set became a row: a missing template would leave one out, with a
         // warning of its own.
         assert_eq!(
@@ -1331,13 +1475,19 @@ mod tests {
             .expect("the unlock row is written");
         }
 
-        assert!(source.remove(uuid).expect("the character is removed"), "the row was there");
+        assert!(
+            source.remove(uuid).expect("the character is removed"),
+            "the row was there"
+        );
         assert!(
             !source.remove(uuid).expect("a second remove answers"),
             "nothing is left to remove"
         );
         assert!(
-            source.items_of(uuid).expect("the items are readable").is_empty(),
+            source
+                .items_of(uuid)
+                .expect("the items are readable")
+                .is_empty(),
             "its items are gone"
         );
         assert!(

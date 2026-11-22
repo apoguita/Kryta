@@ -5,9 +5,9 @@
 //! (`Arc4` is `common::cryptography`), the same split the reference has: `common` holds the cipher,
 //! `shared` holds the thing a connection runs on it.
 
-#[path = "Handshake.rs"]
-pub mod handshake;
 #[path = "AuthCrypt.rs"]
 pub mod auth_crypt;
+#[path = "Handshake.rs"]
+pub mod handshake;
 
 pub use auth_crypt::AuthCrypt;

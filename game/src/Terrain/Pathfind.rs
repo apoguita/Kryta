@@ -22,7 +22,6 @@
 #[path = "Pathfind/Directional.rs"]
 pub mod directional;
 
-
 /// A point on a map, in the game's own units, on one of the map's planes.
 ///
 /// `ASURA/crates/asura-world/src/pathfind.rs:113`.
@@ -1673,7 +1672,6 @@ pub fn find_path_blob(
     }
 }
 
-
 /// What the finder said about a walk.
 ///
 /// `ASURA/crates/asura-world/src/agent.rs:570`.
@@ -1755,8 +1753,16 @@ mod tests {
         let mut context = PathContext::new(two_stacked_traps());
         let src = pos(5.0, 2.0);
         let dst = pos(5.0, 8.0);
-        assert_eq!(context.find_trapezoid(src), Some(0), "the start is in the lower one");
-        assert_eq!(context.find_trapezoid(dst), Some(1), "the destination in the upper");
+        assert_eq!(
+            context.find_trapezoid(src),
+            Some(0),
+            "the start is in the lower one"
+        );
+        assert_eq!(
+            context.find_trapezoid(dst),
+            Some(1),
+            "the destination in the upper"
+        );
         let mut waypoints = Vec::new();
         let found = context.path_finding(src, dst, &mut waypoints);
         assert!(found, "the walk exists");
@@ -1806,11 +1812,12 @@ mod tests {
     #[test]
     fn a_graph_loaded_from_a_dump_walks_and_an_unbound_map_has_no_graph() {
         let data = (*two_stacked_traps()).clone();
-        let bytes = crate::terrain::graph_dump::encode(&[crate::terrain::graph_dump::DumpedGraph {
-            map_id: 148,
-            map_file_id: 0x1B97D,
-            data,
-        }]);
+        let bytes =
+            crate::terrain::graph_dump::encode(&[crate::terrain::graph_dump::DumpedGraph {
+                map_id: 148,
+                map_file_id: 0x1B97D,
+                data,
+            }]);
         let path = std::env::temp_dir().join("kryta-path-graph-test.dump");
         std::fs::write(&path, &bytes).expect("write the dump");
         let graphs = PathGraphs::from_dump(&path.to_string_lossy()).expect("load the dump");
@@ -1824,6 +1831,7 @@ mod tests {
                 file_id: 0x1B97D,
                 name: "Ascalon City (pre-Searing)".to_string(),
                 instance_value: Some(0xBB14_F539),
+                name_id: None,
             },
             MapEntry {
                 id: 146,
@@ -1831,21 +1839,35 @@ mod tests {
                 file_id: 0x1B97E,
                 name: "Lakeside County".to_string(),
                 instance_value: None,
+                name_id: None,
             },
         ];
-        assert_eq!(graphs.bind(&maps), 1, "only the map whose blob is loaded binds");
+        assert_eq!(
+            graphs.bind(&maps),
+            1,
+            "only the map whose blob is loaded binds"
+        );
         assert_eq!(graphs.maps(), vec![148]);
 
         assert!(
-            matches!(graphs.walk(148, pos(5.0, 2.0), pos(5.0, 8.0)), Walk::Found(_)),
+            matches!(
+                graphs.walk(148, pos(5.0, 2.0), pos(5.0, 8.0)),
+                Walk::Found(_)
+            ),
             "the bound map walks"
         );
         assert!(
-            matches!(graphs.walk(146, pos(5.0, 2.0), pos(5.0, 8.0)), Walk::NoGraph),
+            matches!(
+                graphs.walk(146, pos(5.0, 2.0), pos(5.0, 8.0)),
+                Walk::NoGraph
+            ),
             "a map with no graph answers NoGraph"
         );
         assert!(
-            matches!(graphs.walk_any_plane(148, pos(5.0, 2.0), (5.0, 8.0)), Walk::Found(_)),
+            matches!(
+                graphs.walk_any_plane(148, pos(5.0, 2.0), (5.0, 8.0)),
+                Walk::Found(_)
+            ),
             "a destination on an unspecified plane is found too"
         );
         let _ = std::fs::remove_file(&path);
@@ -1856,11 +1878,12 @@ mod tests {
     #[test]
     fn a_manual_offset_walks_the_direction_it_is_given() {
         let data = (*two_stacked_traps()).clone();
-        let bytes = crate::terrain::graph_dump::encode(&[crate::terrain::graph_dump::DumpedGraph {
-            map_id: 148,
-            map_file_id: 0x1B97D,
-            data,
-        }]);
+        let bytes =
+            crate::terrain::graph_dump::encode(&[crate::terrain::graph_dump::DumpedGraph {
+                map_id: 148,
+                map_file_id: 0x1B97D,
+                data,
+            }]);
         let path = std::env::temp_dir().join("kryta-directional-test.dump");
         std::fs::write(&path, &bytes).expect("write the dump");
         let graphs = PathGraphs::from_dump(&path.to_string_lossy()).expect("load the dump");
@@ -1870,6 +1893,7 @@ mod tests {
             file_id: 0x1B97D,
             name: "Ascalon City (pre-Searing)".to_string(),
             instance_value: None,
+            name_id: None,
         }]);
         let settings = crate::terrain::pathfind::directional::DirectionalSettings::default();
         // Up from the lower trapezoid: the walk follows the direction across the edge above it.
@@ -1898,7 +1922,9 @@ mod tests {
     fn a_map_loaded_from_the_archive_walks_where_its_spawn_stands() {
         let Some(path) = std::env::var("KRYTA_GW_DAT").ok().or_else(|| {
             let candidate = std::path::PathBuf::from("Gw.dat");
-            candidate.exists().then(|| candidate.to_string_lossy().into_owned())
+            candidate
+                .exists()
+                .then(|| candidate.to_string_lossy().into_owned())
         }) else {
             eprintln!("skipped: no local Gw.dat");
             return;
@@ -1909,6 +1935,7 @@ mod tests {
             file_id: 0x1B97D,
             name: "Ascalon City (pre-Searing)".to_string(),
             instance_value: Some(0xBB14_F539),
+            name_id: None,
         };
         let graphs = PathGraphs::load(&path, std::slice::from_ref(&map)).expect("open the archive");
         assert_eq!(graphs.imported(), 1, "map 148s blob imported");
@@ -1930,7 +1957,14 @@ mod tests {
     #[test]
     fn the_heap_pops_in_cost_order() {
         let mut heap = Vec::new();
-        for (cost, trap_id) in [(5.0f32, 5u32), (1.0, 1), (3.0, 3), (2.0, 2), (4.0, 4), (0.5, 6)] {
+        for (cost, trap_id) in [
+            (5.0f32, 5u32),
+            (1.0, 1),
+            (3.0, 3),
+            (2.0, 2),
+            (4.0, 4),
+            (0.5, 6),
+        ] {
             heap_push(&mut heap, HeapNode { cost, trap_id });
         }
         let mut popped = Vec::new();
@@ -1946,7 +1980,11 @@ mod tests {
     #[test]
     fn a_near_parallel_cross_is_treated_as_parallel() {
         let along = Vec2f { x: 1.0, y: 0.0 };
-        assert_eq!(precise_cross(along, Vec2f { x: 1.0, y: 0.0 }), 0.0, "parallel");
+        assert_eq!(
+            precise_cross(along, Vec2f { x: 1.0, y: 0.0 }),
+            0.0,
+            "parallel"
+        );
         let nearly = Vec2f { x: 1.0, y: 0.001 };
         assert_eq!(precise_cross(along, nearly), 0.0, "nearly parallel");
         let across = Vec2f { x: 0.0, y: 1.0 };

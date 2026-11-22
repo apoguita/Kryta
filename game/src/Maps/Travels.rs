@@ -142,9 +142,7 @@ impl DatabaseTravels {
                 );
                 Err(error)
             }
-            Err(_) => Err(
-                "the login database answered no query: it is shutting down".to_string(),
-            ),
+            Err(_) => Err("the login database answered no query: it is shutting down".to_string()),
         }
     }
 
@@ -181,9 +179,7 @@ impl DatabaseTravels {
                 return Err(format!("the travel table cannot be read: {error}"));
             }
             Err(_) => {
-                return Err(
-                    "the login database answered no query: it is shutting down".to_string(),
-                );
+                return Err("the login database answered no query: it is shutting down".to_string());
             }
         };
         let Some(row) = rows.first() else {

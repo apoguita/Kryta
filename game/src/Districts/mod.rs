@@ -28,8 +28,8 @@ pub use peers::{PeerView, Peers, Standing, farewell, introduction};
 use common::logging::{Log, LogLevel};
 use std::sync::Arc;
 
-use crate::world::map_kind::OUTPOST;
 use crate::world::MapEntry;
+use crate::world::map_kind::OUTPOST;
 
 /// One running copy of a map: which map, which district number, who is inside, and what the world
 /// database holds about it.
@@ -93,9 +93,16 @@ impl Districts {
         allotment: u32,
     ) -> Result<u32, String> {
         if map.kind != Some(OUTPOST) {
-            // R3: an explorable copy belongs to one party. Without parties yet, one connection is
-            // one party, so it gets a copy of its own - numbered after the copies this world already
-            // holds for the map, which is what the client shows as districts.
+            // R3: an explorable copy belongs to one party. A party crossing names the district it
+            // chose, and every member must land in that same copy; a connection with no hint gets a
+            // fresh copy, numbered after the copies this world already holds for the map.
+            if district_hint >= 1 {
+                match self.copy_mut(map.id, district_hint) {
+                    Some(copy) => copy.members += 1,
+                    None => self.open_copy(map, district_hint, language),
+                }
+                return Ok(district_hint);
+            }
             let district = self.next_number(map.id);
             self.open_copy(map, district, language);
             return Ok(district);
@@ -269,8 +276,8 @@ impl Districts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::map_kind;
     use crate::world::MapEntry;
+    use crate::world::map_kind;
 
     fn outpost() -> MapEntry {
         MapEntry {
@@ -281,6 +288,7 @@ mod tests {
             // The value a live load of map 148 carried (`0xBB14F539`,
             // `recordings/client/feature/maps/pre-searing-load-3.jsonl` seq 751).
             instance_value: Some(0xBB14_F539),
+            name_id: None,
         }
     }
 
@@ -291,6 +299,7 @@ mod tests {
             file_id: 1,
             name: "Regent Valley".to_string(),
             instance_value: None,
+            name_id: None,
         }
     }
 
@@ -359,7 +368,10 @@ mod tests {
         let mut districts = Districts::new();
         let started = 1_000;
         districts.enter(&outpost(), 0, 0, 100).unwrap();
-        assert!(districts.sweep(started, 900).is_empty(), "a loaded copy is not empty");
+        assert!(
+            districts.sweep(started, 900).is_empty(),
+            "a loaded copy is not empty"
+        );
         districts.leave(148, 1, started);
         assert!(
             districts.sweep(started + 899, 900).is_empty(),

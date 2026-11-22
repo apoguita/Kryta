@@ -222,7 +222,8 @@ mod tests {
 
     #[test]
     fn a_socket_path_in_the_port_field_is_refused() {
-        let info = DatabaseInfo::parse("127.0.0.1;/var/run/mysqld.sock;kryta;pw;kryta_login").unwrap();
+        let info =
+            DatabaseInfo::parse("127.0.0.1;/var/run/mysqld.sock;kryta;pw;kryta_login").unwrap();
         let error = Connection::open(&info).unwrap_err();
         assert!(error.contains("is not a port"), "{error}");
     }

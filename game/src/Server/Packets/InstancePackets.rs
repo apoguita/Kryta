@@ -313,7 +313,11 @@ mod tests {
         let frame = instance_load_spawn_point(0x0001_B97D, 9541.87, 4796.46, 0);
         assert_eq!(frame.len(), 26, "the recording's size");
         assert_eq!(&frame[..2], &[0x96, 0x01]);
-        assert_eq!(&frame[2..6], &0x0001_B97Du32.to_le_bytes(), "the map file id");
+        assert_eq!(
+            &frame[2..6],
+            &0x0001_B97Du32.to_le_bytes(),
+            "the map file id"
+        );
         assert_eq!(&frame[6..10], &9541.87f32.to_le_bytes());
         assert_eq!(&frame[10..14], &4796.46f32.to_le_bytes());
         assert_eq!(&frame[14..16], &0u16.to_le_bytes(), "the plane");
@@ -357,7 +361,10 @@ mod tests {
     #[test]
     fn the_load_head_is_the_traced_six_bytes() {
         // `7C 01 3F 3F 00 00` - the reference's own send log, one line per message.
-        assert_eq!(instance_load_head(), vec![0x7C, 0x01, 0x3F, 0x3F, 0x00, 0x00]);
+        assert_eq!(
+            instance_load_head(),
+            vec![0x7C, 0x01, 0x3F, 0x3F, 0x00, 0x00]
+        );
     }
 
     #[test]
@@ -411,7 +418,11 @@ mod tests {
         assert_eq!(frame.len(), 2 + 2 + CARTOGRAPHY_DATA_BYTES);
         assert_eq!(u16::from_le_bytes([frame[2], frame[3]]), 64);
         let odd = cartography_data(&[1, 2, 3]);
-        assert_eq!(u16::from_le_bytes([odd[2], odd[3]]), 1, "three bytes, one dword");
+        assert_eq!(
+            u16::from_le_bytes([odd[2], odd[3]]),
+            1,
+            "three bytes, one dword"
+        );
         assert_eq!(&odd[4..8], &[1, 2, 3, 0], "padded inside the dword");
     }
 

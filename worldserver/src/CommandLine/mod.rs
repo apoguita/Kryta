@@ -10,8 +10,8 @@
 //! holds no command and no operation of its own.
 
 use std::io::{BufRead, IsTerminal, Write};
-use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 
 use game::chat::commands::{Surface, Table};
 use game::chat::operations::{Arguments, Caller, Invocation, Refusal, Registry, UNKNOWN_OPERATION};
@@ -94,7 +94,11 @@ pub fn parse(table: &Table, registry: &Registry, line: &str) -> Result<Invocatio
 /// What an operator may type at the console, and what each one does.
 pub fn help(table: &Table, registry: &Registry) -> String {
     let mut lines = vec!["help - what this console answers".to_string()];
-    for row in table.rows().iter().filter(|row| row.serves(Surface::Console)) {
+    for row in table
+        .rows()
+        .iter()
+        .filter(|row| row.serves(Surface::Console))
+    {
         let Some(registration) = registry.get(&row.operation) else {
             continue;
         };
@@ -110,7 +114,12 @@ pub fn help(table: &Table, registry: &Registry) -> String {
 
 /// Run one line synchronously, for a caller that has the world in hand (the tests, and the panel's
 /// own checks): parse, invoke, and answer the text a person reads.
-pub fn execute(table: &Table, registry: &Registry, world: &game::world::World, line: &str) -> String {
+pub fn execute(
+    table: &Table,
+    registry: &Registry,
+    world: &game::world::World,
+    line: &str,
+) -> String {
     let line = line.trim();
     if line.is_empty() {
         return String::new();
@@ -118,7 +127,9 @@ pub fn execute(table: &Table, registry: &Registry, world: &game::world::World, l
     if line == "help" {
         return help(table, registry);
     }
-    match parse(table, registry, line).and_then(|invocation| registry.invoke_text(&invocation, world)) {
+    match parse(table, registry, line)
+        .and_then(|invocation| registry.invoke_text(&invocation, world))
+    {
         Ok(answer) => answer,
         Err(refusal) => refusal.message,
     }
@@ -226,7 +237,12 @@ mod tests {
     }
 
     fn table() -> Table {
-        Table::load("../config/Server/commands.json", &common::logging::Log::new(), &registry()).unwrap()
+        Table::load(
+            "../config/Server/commands.json",
+            &common::logging::Log::new(),
+            &registry(),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -241,9 +257,15 @@ mod tests {
     #[test]
     fn a_name_no_row_grants_is_the_references_unknown_command() {
         let world = game::world::World::new(7);
-        assert_eq!(execute(&table(), &registry(), &world, "nope"), "Unknown command");
+        assert_eq!(
+            execute(&table(), &registry(), &world, "nope"),
+            "Unknown command"
+        );
         // A registered operation with no row is not reachable: rows grant names, not the registry.
-        assert_eq!(execute(&table(), &registry(), &world, "@world.status"), "Unknown command");
+        assert_eq!(
+            execute(&table(), &registry(), &world, "@world.status"),
+            "Unknown command"
+        );
     }
 
     #[test]
@@ -261,7 +283,10 @@ mod tests {
         let invocation = parse(&table, &registry, "server info").unwrap();
         assert_eq!(invocation.operation, "world.status");
         assert!(invocation.arguments.is_empty());
-        assert_eq!(invocation.caller.kind, game::chat::operations::CallerKind::Console);
+        assert_eq!(
+            invocation.caller.kind,
+            game::chat::operations::CallerKind::Console
+        );
     }
 
     #[test]
@@ -269,7 +294,10 @@ mod tests {
         let text = help(&table(), &registry());
         assert!(text.contains("server info"), "{text}");
         assert!(text.contains("world.status"), "{text}");
-        assert!(!text.contains("maps"), "a chat row is not a console command: {text}");
+        assert!(
+            !text.contains("maps"),
+            "a chat row is not a console command: {text}"
+        );
         assert!(!text.contains("stuck"), "{text}");
     }
 

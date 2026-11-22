@@ -25,8 +25,14 @@ pub const AGENT_PROPERTY_UPDATE_FLOAT: u16 = 0x00A2;
 pub const AGENT_UPDATE_MORALE: u16 = 0x009C;
 /// `GAME_SMSG_AGENT_INITIAL_EFFECTS` (`0x00F0`): the effect bitmask an agent starts with.
 pub const AGENT_INITIAL_EFFECTS: u16 = 0x00F0;
+/// `GAME_SMSG_AGENT_UPDATE_PROFESSION` (`0x00A6`): an agent's primary and secondary profession.
+pub const AGENT_UPDATE_PROFESSION: u16 = 0x00A6;
 /// `GAME_SMSG_WORLD_UPDATE_CONTROLLED_AGENT` (`0x0022`): which agent this client drives.
 pub const WORLD_UPDATE_CONTROLLED_AGENT: u16 = 0x0022;
+/// `GAME_SMSG_AGENT_PLAYER_DIE` (`0x002D`): the agent is dead.
+pub const AGENT_PLAYER_DIE: u16 = 0x002D;
+/// `GAME_SMSG_AGENT_UPDATE_FLAGS` (`0x0026`): the agent's flags word.
+pub const AGENT_UPDATE_FLAGS: u16 = 0x0026;
 /// `GAME_SMSG_AGENT_UPDATE_DIRECTION` (`0x0025`): an agent's facing, as a unit vector.
 pub const AGENT_UPDATE_DIRECTION: u16 = 0x0025;
 /// `GAME_SMSG_AGENT_STOP_MOVING` (`0x0028`): the agent is no longer walking.
@@ -46,6 +52,16 @@ pub const AGENT_UPDATE_POSITION: u16 = 0x002C;
 /// Evidence: `ASURA`'s `agent.rs`, which records the reference's own numbers: energy 41, health 42,
 /// and 64 for the third property the creation screen is sent.
 pub const AGENT_PROPERTY_ENERGY: u32 = 41;
+/// The property an agent's current energy is reported through, as a fraction of its maximum.
+///
+/// Preforged `src/runtime/gw_vitals.h:64-78`, `packets_2022`: the capacity precedes the fraction,
+/// and the order is `41`, `42`, `33`, `34`. Without the two fractions the client has maxima but no
+/// current pool, which is a bar with no fill.
+pub const AGENT_PROPERTY_ENERGY_FRACTION: u32 = 33;
+/// The property an agent's current health is reported through, as a fraction of its maximum.
+///
+/// See [`AGENT_PROPERTY_ENERGY_FRACTION`]; Preforged sends both after the maxima.
+pub const AGENT_PROPERTY_HEALTH_FRACTION: u32 = 34;
 /// The property an agent's health is reported through.
 pub const AGENT_PROPERTY_HEALTH: u32 = 42;
 /// The third property the creation screen is sent, always zero there.
@@ -209,6 +225,20 @@ pub fn agent_initial_effects(agent: u32, effects: u32) -> Vec<u8> {
     frame(AGENT_INITIAL_EFFECTS, &body)
 }
 
+/// `0x00A6`: an agent's primary and secondary profession, ahead of its create.
+///
+/// Reference: `ASURA/crates/asura-world/src/instance.rs`, `introduction`, and its builder
+/// `agent_update_profession` (an agent dword and two bytes). A live introduction sends it for every
+/// other player: `pre-searing-load-3.jsonl` seq 215 carries agent 0x28, primary 2, secondary 0 before
+/// that agent's `0x0020`.
+pub fn agent_update_profession(agent: u32, primary: u8, secondary: u8) -> Vec<u8> {
+    let mut body = Vec::with_capacity(6);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.push(primary);
+    body.push(secondary);
+    frame(AGENT_UPDATE_PROFESSION, &body)
+}
+
 /// `0x0022`: which agent this client drives - the agent, and the constant the reference sends.
 ///
 /// Source: the game table's row (`GAME_SMSG_WORLD_UPDATE_CONTROLLED_AGENT`, 10 bytes) and `ASURA`'s
@@ -338,14 +368,30 @@ pub fn agent_update_effects(agent: u32, effects: u32) -> (u16, Vec<u8>) {
     (AGENT_UPDATE_EFFECTS, frame(AGENT_UPDATE_EFFECTS, &body))
 }
 
-/// `GAME_SMSG_WORLD_REMOVE_AGENT` (`0x0021`): 8 bytes - a four-byte game header and the agent.
+/// `GAME_SMSG_WORLD_REMOVE_AGENT` (`0x0021`): **6 bytes** - a two-byte header and the agent
+/// (Headquarter's `GAME_SERVER_0033`).
 ///
-/// `ASURA/crates/asura-protocol/src/game/mod.rs:1358`, `world_remove_agent`; `GameSrv_BroadcastAgentRemove`.
+/// `GameSrv_BroadcastAgentRemove`; ported from `ASURA/crates/asura-protocol/src/game/mod.rs:2181-2186`
+/// (ASURA `071735e`). The `21 00 00 00 | <agent id>` capture this used to copy as eight bytes is the
+/// struct layer.
 pub fn world_remove_agent(agent: u32) -> (u16, Vec<u8>) {
-    let mut body = Vec::with_capacity(6);
-    body.extend_from_slice(&0u16.to_le_bytes());
+    (
+        WORLD_REMOVE_AGENT,
+        frame(WORLD_REMOVE_AGENT, &agent.to_le_bytes()),
+    )
+}
+
+/// `0x002D`: the agent is dead. ASURA `agent_player_die`.
+pub fn agent_player_die(agent: u32) -> Vec<u8> {
+    frame(AGENT_PLAYER_DIE, &agent.to_le_bytes())
+}
+
+/// `0x0026`: the agent's flags word. A resign death sends `4` right after `0x002D`.
+pub fn agent_update_flags(agent: u32, flags: u8) -> Vec<u8> {
+    let mut body = Vec::with_capacity(5);
     body.extend_from_slice(&agent.to_le_bytes());
-    (WORLD_REMOVE_AGENT, frame(WORLD_REMOVE_AGENT, &body))
+    body.push(flags);
+    frame(AGENT_UPDATE_FLAGS, &body)
 }
 
 /// `GAME_SMSG_AGENT_UPDATE_POSITION` (`0x002C`): 16 bytes - the agent, where it is, and the plane.
@@ -368,12 +414,30 @@ pub fn agent_update_position(agent: u32, position: (f32, f32), plane: u16) -> (u
 mod tests {
     use super::*;
 
+    /// Six bytes, the client's table (`ASURA/crates/asura-protocol/src/game/mod.rs:2181-2186`).
+    #[test]
+    fn an_agent_is_removed_in_six_bytes() {
+        assert_eq!(
+            world_remove_agent(0x1234).1,
+            vec![0x21, 0x00, 0x34, 0x12, 0, 0]
+        );
+    }
+
     #[test]
     fn a_property_is_three_dwords_in_the_measured_order() {
         // `property`, `agent`, `value` - the order the reference's own builder writes them.
         assert_eq!(
             agent_property_update_int(AGENT_PROPERTY_HEALTH, 1, 100),
             vec![0x9F, 0x00, 42, 0, 0, 0, 1, 0, 0, 0, 100, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn a_profession_is_the_agent_and_two_bytes() {
+        assert_eq!(
+            agent_update_profession(0x28, 2, 0),
+            vec![0xA6, 0x00, 0x28, 0, 0, 0, 2, 0],
+            "eight bytes, the table's declared size"
         );
     }
 
@@ -464,13 +528,20 @@ mod tests {
         assert_eq!(&frame[39..43], &0x4140_0000u32.to_le_bytes(), "h0027");
         assert_eq!(&frame[43..47], &2u32.to_le_bytes(), "the team");
         for offset in [47usize, 51, 55, 59, 63] {
-            assert_eq!(&frame[offset..offset + 4], &0u32.to_le_bytes(), "h002F..h003F");
+            assert_eq!(
+                &frame[offset..offset + 4],
+                &0u32.to_le_bytes(),
+                "h002F..h003F"
+            );
         }
         for offset in [67usize, 71] {
             assert_eq!(&frame[offset..offset + 4], &0f32.to_le_bytes());
         }
         for offset in [75usize, 79, 89, 93] {
-            assert_eq!(f32::from_le_bytes(frame[offset..offset + 4].try_into().unwrap()), f32::INFINITY);
+            assert_eq!(
+                f32::from_le_bytes(frame[offset..offset + 4].try_into().unwrap()),
+                f32::INFINITY
+            );
         }
         assert_eq!(&frame[83..85], &0u16.to_le_bytes());
         assert_eq!(&frame[85..89], &0u32.to_le_bytes());

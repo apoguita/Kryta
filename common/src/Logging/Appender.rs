@@ -163,7 +163,10 @@ mod tests {
         appender.write(&LogMessage::new(LogLevel::Warn, "root", "warned"));
         appender.write(&LogMessage::new(LogLevel::Info, "root", "informed"));
         appender.write(&LogMessage::new(LogLevel::Debug, "root", "debugged"));
-        assert_eq!(appender.lines, vec!["warned".to_string(), "informed".to_string()]);
+        assert_eq!(
+            appender.lines,
+            vec!["warned".to_string(), "informed".to_string()]
+        );
     }
 
     #[test]

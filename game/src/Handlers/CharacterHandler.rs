@@ -50,14 +50,21 @@ impl Creation {
 /// the four weapon sets and the gold, the faction caps, the attribute and profession state, the
 /// skillbar, the faction record and the agent's properties, then the player-data end. The block is
 /// `crate::creation::player_data_block`, because the inventory it carries is content.
-pub(crate) fn creation_player_block(tables: Option<&crate::creation::Tables>, creation: &Creation) -> Vec<Vec<u8>> {
+pub(crate) fn creation_player_block(
+    tables: Option<&crate::creation::Tables>,
+    creation: &Creation,
+) -> Vec<Vec<u8>> {
     match tables {
         Some(tables) => {
             crate::creation::player_data_block(tables, creation.campaign, creation.profession)
         }
         // A session with no creation data still answers: the block without the inventory, which is
         // what says a profession's equipment is missing rather than that the screen failed.
-        None => crate::creation::player_data_block(&crate::creation::Tables::default(), creation.campaign, creation.profession),
+        None => crate::creation::player_data_block(
+            &crate::creation::Tables::default(),
+            creation.campaign,
+            creation.profession,
+        ),
     }
 }
 
@@ -82,8 +89,14 @@ impl WorldSession {
             creation.profession = message[3];
         }
         let frames = creation_player_block(self.creation.as_ref(), creation);
-        self.send(io, peer, crypt, &frames, "the creation screen's player data")
-            .await;
+        self.send(
+            io,
+            peer,
+            crypt,
+            &frames,
+            "the creation screen's player data",
+        )
+        .await;
     }
 
     /// The creation screen's PvP half: `ASURA/crates/asura-world/src/creation.rs:259-271`
@@ -139,7 +152,10 @@ impl WorldSession {
             .inventory(previous.campaign, previous.profession)
             .equipped_items()
         {
-            frames.push(item_packets::item_remove(item_packets::ITEM_STREAM, item.id));
+            frames.push(item_packets::item_remove(
+                item_packets::ITEM_STREAM,
+                item.id,
+            ));
         }
         frames.push(character_packets::update_unlocked_skills(&[]));
         frames.push(character_packets::player_update_profession(
@@ -148,8 +164,9 @@ impl WorldSession {
             0,
             0,
         ));
-        let equipped_bag =
-            crate::creation::equipped_bag(&tables).map(|bag| bag.id).unwrap_or(0);
+        let equipped_bag = crate::creation::equipped_bag(&tables)
+            .map(|bag| bag.id)
+            .unwrap_or(0);
         for item in tables
             .inventory(creation.campaign, creation.profession)
             .equipped_items()
@@ -193,7 +210,10 @@ impl WorldSession {
         version: &GameVersion,
         crypt: &mut AuthCrypt,
     ) {
-        let Some(count) = message.get(2..4).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize) else {
+        let Some(count) = message
+            .get(2..4)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]) as usize)
+        else {
             return;
         };
         let name_at = 4;
@@ -243,7 +263,9 @@ impl WorldSession {
         if getrandom::getrandom(&mut id).is_err() {
             self.say(
                 LogLevel::Warn,
-                format!("Gameplay connection from {peer}: no entropy for a character id; using zero."),
+                format!(
+                    "Gameplay connection from {peer}: no entropy for a character id; using zero."
+                ),
             );
         }
         let account = crate::characters::uuid_text(&version.account);
@@ -256,11 +278,17 @@ impl WorldSession {
         let start_map = starting_outpost.map(|map| map.id as u16).unwrap_or(0);
 
         let characters = crate::characters::DatabaseCharacters::new(
-            std::sync::Arc::clone(pool), self.log.clone(),
+            std::sync::Arc::clone(pool),
+            self.log.clone(),
         );
         let reply = characters.insert_creation(
-            &crate::characters::uuid_text(&id), &account, &name, appearance,
-            creation.profession, creation.campaign, start_map,
+            &crate::characters::uuid_text(&id),
+            &account,
+            &name,
+            appearance,
+            creation.profession,
+            creation.campaign,
+            start_map,
         );
 
         match reply {
@@ -389,7 +417,126 @@ impl WorldSession {
                 );
                 let _ = self.send(io, peer, crypt, &[refusal], "the refusal").await;
             }
-
         }
+    }
+}
+
+impl WorldSession {
+    /// `/.exp <total>` and `/xp`: the one place this world changes a character's experience, and the
+    /// line that reads it.
+    ///
+    /// Ported from `ASURA/crates/asura-world/src/player.rs:462-569` (`set_experience`) and
+    /// `ASURA/crates/asura-world/src/chat.rs:612-648` (the two command arms). The curve is the pack's
+    /// (`World::experience`); the level is what the total says, not a number the caller chooses
+    /// (`characters::experience::apply`). The row is written first, and a refused write changes
+    /// nothing. Then the client is told in one of two shapes (`characters::experience::told`): a rise of
+    /// one level or less is one `0x00EE {0, delta}`, which moves the bar; a decrease, or a jump of more
+    /// than one level, restates the whole `0x00E9` block. **Nothing else is sent**: ASURA's client
+    /// crashed on a change that also sent the public level (`0x009F` 36) and the attribute points
+    /// (`0x0037`), so the server's level and points are read at the next load (`player.rs:528-539`).
+    /// The answer line is ASURA's `tell`, which here is the server's chat pair (`answer_line`).
+    pub(crate) async fn answer_experience(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        crypt: &mut AuthCrypt,
+        sheet: &crate::characters::CharacterSheet,
+        argument: Option<&str>,
+    ) {
+        let before = self
+            .progress
+            .lock()
+            .ok()
+            .and_then(|progress| *progress)
+            .unwrap_or_else(|| sheet.progress());
+        let Some(argument) = argument else {
+            // `/xp` without a total: the reading half (`chat.rs:624-631`).
+            let line = format!("Experience {}; level {}.", before.experience, before.level);
+            self.answer_line(io, peer, crypt, &line).await;
+            return;
+        };
+        let Ok(total) = argument.trim().parse::<u32>() else {
+            self.say(
+                LogLevel::Debug,
+                format!(
+                    "Gameplay connection from {peer}: /.exp: {argument:?} is not a total experience"
+                ),
+            );
+            self.answer_line(
+                io,
+                peer,
+                crypt,
+                "Usage: /.exp <total experience>, e.g. /.exp 2000",
+            )
+            .await;
+            return;
+        };
+        let Some(curve) = self.world.experience().copied() else {
+            self.answer_line(
+                io,
+                peer,
+                crypt,
+                "Experience is unavailable: the pack has no experience curve.",
+            )
+            .await;
+            return;
+        };
+        let after = crate::characters::experience::apply(&curve, before, total);
+        let written = match self.characters() {
+            Some(characters) => characters
+                .set_progress(&crate::characters::uuid_text(&sheet.uuid), &after)
+                .unwrap_or(false),
+            None => false,
+        };
+        if !written {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: /.exp: the database refused the change of {}'s experience",
+                    sheet.name
+                ),
+            );
+            self.answer_line(
+                io,
+                peer,
+                crypt,
+                "Experience was not changed: the character row refused the write.",
+            )
+            .await;
+            return;
+        }
+        if let Ok(mut progress) = self.progress.lock() {
+            *progress = Some(after);
+        }
+        self.say(
+            LogLevel::Info,
+            format!(
+                "Gameplay connection from {peer}: {} experience {}, level {} (was {}), skill points {}/{}",
+                sheet.name,
+                after.experience,
+                after.level,
+                before.level,
+                after.skill_points,
+                after.skill_points_total
+            ),
+        );
+        let frames = match crate::characters::experience::told(before, after) {
+            crate::characters::experience::Told::Award(delta) => {
+                vec![character_packets::agent_kill_reward(
+                    character_packets::ATTRIBUTE_EXPERIENCE,
+                    delta,
+                )]
+            }
+            crate::characters::experience::Told::Block => {
+                vec![crate::agents::player::progress_record(&after)]
+            }
+            crate::characters::experience::Told::Nothing => Vec::new(),
+        };
+        if !frames.is_empty() {
+            self.send(io, peer, crypt, &frames, "the experience change")
+                .await;
+        }
+        let line = format!("Experience {}; level {}.", after.experience, after.level);
+        self.answer_line(io, peer, crypt, &line).await;
     }
 }

@@ -7,9 +7,9 @@
 
 use shared::network::http::{Request, Response};
 
+use crate::Manage;
 use crate::view;
 use crate::web::{components, http, layout};
-use crate::Manage;
 
 /// The account directory, and the place a new account is made.
 pub fn index(manage: &Manage) -> Response {
@@ -24,10 +24,7 @@ pub fn index(manage: &Manage) -> Response {
         }
     };
     let active = rows.iter().filter(|row| row.account.active).count();
-    let directory = rows
-        .iter()
-        .map(directory_row)
-        .collect::<String>();
+    let directory = rows.iter().map(directory_row).collect::<String>();
     let directory = if directory.is_empty() {
         components::note("No account exists yet. Create the first one on this page.")
     } else {
@@ -151,11 +148,20 @@ pub fn account(manage: &Manage, id: i64) -> Response {
         badge = components::badge(account.active),
         count = format!("{} player(s)", row.players),
         tabs = components::section_nav(&tabs),
-        login = components::field("Login name", &components::text_input("username", &account.username)),
+        login = components::field(
+            "Login name",
+            &components::text_input("username", &account.username)
+        ),
         pair = format!(
             "<div class=\"field-grid\">{}{}</div>",
-            components::field("Portal user id", &components::text_input("user_id", &account.user_id)),
-            components::field("Portal token", &components::text_input("token", &account.token)),
+            components::field(
+                "Portal user id",
+                &components::text_input("user_id", &account.user_id)
+            ),
+            components::field(
+                "Portal token",
+                &components::text_input("token", &account.token)
+            ),
         ),
         save = components::submit("Save account"),
         eula = eula,
@@ -203,7 +209,11 @@ pub fn create(manage: &Manage, request: &Request) -> Response {
             let id = manage
                 .list_accounts()
                 .ok()
-                .and_then(|accounts| accounts.into_iter().find(|account| account.username == username))
+                .and_then(|accounts| {
+                    accounts
+                        .into_iter()
+                        .find(|account| account.username == username)
+                })
                 .map(|account| account.id);
             match id {
                 Some(id) => http::redirect(&format!("/accounts/{id}")),
@@ -215,11 +225,9 @@ pub fn create(manage: &Manage, request: &Request) -> Response {
             "accounts",
             &format!("An account is already called {username}."),
         ),
-        Err(error) => crate::pages::error(
-            500,
-            "accounts",
-            &format!("The account table said: {error}"),
-        ),
+        Err(error) => {
+            crate::pages::error(500, "accounts", &format!("The account table said: {error}"))
+        }
     }
 }
 
@@ -238,11 +246,9 @@ pub fn update(manage: &Manage, request: &Request, id: i64) -> Response {
             http::redirect(&format!("/accounts/{id}"))
         }
         Ok(false) => crate::pages::error(404, "accounts", &format!("No account has id {id}.")),
-        Err(error) => crate::pages::error(
-            500,
-            "accounts",
-            &format!("The account table said: {error}"),
-        ),
+        Err(error) => {
+            crate::pages::error(500, "accounts", &format!("The account table said: {error}"))
+        }
     }
 }
 
@@ -257,11 +263,9 @@ pub fn set_active(manage: &Manage, request: &Request, id: i64) -> Response {
             http::redirect(&format!("/accounts/{id}"))
         }
         Ok(false) => crate::pages::error(404, "accounts", &format!("No account has id {id}.")),
-        Err(error) => crate::pages::error(
-            500,
-            "accounts",
-            &format!("The account table said: {error}"),
-        ),
+        Err(error) => {
+            crate::pages::error(500, "accounts", &format!("The account table said: {error}"))
+        }
     }
 }
 
@@ -286,12 +290,14 @@ pub fn set_eula(manage: &Manage, request: &Request, id: i64) -> Response {
             ));
             http::redirect(&format!("/accounts/{id}"))
         }
-        Ok(false) => crate::pages::error(404, "accounts", "The account disappeared while it was read."),
-        Err(error) => crate::pages::error(
-            500,
+        Ok(false) => crate::pages::error(
+            404,
             "accounts",
-            &format!("The account table said: {error}"),
+            "The account disappeared while it was read.",
         ),
+        Err(error) => {
+            crate::pages::error(500, "accounts", &format!("The account table said: {error}"))
+        }
     }
 }
 
@@ -313,11 +319,9 @@ pub fn delete(manage: &Manage, request: &Request, id: i64) -> Response {
             http::redirect("/accounts")
         }
         Ok(false) => crate::pages::error(404, "accounts", "The account is already gone."),
-        Err(error) => crate::pages::error(
-            500,
-            "accounts",
-            &format!("The account table said: {error}"),
-        ),
+        Err(error) => {
+            crate::pages::error(500, "accounts", &format!("The account table said: {error}"))
+        }
     }
 }
 

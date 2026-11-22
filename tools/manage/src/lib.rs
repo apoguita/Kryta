@@ -138,11 +138,9 @@ impl Manage {
     fn get(&self, segments: &[&str], request: &Request) -> Response {
         match segments {
             [] => pages::overview::page(self),
-            ["static", "style.css"] => Response::new(
-                200,
-                web::layout::STYLE_TYPE,
-                web::layout::STYLE.as_bytes(),
-            ),
+            ["static", "style.css"] => {
+                Response::new(200, web::layout::STYLE_TYPE, web::layout::STYLE.as_bytes())
+            }
             ["health"] => Response::text(200, "ok\n"),
             ["accounts"] => {
                 // The old address: a page that named an account is sent to its own page.
@@ -167,11 +165,9 @@ impl Manage {
             ["console", "operations"] => pages::console::operations_fragment(self),
             ["content"] => pages::content::page(self),
             ["worlds"] => pages::worlds::page(self),
-            ["navigation"] => pages::navigation::page(
-                self,
-                None,
-                request.query("inspect") == Some("1"),
-            ),
+            ["navigation"] => {
+                pages::navigation::page(self, None, request.query("inspect") == Some("1"))
+            }
             ["status"] => pages::status::page(self),
             ["status", "data"] => pages::status::fragment(self),
             ["settings"] => pages::settings::page(self),
@@ -316,10 +312,7 @@ impl Manage {
 
     /// The characters of one account, for the account workspace. A character remains owned by the
     /// account that created it; this is not a second character inventory kept by the manager.
-    pub fn characters_of_account(
-        &self,
-        account: &str,
-    ) -> Option<Vec<game::characters::Character>> {
+    pub fn characters_of_account(&self, account: &str) -> Option<Vec<game::characters::Character>> {
         self.characters
             .as_ref()
             .map(|characters| characters.for_account(account))
@@ -387,11 +380,7 @@ impl Manage {
         self.world_pack()
             .ok()
             .and_then(|pack| pack.load_maps().ok())
-            .map(|(maps, _)| {
-                maps.into_iter()
-                    .map(|map| (map.id, map.name))
-                    .collect()
-            })
+            .map(|(maps, _)| maps.into_iter().map(|map| (map.id, map.name)).collect())
             .unwrap_or_default()
     }
 
@@ -404,13 +393,22 @@ impl Manage {
         let config = Config::load_json(world_config, false, Policy::default())
             .map_err(|error| error.to_string())?;
         let (inventory, _) = config
-            .value_string("InventoryFile", "config/World/Vanilla/creation/inventory.json")
+            .value_string(
+                "InventoryFile",
+                "config/World/Vanilla/creation/inventory.json",
+            )
             .map_err(|error| error.to_string())?;
         let (equipment, _) = config
-            .value_string("EquipmentFile", "config/World/Vanilla/creation/equipment.json")
+            .value_string(
+                "EquipmentFile",
+                "config/World/Vanilla/creation/equipment.json",
+            )
             .map_err(|error| error.to_string())?;
         let (worn, _) = config
-            .value_string("EquippedSlotsFile", "config/World/Vanilla/creation/worn_slots.json")
+            .value_string(
+                "EquippedSlotsFile",
+                "config/World/Vanilla/creation/worn_slots.json",
+            )
             .map_err(|error| error.to_string())?;
         game::creation::Tables::load(
             &inventory,
@@ -709,9 +707,7 @@ impl ManageSession {
 
 impl Session for ManageSession {
     fn run(self: Box<Self>, io: SessionIo) -> SessionFuture {
-        Box::pin(async move {
-            self.answer(io).await
-        })
+        Box::pin(async move { self.answer(io).await })
     }
 }
 
@@ -793,7 +789,9 @@ pub fn main_entry() -> std::process::ExitCode {
                     return std::process::ExitCode::FAILURE;
                 }
             },
-            other if port_override.is_none() && other.parse::<u16>().is_ok_and(|port| port != 0) => {
+            other
+                if port_override.is_none() && other.parse::<u16>().is_ok_and(|port| port != 0) =>
+            {
                 port_override = other.parse::<u16>().ok();
             }
             other => {

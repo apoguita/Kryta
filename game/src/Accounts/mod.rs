@@ -174,6 +174,46 @@ impl DatabaseAccounts {
         Ok(rows.first().map(|row| row.get::<usize, i64>(0)))
     }
 
+    /// The UI settings blob the account the portal identified last uploaded, or `None` when it never
+    /// uploaded one (or no row is keyed by that identifier).
+    ///
+    /// This is the read the login answer makes: `AUTH_SMSG_ACCOUNT_SETTINGS` carries the blob back, so
+    /// the client starts with the layout it saved instead of the committed default
+    /// (`data/sql/base/db_auth/account_settings.sql`; `ASURA/crates/asura-db/src/account.rs:36-52`). The
+    /// bytes travel as hex text because the pool binds text, integers and flags only.
+    pub fn settings_for_user(&self, user_id: &str) -> Result<Option<Vec<u8>>, String> {
+        let rows = self.query(
+            "SELECT encode(\"settings\", 'hex') FROM \"account\" WHERE \"user_id\" = $1::text",
+            vec![Param::Text(user_id.to_string())],
+        )?;
+        let Some(row) = rows.first() else {
+            return Ok(None);
+        };
+        let hex: Option<String> = row
+            .try_get(0)
+            .map_err(|error| format!("column settings: {error}"))?;
+        // An empty blob is returned as one, not as "never uploaded": the login path refuses it and
+        // says so, as ASURA's does (`ASURA/crates/asura-auth/src/lib.rs:850-868`).
+        hex.map(|hex| decode_hex(&hex)).transpose()
+    }
+
+    /// Record the UI settings blob the client uploaded for the account the portal identified.
+    ///
+    /// Ported from `ASURA/crates/asura-db/src/account.rs:54-65` (`record_settings`).
+    /// `false` means no row matched, which the caller can only report: the upload was already
+    /// acknowledged, and refusing after the fact would make the client retry a write with nowhere to
+    /// land.
+    pub fn set_settings_for_user(&self, user_id: &str, settings: &[u8]) -> Result<bool, String> {
+        let rows = self.query(
+            "UPDATE \"account\" SET \"settings\" = decode($2::text, 'hex') WHERE \"user_id\" = $1::text RETURNING \"id\"::bigint",
+            vec![
+                Param::Text(user_id.to_string()),
+                Param::Text(encode_hex(settings)),
+            ],
+        )?;
+        Ok(!rows.is_empty())
+    }
+
     /// Remove an account. Its characters are the character database's business and are left alone.
     pub fn delete(&self, username: &str) -> Result<bool, String> {
         let rows = self.query(DELETE_ACCOUNT, vec![Param::Text(username.to_string())])?;
@@ -199,6 +239,32 @@ impl DatabaseAccounts {
             Err(_) => Err("the login database answered no query: it is shutting down".to_string()),
         }
     }
+}
+
+/// Bytes as lowercase hex, the form `decode(..., 'hex')` reads.
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        text.push_str(&format!("{byte:02x}"));
+    }
+    text
+}
+
+/// Hex text, as `encode(..., 'hex')` writes it, back to bytes.
+fn decode_hex(text: &str) -> Result<Vec<u8>, String> {
+    if text.len() % 2 != 0 {
+        return Err(format!(
+            "the settings column is {} hex digits, an odd number",
+            text.len()
+        ));
+    }
+    (0..text.len())
+        .step_by(2)
+        .map(|at| {
+            u8::from_str_radix(&text[at..at + 2], 16)
+                .map_err(|error| format!("the settings column is not hex: {error}"))
+        })
+        .collect()
 }
 
 /// One row, as an [`Account`]. A column of the wrong width is an error, not a panic: a page that cannot
@@ -229,6 +295,49 @@ mod tests {
     use super::*;
     use common::configuration::{Config, Policy};
     use database::database::{DatabaseKind, read_settings};
+
+    #[test]
+    fn the_settings_blob_survives_the_hex_round_trip() {
+        let blob: Vec<u8> = (0..=255u8).chain([0x08, 0x00, 0x66, 0x21]).collect();
+        assert_eq!(decode_hex(&encode_hex(&blob)).unwrap(), blob);
+        assert_eq!(encode_hex(&[0x08, 0x00, 0xff]), "0800ff");
+        assert!(decode_hex("abc").is_err());
+        assert!(decode_hex("zz").is_err());
+    }
+
+    #[test]
+    #[ignore = "needs the login database"]
+    fn the_accounts_ui_settings_are_stored_and_read_back() {
+        let Some(accounts) = repository() else {
+            panic!("the login database is not reachable");
+        };
+        let name = "ui-settings-test@example.com";
+        let user = "00000000-0000-0000-0000-00000000AAC1";
+        let _ = accounts.delete(name);
+        assert!(
+            accounts
+                .create(name, user, "00000000-0000-0000-0000-00000000AAC2")
+                .expect("created")
+        );
+        assert_eq!(
+            accounts.settings_for_user(user).expect("read"),
+            None,
+            "an account that never uploaded has no blob"
+        );
+        let blob: Vec<u8> = (0..=255u8).chain([0x08, 0x00, 0x66, 0x21]).collect();
+        assert!(
+            accounts
+                .set_settings_for_user(user, &blob)
+                .expect("stored"),
+            "the account row was written"
+        );
+        assert_eq!(
+            accounts.settings_for_user(user).expect("read"),
+            Some(blob),
+            "the next login reads back the client's own bytes"
+        );
+        assert!(accounts.delete(name).expect("removed"));
+    }
 
     /// The live login database, when this machine has one.
     fn repository() -> Option<DatabaseAccounts> {

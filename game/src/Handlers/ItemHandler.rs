@@ -56,7 +56,9 @@ impl WorldSession {
         };
         let uuid = crate::characters::uuid_text(&sheet.uuid);
         let bags = self.bags();
-        let before = characters.equipped_item_ids(&uuid, &bags).unwrap_or([0u32; 9]);
+        let before = characters
+            .equipped_item_ids(&uuid, &bags)
+            .unwrap_or([0u32; 9]);
 
         let mut frames = Vec::new();
         match characters.move_item(&uuid, item_id, bag_id, slot, &bags) {
@@ -94,19 +96,17 @@ impl WorldSession {
             }
             Err(error) => self.say(
                 LogLevel::Warn,
-                format!("Gameplay connection from {peer}: the item move could not be written: {error}"),
+                format!(
+                    "Gameplay connection from {peer}: the item move could not be written: {error}"
+                ),
             ),
         }
         if characters.equipped_item_ids(&uuid, &bags).unwrap_or(before) != before {
-            frames.push(equipment_frame(
-                self.player_id(),
-                &uuid,
-                &bags,
-                &characters,
-            ));
+            frames.push(equipment_frame(self.player_id(), &uuid, &bags, &characters));
         }
         if !frames.is_empty() {
-            self.send(io, peer, crypt, &frames, "the item's new place").await;
+            self.send(io, peer, crypt, &frames, "the item's new place")
+                .await;
         }
     }
 
@@ -191,7 +191,9 @@ impl WorldSession {
             }
         };
         let bags = self.bags();
-        let before = characters.equipped_item_ids(&uuid, &bags).unwrap_or([0u32; 9]);
+        let before = characters
+            .equipped_item_ids(&uuid, &bags)
+            .unwrap_or([0u32; 9]);
         let mut frames = Vec::new();
 
         // Whatever is worn in that slot has to come off first, and there has to be somewhere to put it.
@@ -281,15 +283,11 @@ impl WorldSession {
         }
 
         if characters.equipped_item_ids(&uuid, &bags).unwrap_or(before) != before {
-            frames.push(equipment_frame(
-                self.player_id(),
-                &uuid,
-                &bags,
-                &characters,
-            ));
+            frames.push(equipment_frame(self.player_id(), &uuid, &bags, &characters));
         }
         if !frames.is_empty() {
-            self.send(io, peer, crypt, &frames, "the item's new place").await;
+            self.send(io, peer, crypt, &frames, "the item's new place")
+                .await;
         }
     }
 }
@@ -375,7 +373,9 @@ fn equipment_frame(
     bags: &[crate::creation::Bag],
     characters: &DatabaseCharacters,
 ) -> Vec<u8> {
-    let equipped = characters.equipped_item_ids(uuid, bags).unwrap_or([0u32; 9]);
+    let equipped = characters
+        .equipped_item_ids(uuid, bags)
+        .unwrap_or([0u32; 9]);
     misc_packets::update_agent_visual_equipment(agent, equipped)
 }
 

@@ -73,7 +73,7 @@ the client held": it is a count and a shape, not a length to send. The wire size
 | 0x00A3 | S -> C | 10 | 20 | GAME_SMSG_AGENT_PROPERTY_UPDATE_FLOAT_TARGET | Known |
 | 0x00A4 | S -> C | 1 | 36 | GAME_SMSG_AGENT_PROJECTILE_LAUNCHED | Known |
 | 0x00A5 | S -> C | 1 | 252 | GAME_SMSG_AGENT_UPDATE_SPEECH_BUBBLE | Known |
-| 0x00A6 | S -> C | 92 | 16 | GAME_SMSG_AGENT_UPDATE_PROFESSION | Known |
+| 0x00A6 | S -> C | 92 | 16 | GAME_SMSG_AGENT_UPDATE_PROFESSION | Emitted |
 | 0x00A7 | S -> C | 40 | 16 | - | Unnamed |
 | 0x00AA | S -> C | 2 | 16 | GAME_SMSG_AGENT_CREATE_NPC | Known |
 | 0x00AE | S -> C | 3 | 12 | GAME_SMSG_AGENT_UPDATE_MODEL | Known |
@@ -121,7 +121,7 @@ the client held": it is a count and a shape, not a length to send. The wire size
 | 0x014D | S -> C | 10 | 12 | GAME_SMSG_ITEM_REMOVE | Emitted |
 | 0x015A | S -> C | 61 | 12 | GAME_SMSG_ITEM_SET_PROFESSION | Emitted |
 | 0x015B | S -> C | 25 | 12 | - | Unnamed |
-| 0x015E | S -> C | 279 | 40 | GAME_SMSG_ITEM_LOW_DETAIL | Observed |
+| 0x015E | S -> C | 279 | 40 | GAME_SMSG_ITEM_LOW_DETAIL | Emitted |
 | 0x0161 | S -> C | 2672 | 176/180/184/188/192/196/200/212/216/228 | GAME_SMSG_CREATE_NAMED_ITEM | Emitted |
 | 0x0168 | S -> C | 6 | 12 | - | Unnamed |
 | 0x016E | S -> C | 11 | 8 | GAME_SMSG_LATENCY_ENABLE | Inferred |

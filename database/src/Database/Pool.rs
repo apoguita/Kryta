@@ -10,7 +10,7 @@
 //! - closing means closing the queue and then joining the threads, in that order, so nothing
 //!   queued is lost.
 
-use std::sync::mpsc::{channel, Receiver, Sender, SyncSender};
+use std::sync::mpsc::{Receiver, Sender, SyncSender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -282,8 +282,12 @@ impl DatabaseWorkerPool {
         files: &[crate::updater::UpdateFile],
         log: &Log,
     ) -> Result<crate::updater::apply::UpdateSummary, String> {
-        crate::updater::apply::apply(&mut self.synch, files, log)
-            .map_err(|error| format!("the {} database could not be updated: {error}", self.kind.name()))
+        crate::updater::apply::apply(&mut self.synch, files, log).map_err(|error| {
+            format!(
+                "the {} database could not be updated: {error}",
+                self.kind.name()
+            )
+        })
     }
 
     /// Whether the database still answers.
@@ -370,7 +374,9 @@ mod tests {
         let mut found = false;
         while Instant::now() < deadline {
             let rows = pool
-                .query_sync("SELECT count(*) FROM information_schema.tables WHERE table_name = 't_probe'")
+                .query_sync(
+                    "SELECT count(*) FROM information_schema.tables WHERE table_name = 't_probe'",
+                )
                 .unwrap();
             let count: i64 = rows[0].get(0);
             if count == 1 {

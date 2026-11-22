@@ -13,7 +13,7 @@
 
 #[path = "Entry.rs"]
 pub mod entry;
-pub use entry::{entry_point, Entering, Landing};
+pub use entry::{Entering, Landing, entry_point};
 
 #[path = "Player.rs"]
 pub mod player;
@@ -201,11 +201,13 @@ impl Agent {
         let dx = direction.0 - self.move_direction.0;
         let dy = direction.1 - self.move_direction.1;
         if dx * dx + dy * dy >= 0.0003 || self.move_type != move_type {
-            reply.push(crate::server::packets::agent_packets::agent_update_direction(
-                self.agent_id,
-                direction,
-                move_type,
-            ));
+            reply.push(
+                crate::server::packets::agent_packets::agent_update_direction(
+                    self.agent_id,
+                    direction,
+                    move_type,
+                ),
+            );
         }
         if self.move_type != move_type || self.move_speed != speed {
             reply.push(crate::server::packets::agent_packets::agent_update_speed(
@@ -486,7 +488,10 @@ mod tests {
         let now = Instant::now();
         assert_eq!(agent.adopt_report((0.0, 0.0), 0, now), Adopted::Accepted);
         let later = now + Duration::from_millis(1);
-        assert_eq!(agent.adopt_report((9000.0, 0.0), 1, later), Adopted::Refused);
+        assert_eq!(
+            agent.adopt_report((9000.0, 0.0), 1, later),
+            Adopted::Refused
+        );
         assert_eq!(agent.plane, 0, "the refused report changed nothing");
 
         let later = later + Duration::from_millis(1);
@@ -530,7 +535,9 @@ mod tests {
         };
         // `begin_walk` takes the first point as the current destination and leaves the rest in the list,
         // so the point a tick crosses is the next one's (`agent.rs:164`, `:309`).
-        let started = agent.begin_walk(vec![first, second]).expect("a first point");
+        let started = agent
+            .begin_walk(vec![first, second])
+            .expect("a first point");
         assert_eq!(started.trap_id, 7, "the walk starts at the first point");
         assert_eq!(agent.motion.waypoint_idx, 1);
 
@@ -546,7 +553,14 @@ mod tests {
         assert!(agent.adopt_correction((100.0, 0.0), 0, 250.0));
         assert_eq!(agent.position, (100.0, 0.0));
         assert!(!agent.adopt_correction((1000.0, 0.0), 0, 250.0));
-        assert_eq!(agent.position, (100.0, 0.0), "the refused one changed nothing");
-        assert!(!agent.adopt_correction((100.0, 0.0), 3, 250.0), "another plane");
+        assert_eq!(
+            agent.position,
+            (100.0, 0.0),
+            "the refused one changed nothing"
+        );
+        assert!(
+            !agent.adopt_correction((100.0, 0.0), 3, 250.0),
+            "another plane"
+        );
     }
 }

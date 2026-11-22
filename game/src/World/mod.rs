@@ -25,6 +25,18 @@ pub mod map_kind {
     pub const CREATION: u8 = 11;
 }
 
+/// A travel another session's crossing asked this player's session to perform. The destination is
+/// resolved once by the crossing, and every party member runs the same redirect on its own socket.
+#[derive(Debug, Clone)]
+pub struct TravelOrder {
+    /// The map every traveller in the party is sent to.
+    pub destination: MapEntry,
+    /// The doorway's landing point, when the crossing stated one.
+    pub landing: Option<(f32, f32)>,
+    /// The destination district, the same for every member of the crossing so one copy holds them.
+    pub district: u32,
+}
+
 /// One map this world can put a client in.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MapEntry {
@@ -42,6 +54,9 @@ pub struct MapEntry {
     /// left out of the instance table - a wrong value is worse than a destination the client cannot
     /// resolve yet (`ASURA/crates/asura-world/src/instance_table.rs:12-13`, `44-42`).
     pub instance_value: Option<u32>,
+    /// The client's string id for the map's name, used by the travel countdown (`0x01BC`). `None`
+    /// when the map file states none; the countdown then has no name to draw.
+    pub name_id: Option<u32>,
 }
 
 impl MapEntry {
@@ -145,10 +160,38 @@ pub struct World {
     /// place other players can be in, and a connection is told about them (`game/Districts/Peers.rs`,
     /// `ASURA/crates/asura-world/src/instance.rs:406-473`).
     peers: Arc<Mutex<crate::districts::Peers>>,
+    /// The parties of every running copy, shared the way the peers are: who leads whom, and which
+    /// invitations are open (`game/Parties/mod.rs`, `ASURA/crates/asura-world/src/party.rs`).
+    parties: Arc<Mutex<crate::parties::Parties>>,
+    /// Travels another session's crossing asked a player's own session to perform. A party crosses
+    /// through one portal together, but each member's redirect and hand-off row belong to its own
+    /// connection (`ASURA/crates/asura-world/src/travel.rs:740-817`, `portal_crossed`/`begin_move`).
+    travel_orders: Arc<Mutex<std::collections::HashMap<u32, TravelOrder>>>,
+    /// The rosters a travel carries into a destination map, by ticket. The first member to arrive
+    /// adopts it; the others are already in it, absent until their own connection lands. Keyed by
+    /// ticket, not district: an outpost's final district is chosen by the destination, not the sender.
+    held_parties: Arc<Mutex<std::collections::HashMap<u64, (u32, crate::parties::Party)>>>,
+    /// The next held-party ticket.
+    next_held_party: std::sync::atomic::AtomicU64,
+    /// Countdown tickets a leader cancelled. The timer thread checks this, not the party table:
+    /// the table can have moved or been tidied by the time the ten seconds are up.
+    cancelled_countdowns: Arc<Mutex<std::collections::HashSet<u64>>>,
+    /// How many players a party may hold, per map, from the pack's `party_sizes.json`
+    /// (`ASURA/crates/asura-world/src/party.rs:46-108`). A map the file does not list falls back to the
+    /// world's own `PartySizeCap` (R15) - see [`Self::max_party_size`].
+    party_sizes: std::collections::HashMap<u32, u32>,
     /// The scripts this world runs, shared the way the copies are: the program registers them before
     /// the world serves anything, and the world's own moments raise them
     /// (`game/Scripting/mod.rs`, the reference's `sScriptMgr`).
     scripts: Arc<Mutex<crate::scripting::ScriptMgr>>,
+    /// The pack's experience curve (`experience.json`, `game/Characters/Experience.rs`), read once at
+    /// start-up. `None` in a world that has not read it; a change of experience is then refused, as
+    /// ASURA refuses it (`ASURA/crates/asura-world/src/player.rs:477-481`).
+    experience: Option<crate::characters::experience::Curve>,
+    /// The guild settings (`config/Server/guilds.json`, `game/Guilds/mod.rs`), read once at start-up.
+    /// `None` in a world that has not read them; every guild request is then refused, as ASURA refuses
+    /// them (`ASURA/crates/asura-world/src/guild.rs:86-95`).
+    guilds: Option<crate::guilds::Settings>,
     /// How long it has been since the copies were last swept: the world's own slower timer, the
     /// reference's `WorldUpdateTimer` arrangement - the program's loop says how much time passed and
     /// this decides whether a thing that does not run every tick is due (`World.cpp:1131`).
@@ -156,6 +199,30 @@ pub struct World {
     /// Why the world was asked to stop, once it was: the reference's `World::m_stopEvent` and
     /// `World::GetExitCode()` (`World.cpp`, `World.h`). `None` until something asks.
     stop: std::sync::atomic::AtomicU8,
+}
+
+/// Read a `party_sizes.json` text: every `maps` key a map id, every value an object with a `value`.
+fn parse_party_sizes(text: &str) -> Result<std::collections::HashMap<u32, u32>, String> {
+    let document: serde_json::Value =
+        serde_json::from_str(text).map_err(|error| error.to_string())?;
+    let maps = document
+        .get("maps")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("it has no \"maps\" object")?;
+    let mut sizes = std::collections::HashMap::new();
+    for (key, entry) in maps {
+        let map_id: u32 = key
+            .parse()
+            .map_err(|_| format!("the key \"{key}\" is not a map id"))?;
+        let size = entry
+            .get("value")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|value| *value > 0)
+            .ok_or(format!("map {map_id} states no positive \"value\""))?;
+        sizes.insert(map_id, size);
+    }
+    Ok(sizes)
 }
 
 /// Why a world stopped, as the exit code the reference's `main` returns.
@@ -205,7 +272,11 @@ pub fn first_outpost(maps: &[MapEntry], wanted: u32) -> Option<&MapEntry> {
 
 impl World {
     /// Read this pack's title records before opening the listener.
-    pub fn load_titles(&mut self, path: impl AsRef<std::path::Path>, log: &Log) -> Result<(), String> {
+    pub fn load_titles(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        log: &Log,
+    ) -> Result<(), String> {
         let path = path.as_ref();
         self.titles = crate::characters::titles::VanillaTitles::load(path)
             .inspect_err(|error| log.out(LogLevel::Error, "server.worldserver", error))?;
@@ -219,6 +290,177 @@ impl World {
             ),
         );
         Ok(())
+    }
+
+    /// Read the pack's experience curve (`experience.json`, copied from ASURA's file of the same name).
+    /// A missing or malformed file refuses the start, as every reader of this tree's content does
+    /// (`AGENTS.md`, rule 7); ASURA logs it and refuses each change instead
+    /// (`ASURA/crates/asura-world/src/experience.rs:52-89`).
+    pub fn load_experience(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        log: &Log,
+    ) -> Result<(), String> {
+        let path = path.as_ref();
+        let curve = crate::characters::experience::load(path)
+            .inspect_err(|error| log.out(LogLevel::Error, "server.worldserver", error))?;
+        log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!(
+                "Experience curve from {}: level 2 at {}, level {} at {}.",
+                path.display(),
+                curve.threshold(2),
+                curve.max_level,
+                curve.max_total()
+            ),
+        );
+        self.experience = Some(curve);
+        Ok(())
+    }
+
+    /// The experience curve in force, when the world read one.
+    pub fn experience(&self) -> Option<&crate::characters::experience::Curve> {
+        self.experience.as_ref()
+    }
+
+    /// Read the guild settings (`config/Server/guilds.json`, copied from ASURA's file of the same name).
+    /// A missing or malformed file refuses the start (`AGENTS.md`, rule 7).
+    pub fn load_guilds(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        log: &Log,
+    ) -> Result<(), String> {
+        let path = path.as_ref();
+        let settings = crate::guilds::Settings::load(path)
+            .inspect_err(|error| log.out(LogLevel::Error, "server.worldserver", error))?;
+        log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!(
+                "Guild settings from {}: a new guild's 0x0133 starts at {:#06X} and moves by {:#06X}; creation and invitations are free (the prices {} and {} are placeholders).",
+                path.display(),
+                settings.revision_on_create,
+                settings.revision_step,
+                settings.creation_price,
+                settings.invite_fee
+            ),
+        );
+        self.guilds = Some(settings);
+        Ok(())
+    }
+
+    /// The guild settings in force, when the world read them.
+    pub fn guilds(&self) -> Option<&crate::guilds::Settings> {
+        self.guilds.as_ref()
+    }
+
+    /// Read the pack's party sizes (`party_sizes.json`, ported from ASURA's pack file of the same name):
+    /// `{"maps": {"<map id>": {"value": <size>, "doc": ...}}}`. A missing or malformed file refuses the
+    /// start, as every reader of this tree's content does (`AGENTS.md`, rule 7); ASURA logs it and lets no
+    /// party grow (`party.rs:84-104`).
+    pub fn load_party_sizes(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        log: &Log,
+    ) -> Result<usize, String> {
+        let path = path.as_ref();
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| format!("{} is not readable: {error}", path.display()))?;
+        self.party_sizes = parse_party_sizes(&text)
+            .map_err(|error| format!("{} is not a party sizes file: {error}", path.display()))?;
+        log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!(
+                "Party sizes: {} map(s) from {}; every other map takes PartySizeCap {} (R15).",
+                self.party_sizes.len(),
+                path.display(),
+                self.settings.party_size_cap
+            ),
+        );
+        Ok(self.party_sizes.len())
+    }
+
+    /// The most players a party may hold on a map: the pack's own size for it, or the world's
+    /// `PartySizeCap` (R15) when the pack does not list it. ASURA answers `None` for an unlisted map, so
+    /// no party grows there (`party.rs:104-108`); this tree's owner rule R15 makes the cap a world setting
+    /// whose default is 8, so an unlisted map takes it instead.
+    pub fn max_party_size(&self, map_id: u32) -> Option<u32> {
+        Some(
+            self.party_sizes
+                .get(&map_id)
+                .copied()
+                .unwrap_or(self.settings.party_size_cap),
+        )
+    }
+
+    /// The parties of every running copy (`game/Parties/mod.rs`).
+    pub fn parties(&self) -> Arc<Mutex<crate::parties::Parties>> {
+        Arc::clone(&self.parties)
+    }
+
+    /// Ask another player's session to run the same travel, as a party crossing does.
+    pub fn queue_travel(&self, player_id: u32, order: TravelOrder) {
+        if let Ok(mut orders) = self.travel_orders.lock() {
+            orders.insert(player_id, order);
+        }
+    }
+
+    /// Take the travel this player's session has been asked to run, once.
+    pub fn take_travel_order(&self, player_id: u32) -> Option<TravelOrder> {
+        self.travel_orders
+            .lock()
+            .ok()
+            .and_then(|mut orders| orders.remove(&player_id))
+    }
+
+    /// Carry a party roster into a destination map. The first member to arrive adopts it. The ticket
+    /// is what a later member would need to name it; this tree finds it by membership.
+    pub fn hold_party(&self, map_id: u32, _district: u32, party: crate::parties::Party) {
+        let ticket = self
+            .next_held_party
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        if let Ok(mut held) = self.held_parties.lock() {
+            eprintln!(
+                "world: party: held roster {ticket} for map {map_id}: members {:?}",
+                party.members
+            );
+            held.insert(ticket, (map_id, party));
+        }
+    }
+
+    /// Take the carried roster when this player is one of its members; a stranger's arrival leaves it
+    /// for the party it belongs to. The destination district is chosen on arrival, so the lookup is by
+    /// map and membership, never by the sender's guessed district.
+    pub fn take_held_party(
+        &self,
+        map_id: u32,
+        _district: u32,
+        player_id: u32,
+    ) -> Option<crate::parties::Party> {
+        let mut held = self.held_parties.lock().ok()?;
+        let ticket = held.iter().find_map(|(ticket, (map, party))| {
+            (*map == map_id && party.members.contains(&player_id)).then_some(*ticket)
+        })?;
+        eprintln!("world: party: player {player_id} adopts held roster {ticket} on map {map_id}");
+        held.remove(&ticket).map(|(_, party)| party)
+    }
+
+    /// The leader cancelled this countdown; the timer thread must not move the party.
+    pub fn cancel_countdown_ticket(&self, ticket: u64) {
+        if let Ok(mut cancelled) = self.cancelled_countdowns.lock() {
+            cancelled.insert(ticket);
+        }
+    }
+
+    /// Whether this countdown was cancelled, consuming the marker.
+    pub fn take_cancelled_countdown(&self, ticket: u64) -> bool {
+        self.cancelled_countdowns
+            .lock()
+            .ok()
+            .is_some_and(|mut cancelled| cancelled.remove(&ticket))
     }
 
     /// Vanilla titles available to each load in this world.
@@ -243,7 +485,15 @@ impl World {
             graphs: std::sync::Arc::new(crate::terrain::pathfind::PathGraphs::empty()),
             portals: std::sync::Arc::new(crate::maps::Portals::empty()),
             peers: Arc::new(Mutex::new(crate::districts::Peers::new())),
+            parties: Arc::new(Mutex::new(crate::parties::Parties::new())),
+            travel_orders: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            held_parties: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            next_held_party: std::sync::atomic::AtomicU64::new(0),
+            cancelled_countdowns: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            party_sizes: std::collections::HashMap::new(),
             scripts: Arc::new(Mutex::new(crate::scripting::ScriptMgr::new())),
+            experience: None,
+            guilds: None,
             sweep_elapsed: Mutex::new(std::time::Duration::ZERO),
             stop: std::sync::atomic::AtomicU8::new(NO_STOP),
         }
@@ -304,7 +554,10 @@ impl World {
 
     /// Give the world its registrations. The program builds them, names the same `Arc` for the console
     /// and the control endpoint, and the rows are then read against them.
-    pub fn set_operations(&mut self, operations: std::sync::Arc<crate::chat::operations::Registry>) {
+    pub fn set_operations(
+        &mut self,
+        operations: std::sync::Arc<crate::chat::operations::Registry>,
+    ) {
         self.operations = operations;
     }
 
@@ -488,11 +741,7 @@ impl World {
 
     /// Give the copies their table and their log: what a program does once the world database is
     /// open and the maps are read (`docs/port/06-world-plan.md`, step 3).
-    pub fn set_instances(
-        &mut self,
-        store: Arc<crate::districts::DatabaseInstances>,
-        log: Log,
-    ) {
+    pub fn set_instances(&mut self, store: Arc<crate::districts::DatabaseInstances>, log: Log) {
         if let Ok(mut districts) = self.districts.lock() {
             districts.attach(store, log);
         }
@@ -586,6 +835,31 @@ impl World {
 
 #[cfg(test)]
 mod tests {
+    /// The pack's own file: pre-Searing holds two players to a party, ASURA's sixteen maps
+    /// (`ASURA/crates/asura-world/src/party.rs:1953-1965`), and an unlisted map takes R15's cap.
+    #[test]
+    fn the_vanilla_pack_caps_every_pre_searing_map_at_two() {
+        let text = include_str!("../../../config/World/Vanilla/party_sizes.json");
+        let sizes = parse_party_sizes(text).expect("the pack's party sizes");
+        assert_eq!(sizes.len(), 16);
+        for map in [
+            145, 146, 147, 148, 149, 150, 151, 160, 161, 162, 163, 164, 165, 166, 877, 878,
+        ] {
+            assert_eq!(sizes.get(&map), Some(&2), "map {map}");
+        }
+        let mut world = World::new(1);
+        world.party_sizes = sizes;
+        assert_eq!(world.max_party_size(148), Some(2));
+        assert_eq!(
+            world.max_party_size(449),
+            Some(8),
+            "R15's cap for a map the file does not list"
+        );
+        assert!(parse_party_sizes("{\"maps\": {\"x\": {\"value\": 2}}}").is_err());
+        assert!(parse_party_sizes("{\"maps\": {\"148\": {\"value\": 0}}}").is_err());
+        assert!(parse_party_sizes("{}").is_err());
+    }
+
     use super::*;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -596,14 +870,22 @@ mod tests {
     fn a_stop_is_requested_once_and_the_first_code_stands() {
         let world = World::new(7);
         assert!(!world.stop_requested());
-        assert_eq!(world.exit_code(), ExitCode::Normal, "a world nobody stopped answers 0");
+        assert_eq!(
+            world.exit_code(),
+            ExitCode::Normal,
+            "a world nobody stopped answers 0"
+        );
 
         world.request_stop(ExitCode::Restart);
         assert!(world.stop_requested());
         assert_eq!(world.exit_code(), ExitCode::Restart);
 
         world.request_stop(ExitCode::Normal);
-        assert_eq!(world.exit_code(), ExitCode::Restart, "the first request wins");
+        assert_eq!(
+            world.exit_code(),
+            ExitCode::Restart,
+            "the first request wins"
+        );
     }
 
     /// A script that writes down the world's moments it was told about, in order.
@@ -698,6 +980,7 @@ mod tests {
             file_id: 113_021,
             name: "Ascalon City (pre-Searing)".to_string(),
             instance_value: Some(0xBB14_F539),
+            name_id: None,
         };
         {
             let districts = world.districts();
@@ -730,6 +1013,7 @@ mod tests {
             file_id: 113_021,
             name: "Ascalon City (pre-Searing)".to_string(),
             instance_value: Some(0xBB14_F539),
+            name_id: None,
         };
         {
             let districts = world.districts();
@@ -738,7 +1022,11 @@ mod tests {
             districts.leave(148, 1, 0);
         }
         assert!(world.update(Duration::from_millis(1000)).is_empty());
-        assert_eq!(world.districts().lock().unwrap().count_of(148), 1, "the copy is still held");
+        assert_eq!(
+            world.districts().lock().unwrap().count_of(148),
+            1,
+            "the copy is still held"
+        );
     }
 
     /// R12/R14: the outpost a fresh character starts in is the configured one when the world hosts it,
@@ -752,6 +1040,7 @@ mod tests {
             file_id: id * 100,
             name: format!("outpost {id}"),
             instance_value: Some(id),
+            name_id: None,
         };
         let explorable = |id: u32| MapEntry {
             id,
@@ -759,9 +1048,13 @@ mod tests {
             file_id: id * 100,
             name: format!("explorable {id}"),
             instance_value: Some(id),
+            name_id: None,
         };
         let mut world = World::new(1);
-        world.set_maps(vec![explorable(146), outpost(148), outpost(149)], Vec::new());
+        world.set_maps(
+            vec![explorable(146), outpost(148), outpost(149)],
+            Vec::new(),
+        );
         world.set_settings(crate::world::world_config::WorldConfig {
             starting_outpost: 149,
             ..crate::world::world_config::WorldConfig::default()
@@ -799,6 +1092,7 @@ mod tests {
             file_id: 113_021,
             name: "Ascalon City (pre-Searing)".to_string(),
             instance_value: Some(0xBB14_F539),
+            name_id: None,
         };
         assert_eq!(named.label(), "Ascalon City (pre-Searing) (148)");
         assert_eq!(named.kind_name(), "outpost");
@@ -808,6 +1102,7 @@ mod tests {
             file_id: 0,
             name: String::new(),
             instance_value: None,
+            name_id: None,
         };
         assert_eq!(unnamed.label(), "map 999", "an unnamed map names its id");
         assert_eq!(unnamed.kind_name(), "explorable");
@@ -817,8 +1112,13 @@ mod tests {
             file_id: 0,
             name: "Character creation".to_string(),
             instance_value: None,
+            name_id: None,
         };
-        assert_eq!(other.kind_name(), "other", "a kind this world does not host");
+        assert_eq!(
+            other.kind_name(),
+            "other",
+            "a kind this world does not host"
+        );
     }
 
     /// A world with two maps and one spawn point, as the database would give it.
@@ -832,6 +1132,7 @@ mod tests {
                     file_id: 0,
                     name: "Character creation".to_string(),
                     instance_value: None,
+                    name_id: None,
                 },
                 MapEntry {
                     id: 148,
@@ -839,6 +1140,7 @@ mod tests {
                     file_id: 112_509,
                     name: "Ascalon City (pre-Searing)".to_string(),
                     instance_value: Some(0xBB14_F539),
+                    name_id: None,
                 },
             ],
             vec![crate::maps::MapSpawn {
@@ -869,7 +1171,10 @@ mod tests {
         let spawns = world.spawns_of(148);
         assert_eq!(spawns.len(), 1);
         assert_eq!(spawns[0].x, 9541.87);
-        assert!(world.spawns_of(0).is_empty(), "the creation instance has no point to stand on");
+        assert!(
+            world.spawns_of(0).is_empty(),
+            "the creation instance has no point to stand on"
+        );
     }
 
     #[test]
@@ -890,6 +1195,7 @@ mod tests {
             file_id: 113_021,
             name: "Ascalon City (pre-Searing)".to_string(),
             instance_value: Some(0xBB14_F539),
+            name_id: None,
         };
         assert!(host.is_hostable());
         let creation = MapEntry {
@@ -898,26 +1204,38 @@ mod tests {
             file_id: 0,
             name: "Character Creation".to_string(),
             instance_value: None,
+            name_id: None,
         };
-        assert!(creation.is_hostable(), "the creation instance needs no geometry");
+        assert!(
+            creation.is_hostable(),
+            "the creation instance needs no geometry"
+        );
         let no_blob = MapEntry {
             file_id: 0,
             ..host.clone()
         };
-        assert!(!no_blob.is_hostable(), "an outpost with no blob loads to a black screen");
+        assert!(
+            !no_blob.is_hostable(),
+            "an outpost with no blob loads to a black screen"
+        );
         let destination_only = MapEntry {
             id: 4,
             kind: None,
             file_id: 0,
             name: String::new(),
             instance_value: Some(943_034_109),
+            name_id: None,
         };
         assert!(
             !destination_only.is_hostable(),
             "a record with no type is a destination the client can resolve and this world cannot load"
         );
         assert_eq!(destination_only.kind_name(), "destination only");
-        assert_eq!(destination_only.label(), "map 4", "an unnamed map names its id");
+        assert_eq!(
+            destination_only.label(),
+            "map 4",
+            "an unnamed map names its id"
+        );
     }
 
     /// The catalogue's own test: every map this world hosts, walked from one of its own spawn points.
@@ -934,7 +1252,7 @@ mod tests {
     #[ignore = "needs the world database and a local Gw.dat"]
     fn every_hosted_map_walks_from_one_of_its_own_spawn_points() {
         use common::configuration::{Config, Policy};
-        use database::database::{read_settings, DatabaseKind};
+        use database::database::{DatabaseKind, read_settings};
 
         let log = Log::new();
         let Some(config) =
@@ -943,8 +1261,9 @@ mod tests {
             panic!("the world program's own configuration reads");
         };
         let settings = read_settings(&config, DatabaseKind::World).expect("the world settings");
-        let mut pool = database::database::DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log)
-            .expect("the world pool opens");
+        let mut pool =
+            database::database::DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log)
+                .expect("the world pool opens");
         pool.ping().expect("the world database answers");
         let repository = crate::maps::DatabaseMaps::new(
             std::sync::Arc::new(std::sync::Mutex::new(pool)),
@@ -1037,35 +1356,36 @@ mod tests {
             && let Ok(mut archive) = crate::pack::GwDat::open(&archive)
         {
             for id in &refused {
-                    let Some(map) = hostable.iter().find(|map| map.id == *id) else {
-                        continue;
-                    };
-                    let reason = match archive.file(map.file_id) {
-                        Ok(Some(blob)) => match crate::terrain::map_data::PathStaticData::import(&blob) {
-                            Ok(data) => {
-                                let mut lands = None;
-                                for plane in 0..data.planes.len().min(256) {
-                                    let point = world.spawns_of(*id).first().map(|s| (s.x, s.y));
-                                    if let Some((x, y)) = point
-                                        && data
-                                            .trapezoid_at(crate::terrain::Vec2f { x, y }, plane as u16)
-                                            .is_some()
-                                    {
-                                        lands = Some(plane);
-                                        break;
-                                    }
+                let Some(map) = hostable.iter().find(|map| map.id == *id) else {
+                    continue;
+                };
+                let reason = match archive.file(map.file_id) {
+                    Ok(Some(blob)) => match crate::terrain::map_data::PathStaticData::import(&blob)
+                    {
+                        Ok(data) => {
+                            let mut lands = None;
+                            for plane in 0..data.planes.len().min(256) {
+                                let point = world.spawns_of(*id).first().map(|s| (s.x, s.y));
+                                if let Some((x, y)) = point
+                                    && data
+                                        .trapezoid_at(crate::terrain::Vec2f { x, y }, plane as u16)
+                                        .is_some()
+                                {
+                                    lands = Some(plane);
+                                    break;
                                 }
-                                format!(
-                                    "{} plane(s), {} trapezoid(s), spawn lands on plane {lands:?}",
-                                    data.planes.len(),
-                                    data.traps_count
-                                )
                             }
-                            Err(err) => format!("the blob is refused: {err}"),
-                        },
-                        Ok(None) => "no such entry in the archive".to_string(),
-                        Err(err) => format!("the entry cannot be read: {err}"),
-                    };
+                            format!(
+                                "{} plane(s), {} trapezoid(s), spawn lands on plane {lands:?}",
+                                data.planes.len(),
+                                data.traps_count
+                            )
+                        }
+                        Err(err) => format!("the blob is refused: {err}"),
+                    },
+                    Ok(None) => "no such entry in the archive".to_string(),
+                    Err(err) => format!("the entry cannot be read: {err}"),
+                };
                 reasons.push(format!("map {id}: {reason}"));
             }
         }
@@ -1117,6 +1437,7 @@ mod tests {
                     file_id: 0,
                     name: "Character creation".to_string(),
                     instance_value: None,
+                    name_id: None,
                 },
                 MapEntry {
                     id: 148,
@@ -1124,6 +1445,7 @@ mod tests {
                     file_id: 0x1B97D,
                     name: "Ascalon City (pre-Searing)".to_string(),
                     instance_value: Some(0xBB14_F539),
+                    name_id: None,
                 },
                 MapEntry {
                     id: 146,
@@ -1131,6 +1453,7 @@ mod tests {
                     file_id: 0x1,
                     name: "a map with no graph".to_string(),
                     instance_value: None,
+                    name_id: None,
                 },
             ],
             world.spawns().to_vec(),
@@ -1139,7 +1462,11 @@ mod tests {
             crate::terrain::pathfind::PathGraphs::load(&path, world.maps())
                 .expect("the archive opens"),
         );
-        assert_eq!(world.graphs().maps(), vec![148], "only the map with a blob is bound");
+        assert_eq!(
+            world.graphs().maps(),
+            vec![148],
+            "only the map with a blob is bound"
+        );
         let from = crate::terrain::Pos {
             x: 9541.87,
             y: 4796.46,
@@ -1151,11 +1478,17 @@ mod tests {
             plane: 0,
         };
         assert!(
-            matches!(world.graphs().walk(148, from, to), crate::terrain::Walk::Found(_)),
+            matches!(
+                world.graphs().walk(148, from, to),
+                crate::terrain::Walk::Found(_)
+            ),
             "a bound map answers with a path"
         );
         assert!(
-            matches!(world.graphs().walk(146, from, to), crate::terrain::Walk::NoGraph),
+            matches!(
+                world.graphs().walk(146, from, to),
+                crate::terrain::Walk::NoGraph
+            ),
             "a map the archive holds no graph for answers NoGraph"
         );
     }

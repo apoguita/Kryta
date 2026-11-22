@@ -116,7 +116,11 @@ impl fmt::Display for UpdateError {
                 path.display()
             ),
             Self::MissingDirectory(path) => {
-                write!(f, "the update directory '{}' does not exist", path.display())
+                write!(
+                    f,
+                    "the update directory '{}' does not exist",
+                    path.display()
+                )
             }
             Self::Unreadable(path) => write!(
                 f,
@@ -133,7 +137,10 @@ impl std::error::Error for UpdateError {}
 ///
 /// Reference: `FillFileListRecursively` into a `LocaleFileStorage`, which is a set ordered by
 /// `PathCompare` - the file name, nothing else.
-pub fn collect_files(root: impl AsRef<Path>, state: UpdateState) -> Result<Vec<UpdateFile>, UpdateError> {
+pub fn collect_files(
+    root: impl AsRef<Path>,
+    state: UpdateState,
+) -> Result<Vec<UpdateFile>, UpdateError> {
     let root = root.as_ref();
     if !root.is_dir() {
         return Err(UpdateError::MissingDirectory(root.to_path_buf()));
@@ -161,7 +168,8 @@ fn walk(
     depth: u32,
     found: &mut Vec<UpdateFile>,
 ) -> Result<(), UpdateError> {
-    let entries = std::fs::read_dir(path).map_err(|_| UpdateError::MissingDirectory(path.to_path_buf()))?;
+    let entries =
+        std::fs::read_dir(path).map_err(|_| UpdateError::MissingDirectory(path.to_path_buf()))?;
 
     for entry in entries.flatten() {
         let entry_path = entry.path();
@@ -173,7 +181,10 @@ fn walk(
             continue;
         }
 
-        if entry_path.extension().is_some_and(|extension| extension == "sql") {
+        if entry_path
+            .extension()
+            .is_some_and(|extension| extension == "sql")
+        {
             found.push(UpdateFile {
                 path: entry_path,
                 state,

@@ -103,10 +103,21 @@ impl DatabaseInstances {
         rows.iter()
             .map(|row| {
                 Ok(InstanceRow {
-                    map_id: row.try_get::<usize, i64>(0).map_err(|error| format!("map: {error}"))? as u32,
-                    district: row.try_get::<usize, i64>(1).map_err(|error| format!("district: {error}"))? as u32,
-                    language: row.try_get::<usize, i64>(2).map_err(|error| format!("language: {error}"))? as u32,
-                    kind: row.try_get::<usize, i64>(3).map_err(|error| format!("kind: {error}"))? as u8,
+                    map_id: row
+                        .try_get::<usize, i64>(0)
+                        .map_err(|error| format!("map: {error}"))?
+                        as u32,
+                    district: row
+                        .try_get::<usize, i64>(1)
+                        .map_err(|error| format!("district: {error}"))?
+                        as u32,
+                    language: row
+                        .try_get::<usize, i64>(2)
+                        .map_err(|error| format!("language: {error}"))?
+                        as u32,
+                    kind: row
+                        .try_get::<usize, i64>(3)
+                        .map_err(|error| format!("kind: {error}"))? as u8,
                     opened_at: row
                         .try_get::<usize, Option<String>>(4)
                         .map_err(|error| format!("opened at: {error}"))?,
@@ -119,11 +130,7 @@ impl DatabaseInstances {
     }
 
     /// One statement, and every row it answered.
-    fn query(
-        &self,
-        sql: &str,
-        params: Vec<Param>,
-    ) -> Result<Vec<postgres::Row>, String> {
+    fn query(&self, sql: &str, params: Vec<Param>) -> Result<Vec<postgres::Row>, String> {
         let reply = match self.pool.lock() {
             Ok(pool) => pool.query_reply(sql, params),
             Err(_) => {
@@ -149,8 +156,8 @@ impl DatabaseInstances {
 mod tests {
     use super::*;
     use common::configuration::{Config, Policy};
-    use database::database::{read_settings, DatabaseKind};
-    use database::updater::{collect_files, UpdateState};
+    use database::database::{DatabaseKind, read_settings};
+    use database::updater::{UpdateState, collect_files};
     use std::path::Path;
 
     #[test]
@@ -166,9 +173,13 @@ mod tests {
         let settings = read_settings(&config, DatabaseKind::World).expect("the world settings");
         let mut pool = DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log)
             .expect("the world pool opens");
-        let schema = collect_files(Path::new("../data/sql/base/db_world"), UpdateState::Released)
-            .expect("the world schema");
-        pool.apply_updates(&schema, &log).expect("the schema applies");
+        let schema = collect_files(
+            Path::new("../data/sql/base/db_world"),
+            UpdateState::Released,
+        )
+        .expect("the world schema");
+        pool.apply_updates(&schema, &log)
+            .expect("the schema applies");
         let store = DatabaseInstances::new(Arc::new(Mutex::new(pool)), log.clone());
 
         let id = store.open(148, 7, 0, 0).expect("the copy opens");
@@ -195,9 +206,13 @@ mod tests {
         let settings = read_settings(&config, DatabaseKind::World).expect("the world settings");
         let mut pool = DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log)
             .expect("the world pool opens");
-        let schema = collect_files(Path::new("../data/sql/base/db_world"), UpdateState::Released)
-            .expect("the world schema");
-        pool.apply_updates(&schema, &log).expect("the schema applies");
+        let schema = collect_files(
+            Path::new("../data/sql/base/db_world"),
+            UpdateState::Released,
+        )
+        .expect("the world schema");
+        pool.apply_updates(&schema, &log)
+            .expect("the schema applies");
         let store = DatabaseInstances::new(Arc::new(Mutex::new(pool)), log.clone());
 
         let id = store.open(148, 9, 1, 0).expect("the copy opens");

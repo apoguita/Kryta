@@ -20,8 +20,8 @@ use crate::server::{AuthSession, FileCheck};
 use common::configuration::{Complaint, Config, Policy, PolicyOverride, Severity};
 use common::logging::{Log, LogLevel};
 use common::utilities::create_pid_file;
-use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
-use database::updater::{collect_files, UpdateState};
+use database::database::{DatabaseKind, DatabaseWorkerPool, read_settings};
+use database::updater::{UpdateState, collect_files};
 use shared::network::socket::{Session, SessionFactory};
 use shared::network::socket_mgr::SocketMgr;
 use shared::worlds::WorldList;
@@ -210,7 +210,8 @@ fn run(args: &[String]) -> Result<(), String> {
         report(&note);
     }
 
-    let mut login = DatabaseWorkerPool::open_with_trace(DatabaseKind::Login, &settings, &log, sql_trace)?;
+    let mut login =
+        DatabaseWorkerPool::open_with_trace(DatabaseKind::Login, &settings, &log, sql_trace)?;
     if sql_trace {
         if log.enabled("sql.trace", LogLevel::Debug) {
             log.out(
@@ -230,8 +231,12 @@ fn run(args: &[String]) -> Result<(), String> {
     // Reference: `DatabaseLoader::Load` opens the pool and then runs the updater on it, and only
     // after both does it report the pool as started.
     let schema = std::path::Path::new("data/sql/base/db_auth");
-    let files = collect_files(schema, UpdateState::Released)
-        .map_err(|error| format!("the login schema at {} is not readable: {error}", schema.display()))?;
+    let files = collect_files(schema, UpdateState::Released).map_err(|error| {
+        format!(
+            "the login schema at {} is not readable: {error}",
+            schema.display()
+        )
+    })?;
     // The first administrator: a file, not a SQL seed (`config/Server/admin.json`,
     // `docs/decisions/0013-the-admin-identity-is-a-file.md`). It is read at every start and writes an
     // account only when the table is empty, so editing it later changes nothing about existing accounts.
@@ -282,7 +287,9 @@ fn run(args: &[String]) -> Result<(), String> {
             log.out(
                 LogLevel::Warn,
                 "server.authserver",
-                format!("No administrator file at {admin_file}: no account is created from a file."),
+                format!(
+                    "No administrator file at {admin_file}: no account is created from a file."
+                ),
             );
         }
     }
@@ -471,9 +478,10 @@ fn run(args: &[String]) -> Result<(), String> {
             format!("Portal: {count} account(s) in the login database, binding {portal_bind}."),
         );
 
-        let mut portal = game::portal::Portal::new(
-            crate::server::DatabaseAccounts::new(std::sync::Arc::clone(&login), log.clone()),
-        );
+        let mut portal = game::portal::Portal::new(crate::server::DatabaseAccounts::new(
+            std::sync::Arc::clone(&login),
+            log.clone(),
+        ));
         let (title_world_config, notes) = config
             .value_string("Portal.TitleWorldConfig", "worldserver/worldserver.json")
             .map_err(|error| error.to_string())?;
@@ -483,13 +491,18 @@ fn run(args: &[String]) -> Result<(), String> {
         if !title_world_config.is_empty() {
             let world = Config::load_json(&title_world_config, false, Policy::default())
                 .map_err(|error| error.to_string())?;
-            let (pack, _) = world.value_string("WorldPack", "config/World/Vanilla")
+            let (pack, _) = world
+                .value_string("WorldPack", "config/World/Vanilla")
                 .map_err(|error| error.to_string())?;
             let path = std::path::Path::new(&pack).join("titles.json");
             let titles = game::characters::titles::VanillaTitles::load(&path)
                 .inspect_err(|error| log.out(LogLevel::Error, "server.authserver", error))?;
             portal = portal.with_custom_titles(titles.custom_catalog());
-            log.out(LogLevel::Info, "server.authserver", format!("Portal: custom title catalog from {}.", path.display()));
+            log.out(
+                LogLevel::Info,
+                "server.authserver",
+                format!("Portal: custom title catalog from {}.", path.display()),
+            );
         }
         let portal = std::sync::Arc::new(portal);
         let factory: SessionFactory = {
@@ -719,9 +732,8 @@ fn run(args: &[String]) -> Result<(), String> {
     // The stack's handshake: printed only when a supervisor asked for it (`KRYTA_STACK`), because
     // nothing this program says belongs on a screen the operator did not ask to fill. The record is
     // the appenders (`Auth.log`), and these same words go there.
-    let ready = format!(
-        "READY: listening on {bind}:{bound}; status reported every {status_interval} s."
-    );
+    let ready =
+        format!("READY: listening on {bind}:{bound}; status reported every {status_interval} s.");
     if std::env::var_os("KRYTA_STACK").is_some() {
         // Only ever read by the supervisor that set the variable, and never shown to anybody.
         println!("{ready}");
@@ -833,7 +845,11 @@ fn world_list_summary(worlds: &std::sync::Arc<std::sync::Mutex<WorldList>>) -> S
                 world.id,
                 world.address_text,
                 world.port,
-                if world.is_offline() { "offline" } else { "online" }
+                if world.is_offline() {
+                    "offline"
+                } else {
+                    "online"
+                }
             )
         })
         .collect::<Vec<_>>()
@@ -887,9 +903,7 @@ impl Options {
                 "-v" | "--version" => options.version = true,
                 "-d" | "--dry-run" => options.dry_run = true,
                 "-c" | "--config" => {
-                    options.config = PathBuf::from(
-                        rest.next().ok_or("--config needs a path")?,
-                    );
+                    options.config = PathBuf::from(rest.next().ok_or("--config needs a path")?);
                 }
                 "--config-policy" => {
                     options.config_policy =
@@ -914,7 +928,9 @@ fn print_usage() {
     println!("  -h [ --help ]             print usage message");
     println!("  -v [ --version ]          print version build info");
     println!("  -d [ --dry-run ]          Dry run");
-    println!("  -c [ --config ] arg       use <arg> as configuration file (default: {DEFAULT_CONFIG})");
+    println!(
+        "  -c [ --config ] arg       use <arg> as configuration file (default: {DEFAULT_CONFIG})"
+    );
     println!("  --config-policy policy    override config severity policy");
 }
 

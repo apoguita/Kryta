@@ -20,7 +20,7 @@ The states are:
 |---|---|---|
 | R1 a map is a definition, an instance is a running copy | in | `game/Districts/`: `Districts::enter` opens and hands out a copy; `game/Maps/` holds the definition |
 | R2 outposts are shared copies | in | the same copy is handed out while it has room (`a_filled_district_is_left_for_the_first_with_room`) |
-| R3 explorables are private per party | partial | with no parties, one connection is one party, so each entry opens a copy (`an_explorable_gets_a_copy_of_its_own`) |
+| R3 explorables are private per party | in | an explorable entry opens a fresh copy and the party's members are sent into that same copy (`World::queue_travel`, `World::hold_party`); `an_explorable_gets_a_copy_of_its_own` |
 | R4 an outpost has numbered districts | in | copies are numbered and the load reports the number in `0x019A` |
 | R5 a new district opens at the allotment | in | `World.DistrictAllotment` (100) and the first-with-room rule; `a_filled_district_is_left_for_the_first_with_room` |
 | R16 one district is enough to begin | in | the first entry opens district 1 and the login answers the district list with exactly one (`authserver/tests/end_to_end.rs` checks the 29-byte answer at the program level: the transaction echoed, eleven language pairs, language 0 with one district) |
@@ -39,11 +39,11 @@ The states are:
 
 | rule | state | where, and what proves it |
 |---|---|---|
-| R6, R7, R8, R9, R10 the party travels as one, the leader drives it | not started | `game/Parties/` is a stub |
-| R17, R18, R19 party persistence and leadership | not started | the same |
+| R6, R7, R8, R9, R10 the party travels as one, the leader drives it | in | a leader's world-map travel holds the roster, sends the lock and the countdown, and moves every present member (`TravelHandler::answer_party_travel`); a non-leader is asked `0x01E7 {4}` and travels alone; a doorway crossing sends every present member the same redirect (`World::queue_travel`). The countdown window itself still needs a client run |
+| R17, R18, R19 party persistence and leadership | partial | the roster crosses a map in memory (`World::hold_party`, `Table::adopt`) and a merge picks the leader by the rule in `Parties/Rules.rs`; there is no database ledger, so a restart loses the party, and a smaller destination cap does not disband it. A disconnected member keeps a shadow row, but heroes do not exist |
 | R23, R24, R25, R27, R28 heroes and henchmen | not started | `game/Heroes/` is a stub |
-| R15 the party cap is not a constant | data | `World.PartySizeCap` (8) and `map.party_cap` read by `DatabaseMaps::party_cap`; nothing applies it yet |
-| R26 an arrival at a smaller cap truncates the party | not started | needs parties |
+| R15 the party cap is not a constant | in | `World.PartySizeCap` (8), a map's own `party_sizes.json` row, and `rules::may_fill` on every invite and accept |
+| R26 an arrival at a smaller cap truncates the party | partial | `rules::travelling_count` states and tests the rule; the travel handler leaves the tail in the old party instead of splitting it into parties of one |
 
 ## Character creation
 

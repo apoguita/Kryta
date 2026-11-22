@@ -150,12 +150,12 @@ working server's own trace of one login into map 146 (build 39112/39167), messag
 | 1 | server -> client | `0x017C` | 6 | the load begins |
 | 2 | server -> client | `0x0186` | 2 | the player-data stream opens |
 | 3 | server -> client | `0x017D` | 4 + 2n | the character's name, a counted UTF-16 string: 14 bytes for "Appok" (5 units) |
-| 4 | server -> client | `0x019A` | 16 | the instance: the agent, the map id, one flag byte (1 in every capture), the district, the language and two bytes |
+| 4 | server -> client | `0x019A` | 16 | the instance: the agent, the map id, one flag byte (0 for an outpost, 1 for an explorable), the district, the language and two bytes |
 | 5 | server -> client | `0x000C` | 2 | the ping request, unasked |
 | 6 | server -> client | `0x000D` | 6 | its reply: 20 |
 | 7 | client -> server | `0x8091` | 4 | it asks for its items (after `0x800A`, `0x800B` and `0x8009`, which is the machine information and are answered with nothing) |
 | 8 | server -> client | `0x0144`, `0x0148`, the item stream, `0x0147` x4, `0x0141`, `0x00EA`-`0x00ED` | 300 bytes for a fresh character | the inventory: the stream, the active set, the bags and items, the four weapon sets, the gold, the four faction caps |
-| 9 | server -> client | `0x0070`, `0x0030`, `0x0099`, `0x01AC` | 3, 28, 5, 6 | the hard-mode flag, the character summary, the current map, ready for a spawn |
+| 9 | server -> client | `0x0070`, `0x0030`, `0x0099`, `0x01AC` | 3, 28, 5, 6 | the hard-mode flag (1 only when this character has finished a campaign), the character summary, the current map, ready for a spawn |
 | 10 | server -> client | `0x0199` 0, `0x0199` 1, `0x0198` (2, 877, 0), `0x0199` 0, `0x0199` 1, `0x0198` (0, map, 0) | 3, 3, 9, 3, 3, 9 | the map manifest: two phases and its end, twice. What the second word names is not measured |
 | 11 | client -> server | `0x8088` | 2 | it asks where it stands |
 | 12 | server -> client | `0x0196` | 26 | the answer: the map's file id, x, y, plane, and 8 inert bytes |
@@ -193,22 +193,36 @@ One block, in this order, ported from the working implementation's own
 | 19 | `0x00B7` | **the profession again** - the second one is what gives the new player the model's profession |
 | 20 | `0x0020` | the agent itself, 99 bytes: the point the entry answer named, speed 288 |
 | 21 | `0x009C` | its morale, 100 |
-| 22-25 | `0x009F` x2, `0x00A2`, `0x009F` | energy 25, health 400, energy regeneration 0.0, public level |
-| 26 | `0x00F0` | its initial effects, none |
-| 27 | `0x006E` | the nine item ids it is drawn wearing, from the equipped bag |
-| 28 | `0x0048` | its cape, shown |
-| 29 | `0x0022` | the agent the client drives |
-| 30-33 | `0x01D3`, `0x01CC`, `0x01D4`, `0x01B3` | the party: created, the player added, the member stream ended, and which party the character is in |
-| 34 | `0x018E` | the load is over |
+| 22-27 | `0x009F` x2, `0x00A2` x3, `0x009F` | energy max 25, health max `80 + 20 * level`, energy fraction 1.0, health fraction 1.0, energy regeneration 0.0, public level |
+| 28 | `0x00F0` | its initial effects, none |
+| 29 | `0x006E` | the nine item ids it is drawn wearing, from the equipped bag |
+| 30 | `0x0048` | its cape, shown |
+| 31 | `0x0022` | the agent the client drives |
+| 32-35 | `0x01D3`, `0x01CC`, `0x01D4`, `0x01B3` | the party: created, the player added, the member stream ended, and which party the character is in |
+| 36 | `0x018E` | the load is over |
 
 - Before 2026-11-12 this tree sent frames 16 to 18 only, and no party at all: the client hung on
   the loading screen (`m_partyClient`, `PyCliParty.cpp(650)`), and the agent it is played as was
   never created.
+- **Outpost and explorable are the map's own type, not one constant.** A type-0 map is an outpost:
+  `0x019A` carries 0, party changes are allowed, and the copy is one district of many. A type-1 map
+  is an explorable: `0x019A` carries 1, the party is fixed, and the copy is that party's own.
+- **`0x019A` must name the same agent as the load's own `0x0020`.** It is the message that tells the
+  client which body it controls. Until 2026-11-22 the player id was drawn after the load head, so
+  `0x019A` always said agent 1 while a second connection's own agent was 2 (and a travel's was 3):
+  its health and energy updated a body it was not controlling, and its own bars stayed empty. The
+  first connection worked only because its id happened to be 1.
+- **Other players are introduced after frame 36, never before it.** Before 2026-11-22 the second
+  player's answer opened with everyone else's `0x0059`/`0x0020`, which the client created before it
+  had read its own team token (`0x00F2`, frame 7) and therefore drew as hostile. ASURA's order is the
+  block first, then each introduction (`ASURA/crates/asura-world/src/player.rs:784-822`).
 - The appearance word is the character's own from its row, or `World.Appearance` when the row has
   none - `0x03100000`, profession 1 and hair style 3, which is what every capture carries because it
   is the reference's own default (E74 packs the word's fields).
-- The agent's numbers are settings (`AgentHealth`, `AgentEnergy`, `AgentEnergyRegen`, `AgentSpeed`),
-  read from the world's file and logged at start-up.
+- The agent's numbers are settings (`AgentHealthBase`, `AgentHealthPerLevel`, `AgentEnergy`,
+  `AgentEnergyRegen`, `AgentSpeed`), read from the world's file and logged at start-up. Maximum
+  health is `AgentHealthBase + AgentHealthPerLevel * level` (ASURA `combat.json`): a level 1
+  character is 100, the value the client draws its own bar against.
 
 - **The party is four frames and the order is the party object.** `0x01D3` creates it, `0x01CC` adds
   the player, `0x01D4` ends the member stream, and only then does `0x01B3` say which party the
@@ -228,9 +242,17 @@ One block, in this order, ported from the working implementation's own
   corrects the row.
 - `0x017D`'s name is the character row's `name`, as the creation confirm wrote it; the campaign and
   profession of the same row choose which starting set the item stream carries.
-- The agent stream (row 16) is the reference's map content - one `0x001A` per agent in the map - and
-  it arrives with `game/Agents/` (plan step 6); the party stream arrives with `game/Parties/` (step 7).
-  This tree sends the load without them and says so in its log.
+- The party stream is `game/Parties/`: a load's own section is `load_section`, and a player that is
+  already in a party has it spliced into the block in place of the four-frame party of one
+  (`splice_load_section`, before `0x018E`). The agent stream (row 16) is the reference's map content -
+  one `0x001A` per agent in the map - and it arrives with `game/Agents/` (plan step 6); the world sends
+  no NPC agents yet.
+- **After the load, the party's frames are the measured ones.** A resign sends `0x002D` and
+  `0x0026 {4}` after `World.ResignSecs` (`multiplay-live-20261106-200638.jsonl` seq 52-55), and
+  `0x01D9` when every present member resigned (seq 42). A leader's world-map travel sends
+  `0x01E7 {4}` or `{5}` when it must ask, then `0x01DA {2, 1}` and `0x01BC` to every member;
+  `0x80A3` cancels it with `0x01DA {0, 0}`. The builders are `Server/Packets/PartyPackets.rs`, and the
+  steps are `Handlers/TravelHandler.rs` and `Handlers/ChatHandler.rs`.
 - In this tree: the builders are `game/src/Server/Packets/` (`InstancePackets`, `ItemPackets`,
   `CharacterPackets`, `MiscPackets`), the order and the answers are `WorldSession`'s `load_map`, and
   the rows are `game/Maps/`'s (`0009-world-schema.md`).
@@ -342,7 +364,10 @@ A refusal sends only `0x0003`, with status `11`.
   sums an extra leading 10-byte message that the trace does not carry.
 - In this tree: the builders are `authserver/src/Server/login_reply.rs`, and the 591-byte block is a
   constant in `authserver/src/Server/account_settings.rs` - a payload, not a setting, so
-  refreshing it is a new build rather than an edit.
+  refreshing it is a new build rather than an edit. It is the answer for an account that has never
+  uploaded settings; once the client uploads its own (`0x8021` then `0x8020`), the next login carries
+  that blob instead, from `account.settings` (`docs/evidence/ui-settings-persistence.md`). The 599 in
+  the table is the reference trace's size for the default block; a stored blob sets its own length.
 - **Checked byte for byte against that trace**, without a client: five tests compare each builder's
   output - all ten bytes of `0x0003` and `0x0014`, and the first 24 of `0x0016`, `0x0011` and `0x0007`
   - with the bytes the reference printed. Every one matches.

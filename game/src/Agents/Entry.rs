@@ -14,7 +14,7 @@
 
 use crate::characters::Position;
 use crate::maps::MapSpawn;
-use crate::world::{map_kind, MapEntry};
+use crate::world::{MapEntry, map_kind};
 
 /// A doorway crossing's landing, as the receiving map states it (R21).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -108,10 +108,7 @@ pub fn entry_point(entering: &Entering) -> Option<(f32, f32, u16, (f32, f32))> {
     let saved_here = entering
         .saved
         .filter(|saved| saved.map_id == entering.map.id);
-    if saved_here.is_none()
-        && points.is_empty()
-        && entering.map.kind != Some(map_kind::CREATION)
-    {
+    if saved_here.is_none() && points.is_empty() && entering.map.kind != Some(map_kind::CREATION) {
         // `Standing::arrival`: "map {} has no configured entry spawn or doorway arrival".
         return None;
     }
@@ -151,6 +148,7 @@ mod tests {
             file_id: 113_021,
             name: "Ascalon City (pre-Searing)".to_string(),
             instance_value: Some(0xBB14_F539),
+            name_id: None,
         }
     }
 
@@ -161,6 +159,7 @@ mod tests {
             file_id: 113_022,
             name: "Lakeside County".to_string(),
             instance_value: Some(0xBB14_F53A),
+            name_id: None,
         }
     }
 
@@ -201,7 +200,10 @@ mod tests {
             );
             assert_eq!(
                 point.3,
-                (std::f32::consts::FRAC_PI_2.cos(), std::f32::consts::FRAC_PI_2.sin()),
+                (
+                    std::f32::consts::FRAC_PI_2.cos(),
+                    std::f32::consts::FRAC_PI_2.sin()
+                ),
                 "and faces the angle the point states"
             );
         }
@@ -333,6 +335,7 @@ mod tests {
             file_id: 0,
             name: "Character Creation".to_string(),
             instance_value: None,
+            name_id: None,
         };
         let point = entry_point(&Entering {
             map: &map,

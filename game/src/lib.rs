@@ -36,10 +36,10 @@ pub mod chat;
 pub mod cinematics;
 #[path = "Combat/mod.rs"]
 pub mod combat;
-#[path = "Creation/mod.rs"]
-pub mod creation;
 #[path = "Conditions/mod.rs"]
 pub mod conditions;
+#[path = "Creation/mod.rs"]
+pub mod creation;
 #[path = "DataStores/mod.rs"]
 pub mod data_stores;
 #[path = "Districts/mod.rs"]
@@ -72,10 +72,10 @@ pub mod movement;
 pub mod pack;
 #[path = "Parties/mod.rs"]
 pub mod parties;
-#[path = "Portal/mod.rs"]
-pub mod portal;
 #[path = "Pools/mod.rs"]
 pub mod pools;
+#[path = "Portal/mod.rs"]
+pub mod portal;
 #[path = "Quests/mod.rs"]
 pub mod quests;
 #[path = "Reputation/mod.rs"]

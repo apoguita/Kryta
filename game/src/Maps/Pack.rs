@@ -116,9 +116,8 @@ impl Pack {
 
         // The folder is the id, and the record must say the same one. A disagreement is the file
         // lying about which map it describes, and a reader cannot pick a winner.
-        let stated = number(&record, "map_id")?.ok_or_else(|| {
-            format!("{} states no map_id", basic.display())
-        })?;
+        let stated = number(&record, "map_id")?
+            .ok_or_else(|| format!("{} states no map_id", basic.display()))?;
         if stated != u64::from(id) {
             return Err(format!(
                 "{} is folder {} but states map_id {}; a map's folder is its id",
@@ -141,6 +140,7 @@ impl Pack {
                 name
             },
             instance_value: number(&record, "instance_value")?.map(|value| value as u32),
+            name_id: number(&record, "name_id")?.map(|value| value as u32),
         });
 
         let spawns = folder.join("spawns.json");
@@ -202,7 +202,9 @@ impl Pack {
 
 /// The pack answers the world's map questions: it is one of the two sources a world can be built from.
 impl crate::maps::MapSource for Pack {
-    fn load_maps(&self) -> Result<(Vec<crate::maps::MapEntry>, Vec<crate::maps::MapSpawn>), String> {
+    fn load_maps(
+        &self,
+    ) -> Result<(Vec<crate::maps::MapEntry>, Vec<crate::maps::MapSpawn>), String> {
         Pack::load_maps(self)
     }
 
@@ -219,7 +221,8 @@ fn walk(root: &Path, folders: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = std::fs::read_dir(root)
         .map_err(|error| format!("{} cannot be listed: {error}", root.display()))?;
     for entry in entries {
-        let entry = entry.map_err(|error| format!("{} cannot be listed: {error}", root.display()))?;
+        let entry =
+            entry.map_err(|error| format!("{} cannot be listed: {error}", root.display()))?;
         let path = entry.path();
         if path.is_dir() {
             walk(&path, folders)?;
@@ -233,7 +236,10 @@ fn walk(root: &Path, folders: &mut Vec<PathBuf>) -> Result<(), String> {
 }
 
 /// One scalar number from a record.
-fn number(record: &common::configuration::json::Record<'_>, field: &str) -> Result<Option<u64>, String> {
+fn number(
+    record: &common::configuration::json::Record<'_>,
+    field: &str,
+) -> Result<Option<u64>, String> {
     let Some(text) = record.text(field)? else {
         return Ok(None);
     };
@@ -332,7 +338,10 @@ mod tests {
             .expect("Ascalon City (pre-Searing)");
         assert_eq!(city.name, "Ascalon City (pre-Searing)");
         assert_eq!(city.file_id, 113_021, "its blob in the archive");
-        assert!(city.instance_value.is_some(), "and its instance-table value");
+        assert!(
+            city.instance_value.is_some(),
+            "and its instance-table value"
+        );
     }
 
     #[test]

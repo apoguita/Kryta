@@ -290,8 +290,9 @@ impl GwDat {
             stored[stored.len() - 2],
             stored[stored.len() - 1],
         ]);
-        let content = crate::pack::fa_compress::decompress(&stored[..stored.len() - 4], announced as usize)
-            .map_err(|error| {
+        let content =
+            crate::pack::fa_compress::decompress(&stored[..stored.len() - 4], announced as usize)
+                .map_err(|error| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("entry {file_id:#X} did not decompress: {error}"),
@@ -348,7 +349,9 @@ mod tests {
     #[test]
     fn the_index_finds_the_blobs_the_map_catalogue_names() {
         let Some(path) = gw_dat_path() else {
-            eprintln!("skipped: no local Gw.dat (set KRYTA_GW_DAT or put one beside the workspace)");
+            eprintln!(
+                "skipped: no local Gw.dat (set KRYTA_GW_DAT or put one beside the workspace)"
+            );
             return;
         };
         let mut archive = GwDat::open(&path).expect("open Gw.dat");
@@ -412,7 +415,11 @@ mod tests {
         // The census: every id the table of contents names answers an entry, and the count is a real
         // archive's.
         let ids = archive.file_ids();
-        assert!(ids.len() > 1_000, "the archive knows {} file ids", ids.len());
+        assert!(
+            ids.len() > 1_000,
+            "the archive knows {} file ids",
+            ids.len()
+        );
         assert!(
             ids.windows(2).all(|pair| pair[0] < pair[1]),
             "the census is sorted and has no repeats"
@@ -425,7 +432,9 @@ mod tests {
     #[test]
     fn a_map_blob_decompresses_to_the_containers_own_signature() {
         let Some(path) = gw_dat_path() else {
-            eprintln!("skipped: no local Gw.dat (set KRYTA_GW_DAT or put one beside the workspace)");
+            eprintln!(
+                "skipped: no local Gw.dat (set KRYTA_GW_DAT or put one beside the workspace)"
+            );
             return;
         };
         let mut archive = GwDat::open(&path).expect("open Gw.dat");

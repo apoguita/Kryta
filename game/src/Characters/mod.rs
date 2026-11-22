@@ -16,7 +16,6 @@ pub mod repository;
 #[path = "Equipping.rs"]
 pub mod equipping;
 
-
 #[path = "Sheet.rs"]
 pub mod sheet;
 
@@ -26,9 +25,11 @@ pub mod metrics;
 #[path = "Titles.rs"]
 pub mod titles;
 
+#[path = "Experience.rs"]
+pub mod experience;
+
 pub use equipping::{NotWorn, equip_place};
 pub use sheet::CharacterSheet;
-
 
 pub use repository::{
     BACKPACK_MODEL, DatabaseCharacters, EQUIPPED_ITEMS_MODEL, HeldItem, LAST_CARRYING_MODEL,
@@ -126,7 +127,9 @@ impl CharacterSettings {
             match self.pieces.get(index) {
                 Some(piece) => {
                     blob.extend_from_slice(&piece.file_id.to_le_bytes());
-                    blob.push((piece.colors & 0xF) as u8 | (((piece.colors >> 4) & 0xF) as u8) << 4);
+                    blob.push(
+                        (piece.colors & 0xF) as u8 | (((piece.colors >> 4) & 0xF) as u8) << 4,
+                    );
                     blob.push(0); // the piece's unk, zero for every piece the reference sends
                     blob.push(
                         (((piece.colors >> 8) & 0xF) as u8)
@@ -205,9 +208,10 @@ pub fn uuid_bytes(text: &str) -> Result<[u8; 16], CharacterError> {
     }
     let mut bytes = [0u8; 16];
     for (index, byte) in hex.as_bytes().chunks(2).enumerate() {
-        let pair = std::str::from_utf8(byte).map_err(|_| CharacterError::BadUuid(text.to_string()))?;
-        bytes[index] = u8::from_str_radix(pair, 16)
-            .map_err(|_| CharacterError::BadUuid(text.to_string()))?;
+        let pair =
+            std::str::from_utf8(byte).map_err(|_| CharacterError::BadUuid(text.to_string()))?;
+        bytes[index] =
+            u8::from_str_radix(pair, 16).map_err(|_| CharacterError::BadUuid(text.to_string()))?;
     }
     // The text form is the wire's little-endian order, so the first four bytes are reversed back into
     // the order the client reads them.
@@ -256,7 +260,11 @@ mod tests {
         assert_eq!(&blob[0..2], &6u16.to_le_bytes(), "the version");
         assert_eq!(&blob[2..4], &146u16.to_le_bytes(), "the outpost");
         assert_eq!(&blob[4..8], &[0u8; 4], "last_time_played is zero");
-        assert_eq!(&blob[8..12], &0xAABB_CCDDu32.to_le_bytes(), "the appearance");
+        assert_eq!(
+            &blob[8..12],
+            &0xAABB_CCDDu32.to_le_bytes(),
+            "the appearance"
+        );
         assert_eq!(&blob[12..28], &[0u8; 16], "the guild hall is zero");
         // campaign 1, level 5, secondary 2, helm 1 -> 1 | 5 << 4 | 2 << 10 | 1 << 14
         let packed = 1u32 | (5 << 4) | (2 << 10) | (1 << 14);

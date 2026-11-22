@@ -108,9 +108,7 @@ impl Frame {
         bytes: &[u8],
     ) -> Result<(Frame, usize), FrameError> {
         if bytes.len() < HEADER_LEN {
-            return Err(FrameError::Incomplete {
-                needed: HEADER_LEN,
-            });
+            return Err(FrameError::Incomplete { needed: HEADER_LEN });
         }
         let shapes: Vec<Shape> = fields.iter().map(shape_of).collect();
         let position = walk(bytes, header, &shapes)?;
@@ -290,7 +288,10 @@ mod tests {
         let (frame, used) =
             Frame::decode_with(0x800A, COUNTED, &[0x0A, 0x80, 0x01, 0x00, 0x41, 0x00, 0xFF])
                 .expect("frames");
-        assert_eq!(used, 6, "header, count and one unit - the stray byte is the next message");
+        assert_eq!(
+            used, 6,
+            "header, count and one unit - the stray byte is the next message"
+        );
         assert_eq!(frame.len(), 6);
     }
 

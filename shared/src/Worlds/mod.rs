@@ -8,5 +8,5 @@ pub mod realm;
 #[path = "RealmList.rs"]
 pub mod realm_list;
 
-pub use realm::{flags, Realm};
+pub use realm::{Realm, flags};
 pub use realm_list::WorldList;

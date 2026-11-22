@@ -42,17 +42,26 @@ pub enum CallerKind {
 impl Caller {
     /// The local console, which is the machine the world runs on.
     pub fn console() -> Self {
-        Self { kind: CallerKind::Console, name: String::new() }
+        Self {
+            kind: CallerKind::Console,
+            name: String::new(),
+        }
     }
 
     /// A caller vouched for by the local control endpoint.
     pub fn api(name: &str) -> Self {
-        Self { kind: CallerKind::Api, name: name.to_string() }
+        Self {
+            kind: CallerKind::Api,
+            name: name.to_string(),
+        }
     }
 
     /// A player's chat line: the identity is the player tag the line arrived with.
     pub fn chat(tag: u16) -> Self {
-        Self { kind: CallerKind::Chat, name: tag.to_string() }
+        Self {
+            kind: CallerKind::Chat,
+            name: tag.to_string(),
+        }
     }
 
     /// The kind's name, for a result that says who asked.
@@ -128,7 +137,10 @@ pub const REFUSED: &str = "refused";
 impl Refusal {
     /// One refusal, by code and message.
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
-        Self { code, message: message.into() }
+        Self {
+            code,
+            message: message.into(),
+        }
     }
 }
 
@@ -154,12 +166,29 @@ pub enum Outcome {
         /// The destination the caller asked for, as it was typed.
         argument: String,
     },
+    /// `/resign`: the session marks the member and schedules its own death.
+    Resign,
+    /// `/guild <verb>`: the session answers it with its own guild state
+    /// (`ASURA/crates/asura-world/src/guild.rs:254-294`, `handle_guild_command`).
+    Guild {
+        /// The verb, as it was typed.
+        argument: String,
+    },
+    /// `/.exp <total>` sets the character's experience; `/xp` alone reads it
+    /// (`ASURA/crates/asura-world/src/chat.rs:612-648`). The session holds the character's progress.
+    Experience {
+        /// The total typed, or `None` for the reading form.
+        argument: Option<String>,
+    },
 }
 
 impl Outcome {
     /// One line for a surface that only renders text: `wire` joined, log lines dropped.
     pub fn text(line: impl Into<String>) -> Self {
-        Self::Text { wire: vec![line.into()], log: Vec::new() }
+        Self::Text {
+            wire: vec![line.into()],
+            log: Vec::new(),
+        }
     }
 
     /// Text with both halves.
@@ -174,7 +203,11 @@ impl Outcome {
     pub fn into_text(self) -> Result<String, Refusal> {
         match self {
             Outcome::Text { wire, .. } => Ok(wire.join("\n")),
-            Outcome::Frames(_) | Outcome::Transfer { .. } => Err(Refusal::new(
+            Outcome::Frames(_)
+            | Outcome::Transfer { .. }
+            | Outcome::Resign
+            | Outcome::Guild { .. }
+            | Outcome::Experience { .. } => Err(Refusal::new(
                 REFUSED,
                 "this operation needs a player session: it answers with frames a client performs",
             )),
@@ -205,8 +238,11 @@ pub struct Registration {
 }
 
 /// What an operation does: one function of the call, the world, and the caller's own agent if it has one.
-pub type Handler =
-    fn(&Invocation, &crate::world::World, Option<&crate::agents::Agent>) -> Result<Outcome, Refusal>;
+pub type Handler = fn(
+    &Invocation,
+    &crate::world::World,
+    Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal>;
 
 struct Entry {
     registration: Registration,
@@ -234,9 +270,18 @@ impl Registry {
             return Err("an operation needs a name".into());
         }
         if self.entries.contains_key(registration.name) {
-            return Err(format!("operation {:?} is registered twice", registration.name));
+            return Err(format!(
+                "operation {:?} is registered twice",
+                registration.name
+            ));
         }
-        self.entries.insert(registration.name, Entry { registration, handler });
+        self.entries.insert(
+            registration.name,
+            Entry {
+                registration,
+                handler,
+            },
+        );
         Ok(())
     }
 
@@ -266,7 +311,10 @@ impl Registry {
         caller: Caller,
     ) -> Result<Invocation, Refusal> {
         let Some(registration) = self.get(name) else {
-            return Err(Refusal::new(UNKNOWN_OPERATION, format!("unknown operation: {name}")));
+            return Err(Refusal::new(
+                UNKNOWN_OPERATION,
+                format!("unknown operation: {name}"),
+            ));
         };
         if arguments.len() != registration.arguments.len() {
             return Err(Refusal::new(
@@ -283,7 +331,11 @@ impl Registry {
                 ),
             ));
         }
-        Ok(Invocation { operation: name.to_string(), arguments, caller })
+        Ok(Invocation {
+            operation: name.to_string(),
+            arguments,
+            caller,
+        })
     }
 
     /// Run a call against a world. Called on the world's own thread, never on a listener's.
@@ -303,7 +355,11 @@ impl Registry {
     }
 
     /// Run a call for a surface that renders text only, refusing what it cannot perform.
-    pub fn invoke_text(&self, invocation: &Invocation, world: &crate::world::World) -> Result<String, Refusal> {
+    pub fn invoke_text(
+        &self,
+        invocation: &Invocation,
+        world: &crate::world::World,
+    ) -> Result<String, Refusal> {
         self.invoke(invocation, world, None)?.into_text()
     }
 }
@@ -386,6 +442,48 @@ pub fn chat_stuck(
     Ok(Outcome::Frames(vec![frame]))
 }
 
+/// `/resign`: the session performs it (mark, delay, death, defeat).
+pub fn chat_resign(
+    _invocation: &Invocation,
+    _world: &crate::world::World,
+    _agent: Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal> {
+    Ok(Outcome::Resign)
+}
+
+/// `/guild <verb>`: the session performs it (`ASURA/crates/asura-world/src/chat.rs:536-540`). Not the
+/// reference's: ASURA's owner's stand-in for the Guild Registrar (2026-11-06).
+pub fn chat_guild(
+    invocation: &Invocation,
+    _world: &crate::world::World,
+    _agent: Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal> {
+    Ok(Outcome::Guild {
+        argument: invocation.arguments.get(0).unwrap_or_default().to_string(),
+    })
+}
+
+/// `/.exp <total>`: preforged's development command, as ASURA has it (`chat.rs:612-621`): set the total
+/// and let the curve answer the level.
+pub fn chat_experience(
+    invocation: &Invocation,
+    _world: &crate::world::World,
+    _agent: Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal> {
+    Ok(Outcome::Experience {
+        argument: Some(invocation.arguments.get(0).unwrap_or_default().to_string()),
+    })
+}
+
+/// `/xp`: preforged's reading command, as ASURA has it (`chat.rs:622-631`): the total and the level.
+pub fn chat_experience_read(
+    _invocation: &Invocation,
+    _world: &crate::world::World,
+    _agent: Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal> {
+    Ok(Outcome::Experience { argument: None })
+}
+
 /// Register the operations the chat surface's own rows name (`config/Server/commands.json`).
 ///
 /// They live here, beside the world's own, so a program names them once and every surface - chat,
@@ -415,6 +513,38 @@ pub fn register_chat(registry: &mut Registry) -> Result<(), String> {
         },
         chat_stuck,
     )?;
+    registry.register(
+        Registration {
+            name: "chat.resign",
+            help: "resign from the party: die after the pack's delay, then the party is defeated",
+            arguments: &[],
+        },
+        chat_resign,
+    )?;
+    registry.register(
+        Registration {
+            name: "chat.guild",
+            help: "`/guild create` opens the Guild Registration window (0x00C4, 0x0084, 0x00CA, 0x00C3 {8, 0})",
+            arguments: &["verb"],
+        },
+        chat_guild,
+    )?;
+    registry.register(
+        Registration {
+            name: "chat.experience",
+            help: "set total experience; the level follows the pack's curve, and the bar moves by 0x00EE or the progress record 0x00E9 is restated",
+            arguments: &["total"],
+        },
+        chat_experience,
+    )?;
+    registry.register(
+        Registration {
+            name: "chat.experience_read",
+            help: "a server line with the character's total experience and level",
+            arguments: &[],
+        },
+        chat_experience_read,
+    )?;
     Ok(())
 }
 
@@ -427,7 +557,11 @@ mod tests {
         let mut registry = Registry::new();
         registry
             .register(
-                Registration { name: "world.status", help: "what this world is running", arguments: &[] },
+                Registration {
+                    name: "world.status",
+                    help: "what this world is running",
+                    arguments: &[],
+                },
                 world_status,
             )
             .unwrap();
@@ -452,11 +586,25 @@ mod tests {
     #[test]
     fn registration_refuses_a_duplicate_or_empty_name() {
         let mut registry = Registry::new();
-        let registration = Registration { name: "world.status", help: "", arguments: &[] };
+        let registration = Registration {
+            name: "world.status",
+            help: "",
+            arguments: &[],
+        };
         registry.register(registration, world_status).unwrap();
-        assert!(registry.register(registration, world_status).is_err(), "a name is registered once");
-        let unnamed = Registration { name: "  ", help: "", arguments: &[] };
-        assert!(Registry::new().register(unnamed, world_status).is_err(), "a name is required");
+        assert!(
+            registry.register(registration, world_status).is_err(),
+            "a name is registered once"
+        );
+        let unnamed = Registration {
+            name: "  ",
+            help: "",
+            arguments: &[],
+        };
+        assert!(
+            Registry::new().register(unnamed, world_status).is_err(),
+            "a name is required"
+        );
     }
 
     #[test]
@@ -473,20 +621,32 @@ mod tests {
     fn the_argument_count_is_checked_against_the_registration() {
         let registry = registry();
         let refusal = registry
-            .invocation("world.status", Arguments::of(vec!["/".into()]), Caller::console())
+            .invocation(
+                "world.status",
+                Arguments::of(vec!["/".into()]),
+                Caller::console(),
+            )
             .unwrap_err();
         assert_eq!(refusal.code, INVALID_ARGUMENTS);
-        assert!(refusal.message.contains("takes 0 argument(s)"), "{}", refusal.message);
-        assert!(registry
-            .invocation("world.status", Arguments::none(), Caller::console())
-            .is_ok());
+        assert!(
+            refusal.message.contains("takes 0 argument(s)"),
+            "{}",
+            refusal.message
+        );
+        assert!(
+            registry
+                .invocation("world.status", Arguments::none(), Caller::console())
+                .is_ok()
+        );
     }
 
     #[test]
     fn the_caller_reaches_the_operation_and_the_text_surface_renders_its_answer() {
         let registry = registry();
         let world = crate::world::World::new(7);
-        let invocation = registry.invocation("world.status", Arguments::none(), Caller::api("manage")).unwrap();
+        let invocation = registry
+            .invocation("world.status", Arguments::none(), Caller::api("manage"))
+            .unwrap();
         assert_eq!(
             registry.invoke_text(&invocation, &world).unwrap(),
             "World 7: 0 map(s) loaded."
@@ -500,11 +660,17 @@ mod tests {
         let world = crate::world::World::new(7);
 
         let transfer = registry
-            .invocation("chat.transfer", Arguments::of(vec!["ascalon".into()]), Caller::chat(1))
+            .invocation(
+                "chat.transfer",
+                Arguments::of(vec!["ascalon".into()]),
+                Caller::chat(1),
+            )
             .unwrap();
         assert_eq!(
             registry.invoke(&transfer, &world, None).unwrap(),
-            Outcome::Transfer { argument: "ascalon".into() }
+            Outcome::Transfer {
+                argument: "ascalon".into()
+            }
         );
 
         let stuck = agent();
@@ -526,7 +692,11 @@ mod tests {
         // A surface that cannot perform a frame is refused, not answered with nothing.
         let refusal = registry.invoke_text(&invocation, &world).unwrap_err();
         assert_eq!(refusal.code, REFUSED);
-        assert!(refusal.message.contains("needs a player session"), "{}", refusal.message);
+        assert!(
+            refusal.message.contains("needs a player session"),
+            "{}",
+            refusal.message
+        );
     }
 
     #[test]
@@ -539,7 +709,10 @@ mod tests {
             .unwrap();
         match registry.invoke(&invocation, &world, None).unwrap() {
             Outcome::Text { wire, log } => {
-                assert!(!wire.is_empty(), "an empty world still says how many aliases it has: {wire:?}");
+                assert!(
+                    !wire.is_empty(),
+                    "an empty world still says how many aliases it has: {wire:?}"
+                );
                 assert!(!log.is_empty(), "the table is logged");
             }
             other => panic!("maps answers with text, not {other:?}"),

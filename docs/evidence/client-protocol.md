@@ -213,9 +213,10 @@ two fixed sizes over a socket. A refusal sends only row 5.
 
 Two details that are easy to get wrong and are now pinned by tests:
 
-- **The settings blob is a copied fact.** 591 bytes the client is handed on every login, and nothing in
-  this project knows what most of it means. It is kept byte-for-byte as the original sends it rather
-  than typed - see `client/login_fixtures.rs`.
+- **The settings blob is the client's own UI layout.** The 591 bytes are what a login is answered with
+  until the account has uploaded settings of its own; after that the login carries the client's last
+  upload, byte for byte and never decoded. Nothing in this project knows what most of the bytes mean,
+  and does not need to (`ui-settings-persistence.md`, measured later than this file).
 - **A counted field still occupies its full width.** The feature list in row 4 is an `ARRAY_8` of 200
   slots with a count of 8: the four-byte count, then all 200 bytes. Sizing a message from the count
   instead of the capacity is how a body ends up 192 bytes short.

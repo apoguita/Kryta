@@ -19,18 +19,19 @@
 //! Reference for the sizes: `shared/cryptography/handshake.rs` and `Packets/InstancePackets.rs`.
 
 use common::logging::{Log, LogLevel};
-use shared::cryptography::handshake::{self, CLIENT_SEED_HEADER, CLIENT_SEED_LEN, SERVER_SEED_LEN};
 use shared::cryptography::AuthCrypt;
+use shared::cryptography::handshake::{self, CLIENT_SEED_HEADER, CLIENT_SEED_LEN, SERVER_SEED_LEN};
 use shared::network::socket::{Session, SessionFuture, SessionIo};
 
-use crate::server::packets::{
-    agent_packets, creation_load_block, instance_packets, item_packets, misc_packets, title_packets,
-};
-use crate::server::protocol::tables::game::{GAME_CMSG_TITLE_DISPLAY, GAME_CMSG_TITLE_HIDE};
-use crate::server::protocol::GameVersion;
-use crate::server::protocol::FrameError;
 use crate::agents::player::{PLAYER_TEAM_TOKEN, UNLOCKED_MAP_ZEROS};
 use crate::handlers::character::Creation;
+use crate::server::packets::{
+    agent_packets, creation_load_block, guild_packets, instance_packets, misc_packets,
+    party_packets, title_packets,
+};
+use crate::server::protocol::FrameError;
+use crate::server::protocol::GameVersion;
+use crate::server::protocol::tables::game::{GAME_CMSG_TITLE_DISPLAY, GAME_CMSG_TITLE_HIDE};
 use crate::world::World;
 
 /// What one step of the map's clock produced: the segment the agent walked across a doorway, if it
@@ -48,7 +49,6 @@ pub(crate) const CREATION_AGENT: u32 = 1;
 /// (`game/src/Characters/Sheet.rs`, the reference's `Player::LoadFromDB`); this name stays because
 /// the handlers and the travel path already speak it.
 pub(crate) use crate::characters::CharacterSheet;
-
 
 /// The effect word a travel puts on the travelling agent before the redirect
 /// (`ASURA/crates/asura-world/src/travel.rs:19`, `TRAVEL_EFFECT`; the live capture's own `0x00F1` frame
@@ -144,8 +144,6 @@ const CLIENT_CHAT_MESSAGE: u16 = 0x8064;
 // world's tick, so the cadence is an operator's number, not a law). `WorldConfig::simulation_tick_ms`
 // carries it and the program logs it.
 
-
-
 /// One gameplay connection.
 pub struct WorldSession {
     pub(crate) log: Log,
@@ -189,11 +187,13 @@ pub struct WorldSession {
     pub(crate) portal: std::sync::Mutex<PortalStep>,
     /// The character database, when the program opened one: a creation screen's confirm writes a row
     /// there. A session without it can draw the screen but cannot finish it.
-    pub(crate) characters: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
+    pub(crate) characters:
+        Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
     /// The login database, when the program opened one: the travel record a login wrote is claimed
     /// here, once, and decides the map and the district the connection loads
     /// (`docs/port/06-world-plan.md`, "The three seams").
-    pub(crate) login: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
+    pub(crate) login:
+        Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
     /// The world's running district copies, shared with every session: entering a map claims a place
     /// in a district, and the connection gives it back when it ends.
     districts: std::sync::Arc<std::sync::Mutex<crate::districts::Districts>>,
@@ -216,6 +216,10 @@ pub struct WorldSession {
     /// The frames other sessions pushed to this one, which it scrambles with its own cipher and writes
     /// when it next looks. A session that has not loaded a map has no channel at all.
     outbox: std::sync::Mutex<Option<std::sync::mpsc::Receiver<Vec<u8>>>>,
+    /// The session number this connection filled in the peer registry. Cleanup removes the slot only
+    /// when it is still this session's: a travel reconnects with the same player id, and the old
+    /// connection's tail must not remove the new connection's slot.
+    session_token: std::sync::Mutex<Option<u64>>,
     /// Set by the listener when the world is shutting down: the session ends itself on its next
     /// turn, so its own tail runs - the district place is given back and the position is
     /// written. Reference: `sWorldSessionMgr->KickAll()` (`WorldSessionMgr.cpp:220`), the first
@@ -239,6 +243,14 @@ pub struct WorldSession {
     /// The world this connection answers for: its operation registry is what a command resolves
     /// through, so the session holds the world and not only copies of its parts.
     pub(crate) world: std::sync::Arc<World>,
+    /// This character's guild and its own member row, as read when the map's players were asked for
+    /// and as this connection has changed it since (`ASURA/crates/asura-world/src/player.rs:69-71`,
+    /// `guild`). `None` for a character in no guild (`Handlers/GuildHandler.rs`).
+    pub(crate) guild: std::sync::Mutex<Option<crate::guilds::Membership>>,
+    /// This character's progress - experience, level, skill points - as the load read it and as
+    /// `/.exp` has changed it since (`ASURA/crates/asura-world/src/player.rs:489-492`, `traits`). `None`
+    /// until a map load reads the row (`Handlers/CharacterHandler.rs`, `answer_experience`).
+    pub(crate) progress: std::sync::Mutex<Option<crate::characters::experience::Progress>>,
 }
 
 impl WorldSession {
@@ -274,9 +286,12 @@ impl WorldSession {
             master: None,
             peers: world.peers(),
             outbox: std::sync::Mutex::new(None),
+            session_token: std::sync::Mutex::new(None),
             closing: None,
             id: std::sync::Mutex::new(None),
             unanswered: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            guild: std::sync::Mutex::new(None),
+            progress: std::sync::Mutex::new(None),
         }
     }
 
@@ -491,7 +506,9 @@ impl WorldSession {
         if let Err(error) = read_exactly(io, &mut message).await {
             self.say(
                 LogLevel::Warn,
-                format!("Gameplay connection from {peer} ended inside its version message: {error}"),
+                format!(
+                    "Gameplay connection from {peer} ended inside its version message: {error}"
+                ),
             );
             let _ = io.close().await;
             return;
@@ -562,7 +579,9 @@ impl WorldSession {
             Err(error) => {
                 self.say(
                     LogLevel::Warn,
-                    format!("Gameplay connection from {peer}: the exchange cannot proceed: {error}"),
+                    format!(
+                        "Gameplay connection from {peer}: the exchange cannot proceed: {error}"
+                    ),
                 );
                 let _ = io.close().await;
                 return;
@@ -637,7 +656,8 @@ impl WorldSession {
                         // stands it there instead of scattering it around a spawn point (R13/R21,
                         // `ASURA/crates/asura-world/src/travel.rs:446-468`), and faces it along the
                         // arrival the receiving map states for the map it came from.
-                        if let (Some(landing), Ok(mut claimed)) = (travel.landing, self.landing.lock())
+                        if let (Some(landing), Ok(mut claimed)) =
+                            (travel.landing, self.landing.lock())
                         {
                             let facing = self
                                 .arrivals
@@ -779,8 +799,17 @@ impl WorldSession {
             if let Ok(mut character) = self.character.lock() {
                 *character = Some(sheet.uuid);
             }
-            // 1 for every load: the reference hardcodes it (`ASURA/crates/asura-world/src/map.rs:34-42`).
-            let is_explorable = 1;
+            // The id must be drawn **before** `0x019A`, because that message says which agent this
+            // client controls. It used to be drawn later, inside the players answer, so every load
+            // told the client "agent 1" while a second connection's own agent was 2 (or a travel's
+            // was 3): its health and energy then updated a body the client was not controlling, and
+            // its own bars stayed empty. The first connection only worked because its id was 1.
+            self.draw_player_id(sheet.uuid);
+            // `0x019A`'s explorable byte is the map's own kind, not a constant: 0 for a town or
+            // outpost and 1 for an explorable (`ASURA/crates/asura-world/src/map.rs:76-86`,
+            // `load_info_explorable`). Sending 1 for Ascalon City makes the client treat the town as
+            // an explorable.
+            let is_explorable = u8::from(map.kind != Some(crate::world::map_kind::OUTPOST));
             let mut frames = vec![
                 instance_packets::instance_load_head(),
                 instance_packets::instance_player_data_start(),
@@ -798,9 +827,8 @@ impl WorldSession {
             // sends it, once per instance (`ASURA/crates/asura-world/src/map.rs:22-48`), and a client
             // without it asserts on its own world map the first time the map view opens
             // (`GmMapView.cpp(1731)`, client build 39112).
-            let grid = crate::maps::cartography::init_frames(crate::maps::cartography::grid_for(
-                map.id,
-            ));
+            let grid =
+                crate::maps::cartography::init_frames(crate::maps::cartography::grid_for(map.id));
             frames.extend(grid);
             // And the destinations it can resolve, in the batches a load uses - the working
             // implementation sends these in the same phase (`ASURA/crates/asura-world/src/map.rs:49-58`).
@@ -906,10 +934,9 @@ impl WorldSession {
                         let now = std::time::Instant::now();
                         let held = pending.len();
                         match stalled {
-                            Some((seen, seen_len, since))
-                                if seen == header && seen_len == held =>
-                            {
-                                if now.duration_since(since) >= std::time::Duration::from_millis(900)
+                            Some((seen, seen_len, since)) if seen == header && seen_len == held => {
+                                if now.duration_since(since)
+                                    >= std::time::Duration::from_millis(900)
                                 {
                                     self.say(
                                         LogLevel::Warn,
@@ -954,7 +981,15 @@ impl WorldSession {
                 );
 
                 match self
-                    .answer(io, &peer, header, &message, &mut creation, &version, &mut crypt)
+                    .answer(
+                        io,
+                        &peer,
+                        header,
+                        &message,
+                        &mut creation,
+                        &version,
+                        &mut crypt,
+                    )
                     .await
                 {
                     Some(true) => {}
@@ -962,7 +997,12 @@ impl WorldSession {
                     None => {
                         // A message this world does not answer: say so once per header, and keep the
                         // connection (`WorldSession::report_unanswered`).
-                        self.report_unanswered(&peer, header, &format!("0x{header:04X}"), message.len());
+                        self.report_unanswered(
+                            &peer,
+                            header,
+                            &format!("0x{header:04X}"),
+                            message.len(),
+                        );
                     }
                 }
             }
@@ -1067,7 +1107,10 @@ impl WorldSession {
             std::sync::Arc::clone(pool),
             self.log.clone(),
         );
-        characters.sheet(&crate::characters::uuid_text(&version.character), version.character)
+        characters.sheet(
+            &crate::characters::uuid_text(&version.character),
+            version.character,
+        )
     }
 
     /// Tell this session how to learn the world is shutting down.
@@ -1094,8 +1137,7 @@ impl WorldSession {
         let Ok(mut portal) = self.portal.lock() else {
             return;
         };
-        portal.last_step =
-            (portal.position != position).then_some((portal.position, position));
+        portal.last_step = (portal.position != position).then_some((portal.position, position));
         portal.position = position;
     }
 
@@ -1112,7 +1154,10 @@ impl WorldSession {
 
     /// Take the segment the doorway test consumes, if a report left one.
     fn take_portal_step(&self) -> Option<((f32, f32), (f32, f32))> {
-        self.portal.lock().ok().and_then(|mut portal| portal.last_step.take())
+        self.portal
+            .lock()
+            .ok()
+            .and_then(|mut portal| portal.last_step.take())
     }
 
     /// Write everything other sessions have pushed at this one, and nothing when they pushed nothing.
@@ -1126,7 +1171,8 @@ impl WorldSession {
             }
         }
         if !frames.is_empty() {
-            self.send(io, peer, crypt, &frames, "what another session announced").await;
+            self.send(io, peer, crypt, &frames, "what another session announced")
+                .await;
         }
     }
 
@@ -1136,7 +1182,10 @@ impl WorldSession {
     /// where the body stands: an introduction names the point a player is at **now**, not the one it
     /// entered at (`ASURA/crates/asura-world/src/instance.rs:249-255`, `standing`, and `PeerView::from`,
     /// which reads the live agent).
-    pub(crate) fn with_agent<T>(&self, work: impl FnOnce(&mut crate::agents::Agent) -> T) -> Option<T> {
+    pub(crate) fn with_agent<T>(
+        &self,
+        work: impl FnOnce(&mut crate::agents::Agent) -> T,
+    ) -> Option<T> {
         let mut agent = self.agent.lock().ok()?;
         let agent = agent.as_mut()?;
         let answer = work(agent);
@@ -1162,13 +1211,14 @@ impl WorldSession {
         }
     }
 
-    /// Draw this connection's id, once. A connection that already has one keeps it.
-    fn draw_player_id(&self) {
+    /// Draw this character's id, once. A connection that already has one keeps it, and a travel to
+    /// another map draws the id the character already has (`Peers::allocate_for`).
+    fn draw_player_id(&self, character: [u8; 16]) {
         if let Ok(mut id) = self.id.lock()
             && id.is_none()
             && let Ok(mut peers) = self.peers.lock()
         {
-            *id = Some(peers.allocate());
+            *id = Some(peers.allocate_for(character));
         }
     }
 
@@ -1229,9 +1279,9 @@ impl WorldSession {
 
         let mut pending: Vec<u8> = Vec::new();
         let mut buffer = vec![0u8; 1024];
-        // This connection's own id, drawn before anything names it: the load block, the entry point and
-        // every message after them carry the same number (`Peers::allocate`).
-        self.draw_player_id();
+        // This connection's own id. It is already drawn before `0x019A` in the load head; this is the
+        // idempotent second call, kept so the load block and the entry point cannot get a later one.
+        self.draw_player_id(sheet.uuid);
         let inventory = self.load_inventory(sheet);
         // The instant the last tick went out, so the next one carries how long it really has been.
         let mut last_tick = std::time::Instant::now();
@@ -1240,6 +1290,11 @@ impl WorldSession {
         // creates have to be the same place. The saved position is read here, once, because it is what
         // a reconnect to the map the character left resumes at (R14,
         // `ASURA/crates/asura-world/src/agent.rs:531-545`).
+        // The character's progress as its row states it, which `/.exp` changes from here on
+        // (`Handlers/CharacterHandler.rs`, `answer_experience`).
+        if let Ok(mut progress) = self.progress.lock() {
+            *progress = Some(sheet.progress());
+        }
         let saved = self.saved_position(sheet);
         let entry = self.entry_point(map, saved);
         let load_started = std::time::Instant::now();
@@ -1248,9 +1303,7 @@ impl WorldSession {
         // the block and the player record all have to name the same place.
         let agent = self.player_id();
         let player = self.player_id();
-        let position = entry
-            .map(|point| (point.0, point.1))
-            .unwrap_or((0.0, 0.0));
+        let position = entry.map(|point| (point.0, point.1)).unwrap_or((0.0, 0.0));
         let plane = entry.map(|point| point.2).unwrap_or(0);
         // The entry point's own facing (its spawn point's angle, or a doorway arrival's), and
         // `(1, 0)` when it states none - `map_spawns.rs:44-53`.
@@ -1269,6 +1322,7 @@ impl WorldSession {
         // a piece's cell in the bag and its position here are two numbers, and the table names both
         // (`config/World/Vanilla/creation/worn_slots.json`).
         let mut equipped = [0u32; 9];
+        let mut wearing = Vec::new();
         if let Some(bag) = self
             .creation
             .as_ref()
@@ -1280,6 +1334,8 @@ impl WorldSession {
                 {
                     *held = item.id;
                 }
+                // The same rows, in the form another player's introduction declares them.
+                wearing.push(crate::creation::named_item(item));
             }
         }
         let state = crate::agents::Player {
@@ -1293,7 +1349,11 @@ impl WorldSession {
             gold: sheet.gold,
             profession: sheet.profession,
             unlocked_professions: sheet.unlocked_professions,
+            campaigns_finished: sheet.campaigns_finished,
             level: sheet.level,
+            experience: sheet.experience,
+            skill_points: sheet.skill_points,
+            skill_points_total: sheet.skill_points_total,
             name: sheet.name.clone(),
         };
         // The map's clock: ASURA's `Instance::run` owns one per map and wakes on its own interval
@@ -1311,6 +1371,22 @@ impl WorldSession {
             // The world is going down: the same kick the pre-load loop reads, and here it is what
             // lets the session finish through its own tail instead of being dropped mid-future.
             if self.closing() {
+                return;
+            }
+            // A party crossing asks every other member's own session to run the same redirect here.
+            // Each connection writes its own hand-off row and token; the destination district is the
+            // one the crossing chose, so they land in the same copy.
+            if loaded && let Some(order) = self.world.take_travel_order(player) {
+                self.begin_transfer(
+                    io,
+                    peer,
+                    crypt,
+                    sheet,
+                    &order.destination,
+                    order.landing,
+                    order.district,
+                )
+                .await;
                 return;
             }
             // Whatever other sessions pushed at this one - an introduction, a farewell, a move - is
@@ -1345,8 +1421,14 @@ impl WorldSession {
                     // block. The manifest pair that ends it names the map in its second form.
                     instance_packets::CLIENT_LOAD_REQUEST_ITEMS => {
                         let frames = state.items_answer(&inventory, map);
-                        self.send(io, peer, crypt, &frames, "the inventory and the map's record")
-                            .await;
+                        self.send(
+                            io,
+                            peer,
+                            crypt,
+                            &frames,
+                            "the inventory and the map's record",
+                        )
+                        .await;
                     }
                     // The spawn request: a random point of this map's own list, scattered (R13),
                     // and the first simulation tick.
@@ -1399,7 +1481,8 @@ impl WorldSession {
                         // come from the ticker, not from this answer. This answer used to append a
                         // first `0x001E` of its own, which is one message the client was never sent
                         // by the working implementation.
-                        self.send(io, peer, crypt, &frames, "the entry position").await;
+                        self.send(io, peer, crypt, &frames, "the entry position")
+                            .await;
                     }
                     // The players request: the whole block the reference answers it with, frame for
                     // frame and in its own order (`GameSrv_HandleInstanceLoadRequestPlayers`, ported
@@ -1472,8 +1555,8 @@ impl WorldSession {
                                 }
                             }
                         }
-                        let load_ms = u32::try_from(load_started.elapsed().as_millis())
-                            .unwrap_or(u32::MAX);
+                        let load_ms =
+                            u32::try_from(load_started.elapsed().as_millis()).unwrap_or(u32::MAX);
 
                         // Everyone already in this copy of the map is introduced first: the player, its
                         // party size, its party and its agent, in that order
@@ -1483,54 +1566,148 @@ impl WorldSession {
                             plane,
                             direction: (0.0, 1.0),
                         };
+                        // The character's guild, read now and shown with this copy's local id for it
+                        // (`ASURA/crates/asura-world/src/connection.rs:405-410` and `:445-449`). A
+                        // creation instance has no character to be in a guild yet.
+                        let guild_badge = if map.is_creation() {
+                            None
+                        } else {
+                            self.load_guild(peer, sheet)
+                        };
                         let me = crate::districts::PeerView {
                             player_id: player,
+                            character: sheet.uuid,
                             agent_id: agent,
                             name: sheet.name.clone(),
                             standing,
                             equipped,
+                            appearance,
+                            profession: sheet.profession,
+                            secondary_profession: sheet.secondary_profession,
+                            level: sheet.level,
+                            wearing: wearing.clone(),
                             displayed_rank: self.world.titles().initial_display_rank(),
                             map_id: map.id,
                             district: self.district(),
+                            guild: guild_badge.clone(),
                         };
                         let (sending, receiving) = std::sync::mpsc::channel();
-                        let others = match self.peers.lock() {
+                        let (others, session_token) = match self.peers.lock() {
                             Ok(mut peers) => peers.join(me.clone(), sending),
-                            Err(_) => Vec::new(),
+                            Err(_) => (Vec::new(), 0),
                         };
                         if let Ok(mut outbox) = self.outbox.lock() {
                             *outbox = Some(receiving);
                         }
-                        let mut frames = Vec::with_capacity(40);
-                        for peer in &others {
-                            frames.extend(crate::districts::introduction(
-                                peer,
-                                appearance,
-                                self.settings.agent_speed,
-                                PLAYER_TEAM_TOKEN,
-                            ));
+                        if let Ok(mut token) = self.session_token.lock() {
+                            *token = Some(session_token);
                         }
-                        frames.extend(state.load_block(
+                        // This player's party. A member of a party that crossed a doorway adopts the
+                        // roster the crossing carried, so the arrivals are one party and not one each
+                        // (`ASURA/crates/asura-world/src/party.rs:1207-1525`, `arrive`).
+                        // roster the crossing carried, so the arrivals are one party and not one each
+                        // (`ASURA/crates/asura-world/src/party.rs:1207-1525`, `arrive`).
+                        let held_party =
+                            self.world.take_held_party(map.id, self.district(), player);
+                        // This player's party of one, founded in the copy's table the moment it joins it,
+                        // and every other player's party as the table has it - read after the peers'
+                        // lock is released, the lock order `game/Parties/mod.rs` keeps
+                        // (`ASURA/crates/asura-world/src/instance.rs:561-572`, `party.rs:376-381`).
+                        let (party, other_parties) = match self.world.parties().lock() {
+                            Ok(mut parties) => {
+                                let table = parties.table(map.id, self.district());
+                                if let Some(held) = held_party {
+                                    table.adopt(held, player);
+                                } else if table
+                                    .party_of(player)
+                                    .is_some_and(|party| party.absent.contains_key(&player))
+                                {
+                                    // A member of a party whose roster was adopted by the first
+                                    // arrival: its own connection has landed, so it stops being
+                                    // absent. This is the travel case, not a login.
+                                    table.arrive_member(player);
+                                } else {
+                                    // A login is a new session: a party the table still remembers is
+                                    // stale (the old connection is gone). Do not put the returning
+                                    // character back in it.
+                                    table.forget_member(player);
+                                    table.found(player);
+                                }
+                                let others: Vec<(u32, u32)> = others
+                                    .iter()
+                                    .map(|other| table.leader_and_size(other.player_id))
+                                    .collect();
+                                (table.party_of(player).cloned(), others)
+                            }
+                            Err(_) => (None, Vec::new()),
+                        };
+                        eprintln!(
+                            "world: party: load player {player} on map {} district {}: party {:?}, peers {:?}",
+                            map.id,
+                            self.district(),
+                            party.as_ref().map(|party| (
+                                &party.party_id,
+                                &party.leader,
+                                &party.members,
+                                &party.absent
+                            )),
+                            others.iter().map(|peer| peer.player_id).collect::<Vec<_>>()
+                        );
+                        let mut frames = Vec::with_capacity(40);
+                        let mut block = state.load_block(
                             &self.settings,
                             load_ms,
                             &unlocked,
                             self.world.titles(),
-                        ));
-                        // Send peer selections after this load has defined the corresponding ranks.
-                        frames.extend(
-                            others
-                                .iter()
-                                .filter(|other| other.displayed_rank != 0)
-                                .map(|other| {
-                                    title_packets::rank_display(
-                                        other.player_id as u16,
-                                        other.displayed_rank,
-                                    )
-                                }),
                         );
+                        // The party state every live load ends with, before its finish, and the
+                        // player's own party as the table has it in place of the block's party of one
+                        // (`ASURA/crates/asura-world/src/player.rs:735-738` and `770-775`).
+                        let in_outpost = map.kind == Some(crate::world::map_kind::OUTPOST);
+                        crate::parties::splice_load_tail(&mut block, in_outpost);
+                        // The guild block in front of the party block, where a live load carries it:
+                        // `0x011C` alone for a character in no guild. Not in a creation instance, which
+                        // no capture shows a guild message in
+                        // (`ASURA/crates/asura-world/src/player.rs:740-756`).
+                        if !map.is_creation() {
+                            self.splice_guild_block(peer, &mut block, guild_badge.as_ref(), agent);
+                        }
+                        if let Some(party) = &party {
+                            crate::parties::splice_load_section(&mut block, party, player);
+                        }
+                        frames.extend(block);
+                        // Everyone already in the map is introduced **after** the load block, in the
+                        // reference's own order (`ASURA/crates/asura-world/src/player.rs:784-822`).
+                        // Before it, the client created those players before it had been told its own
+                        // team token (`0x00F2`, inside the block), so it treated them as hostile.
+                        for (index, peer) in others.iter().enumerate() {
+                            let peer_party = other_parties
+                                .get(index)
+                                .copied()
+                                .unwrap_or((peer.player_id, 1));
+                            frames.extend(crate::districts::introduction(
+                                peer,
+                                peer_party,
+                                self.settings.agent_speed,
+                                PLAYER_TEAM_TOKEN,
+                            ));
+                        }
+                        // The party members it was just introduced to are in the map
+                        // (`ASURA/crates/asura-world/src/player.rs:823-830`, `in_map_notices`).
+                        if let Some(party) = &party {
+                            let entered: Vec<u32> =
+                                others.iter().map(|other| other.player_id).collect();
+                            frames.extend(crate::parties::in_map_notices(party, player, &entered));
+                        }
                         let count = frames.len();
-                        self.send(io, peer, crypt, &frames, "the players and the load's last message")
-                            .await;
+                        self.send(
+                            io,
+                            peer,
+                            crypt,
+                            &frames,
+                            "the players and the load's last message",
+                        )
+                        .await;
                         self.say(
                             LogLevel::Debug,
                             format!(
@@ -1540,34 +1717,42 @@ impl WorldSession {
                                 others.len()
                             ),
                         );
-                        // And the others are told this body is here: the introduction, then the items it
-                        // wears in the form a bag slot uses (`CREATE_UNNAMED_ITEM`, `GameSrv_BroadcastPlayerEquippedItems`,
-                        // `GmItem.c:129-160`), then what the agent is drawn wearing and its cape - the
-                        // reference's own order (`ASURA/crates/asura-world/src/player.rs:509-532`).
-                        let mut mine = crate::districts::introduction(
+                        // And the others are told this body is here with the same whole introduction
+                        // they were just given for it: the player, its party pair, its professions and
+                        // level, its flags, its effects, the agent, what it wears, visual equipment and
+                        // cape (`ASURA/crates/asura-world/src/player.rs:844-851`). Only to the players
+                        // this block introduced: one still loading meets it in its own block.
+                        let my_party = party
+                            .as_ref()
+                            .map(|party| (party.leader, party.members.len() as u32))
+                            .unwrap_or((player, 1));
+                        let hello = crate::districts::introduction(
                             &me,
-                            appearance,
+                            my_party,
                             self.settings.agent_speed,
                             PLAYER_TEAM_TOKEN,
                         );
-                        if let Some(bag) = self
-                            .creation
-                            .as_ref()
-                            .and_then(crate::creation::equipped_bag)
-                        {
-                            for item in inventory.items_in(bag.id) {
-                                mine.push(item_packets::create_unnamed_item(
-                                    &crate::creation::named_item(item),
-                                ));
-                            }
-                        }
-                        mine.push(misc_packets::update_agent_visual_equipment(agent, equipped));
-                        mine.push(misc_packets::agent_display_cape(agent, 1));
-                        if me.displayed_rank != 0 {
-                            mine.push(title_packets::rank_display(player as u16, me.displayed_rank));
-                        }
                         if let Ok(peers) = self.peers.lock() {
-                            peers.broadcast(player, map.id, self.district(), &mine);
+                            peers.broadcast(player, map.id, self.district(), &hello);
+                        }
+                        // **After** the introduction, never before it: the client needs the new
+                        // member's player record before the party-entered notice can name it. ASURA
+                        // sends `introduction` and then `announce_arrival` (`player.rs:844-854`); the
+                        // reverse is the blank party row that Kryta had.
+                        if let Some(party) = &party
+                            && let Ok(peers) = self.peers.lock()
+                        {
+                            for member in party.present() {
+                                if member != player {
+                                    peers.send_to(
+                                        member,
+                                        &[party_packets::party_member_enter_world(
+                                            party.party_id,
+                                            player as u16,
+                                        )],
+                                    );
+                                }
+                            }
                         }
                         loaded = true;
                     }
@@ -1595,7 +1780,8 @@ impl WorldSession {
                     // the client is told the placement back. `0x8072` is the client's own `9` bytes - the
                     // item, the bag and the slot - and `0x013E` is the placement.
                     CLIENT_ITEM_MOVE => {
-                        self.answer_item_move(io, peer, &message, crypt, sheet).await;
+                        self.answer_item_move(io, peer, &message, crypt, sheet)
+                            .await;
                     }
                     // `GAME_CMSG_PING_REPLY` (`0x8009`, 10 bytes) and `GAME_CMSG_HEARTBEAT` (`0x800C`,
                     // 2 bytes): the working implementation names both and discards both
@@ -1650,6 +1836,40 @@ impl WorldSession {
                         self.answer_party_travel(io, peer, &message, crypt, sheet)
                             .await;
                     }
+                    party_packets::CLIENT_PARTY_RETURN_TO_OUTPOST if loaded => {
+                        self.answer_return_to_outpost(io, peer, crypt, sheet).await;
+                    }
+                    party_packets::CLIENT_PARTY_CANCEL_ENTER_CHALLENGE if loaded => {
+                        let cancelled = self.world.parties().lock().ok().and_then(|mut parties| {
+                            parties.cancel_countdown(
+                                self.map_id(),
+                                self.district(),
+                                self.player_id(),
+                            )
+                        });
+                        if let Some((present, ticket)) = cancelled {
+                            self.world.cancel_countdown_ticket(ticket);
+                            if let Ok(peers) = self.peers.lock() {
+                                for member in present {
+                                    peers.send_to(member, &[party_packets::party_lock(0, 0)]);
+                                }
+                            }
+                        }
+                    }
+                    // The party window (`game/Parties/mod.rs`, ported from
+                    // `ASURA/crates/asura-world/src/party.rs`; the arms are ASURA's
+                    // `dispatch.rs:102-114`). Each request is answered through the copy's party table and
+                    // its batches reach the players it names through their own sessions.
+                    party_packets::CLIENT_PARTY_INVITE_PLAYER
+                    | party_packets::CLIENT_PARTY_ACCEPT_INVITE
+                    | party_packets::CLIENT_PARTY_ACCEPT_CANCEL
+                    | party_packets::CLIENT_PARTY_ACCEPT_REFUSE
+                    | party_packets::CLIENT_PARTY_LEAVE_GROUP
+                    | party_packets::CLIENT_PARTY_KICK_PLAYER
+                        if loaded =>
+                    {
+                        self.answer_party_request(peer, map, header, &message);
+                    }
                     // The client touched a travel object (`0x80C1`): named in the log and nothing more,
                     // because a crossing is decided from the player's own step, not from the touch
                     // (`ASURA/crates/asura-world/src/travel.rs:132-169`).
@@ -1660,6 +1880,24 @@ impl WorldSession {
                     // (`ASURA/crates/asura-world/src/chat.rs`).
                     CLIENT_CHAT_MESSAGE => {
                         self.answer_chat_message(io, peer, &message, crypt, sheet)
+                            .await;
+                    }
+                    // The guild panel and the registration window
+                    // (`ASURA/crates/asura-world/src/dispatch.rs:116-129`; `Handlers/GuildHandler.rs`).
+                    guild_packets::CLIENT_GUILD_CREATE if loaded => {
+                        self.answer_guild_create(io, peer, crypt, &message, sheet)
+                            .await;
+                    }
+                    guild_packets::CLIENT_GUILD_INVITE if loaded => {
+                        self.answer_guild_invite(io, peer, crypt, &message, sheet)
+                            .await;
+                    }
+                    guild_packets::CLIENT_GUILD_LEAVE if loaded => {
+                        self.answer_guild_leave(io, peer, crypt, &message, sheet)
+                            .await;
+                    }
+                    guild_packets::CLIENT_GUILD_ANNOUNCEMENT if loaded => {
+                        self.answer_guild_announcement(io, peer, crypt, &message, sheet)
                             .await;
                     }
                     // The client destroys one of its items: the row goes, and the item is told gone
@@ -1683,7 +1921,8 @@ impl WorldSession {
                     // the agent's worn items sent again, which is the one thing the client cannot work
                     // out for itself (`ASURA/crates/asura-world/src/item.rs:314-436`).
                     CLIENT_EQUIP_ITEM => {
-                        self.answer_equip_item(io, peer, &message, crypt, sheet).await;
+                        self.answer_equip_item(io, peer, &message, crypt, sheet)
+                            .await;
                     }
                     other => {
                         // Once per header, with the protocol's own name for it; repeats are a count
@@ -1709,35 +1948,35 @@ impl WorldSession {
                     // tick at a time, which is that interval's own default.
                     next_tick += period;
                     if loaded {
-                    // **How long it has been since the last tick**, not a counter: the client advances
-                    // its simulation - and its sync copy of every agent - by this number
-                    // (`ASURA/crates/asura-world/src/instance.rs:369`, `world_simulation_tick`); a
-                    // counter here makes everything the client draws run at the wrong speed.
-                    let now = std::time::Instant::now();
-                    let elapsed = now.duration_since(last_tick);
-                    last_tick = now;
-                    // The map's clock advances every agent by the elapsed time, and **the doorway is
-                    // decided on the segment the advance walked** - not on a report's - because that is
-                    // the copy this server believes and the one the client is drawn from
-                    // (`ASURA/crates/asura-world/src/instance.rs:290-308`). A crossing found here is
-                    // pushed to the connection and served before anything else, as `portal_inbox` is in
-                    // `connection.rs:498-502`.
-                    let (crossed, walk) = self.step_map(elapsed);
-                    let mut frames = vec![misc_packets::world_simulation_tick(
-                        u32::try_from(elapsed.as_millis()).unwrap_or(u32::MAX),
-                    )];
-                    if let Some(walk) = walk {
-                        frames.push(walk);
-                    }
-                    // The tick is periodic, so its report is routine: one line per connection per
-                    // `World.SimulationTickMs` at `Info` was the whole of a flowing log.
-                    self.send_quiet(io, peer, crypt, &frames, "a tick").await;
-                    if let Some((from, to)) = crossed {
-                        // The travelling body leaves the map it is in: the clock that crossed it has
-                        // already been announced, then the transfer is served.
-                        self.cross_portal(io, peer, crypt, sheet, from, to).await;
-                        return;
-                    }
+                        // **How long it has been since the last tick**, not a counter: the client advances
+                        // its simulation - and its sync copy of every agent - by this number
+                        // (`ASURA/crates/asura-world/src/instance.rs:369`, `world_simulation_tick`); a
+                        // counter here makes everything the client draws run at the wrong speed.
+                        let now = std::time::Instant::now();
+                        let elapsed = now.duration_since(last_tick);
+                        last_tick = now;
+                        // The map's clock advances every agent by the elapsed time, and **the doorway is
+                        // decided on the segment the advance walked** - not on a report's - because that is
+                        // the copy this server believes and the one the client is drawn from
+                        // (`ASURA/crates/asura-world/src/instance.rs:290-308`). A crossing found here is
+                        // pushed to the connection and served before anything else, as `portal_inbox` is in
+                        // `connection.rs:498-502`.
+                        let (crossed, walk) = self.step_map(elapsed);
+                        let mut frames = vec![misc_packets::world_simulation_tick(
+                            u32::try_from(elapsed.as_millis()).unwrap_or(u32::MAX),
+                        )];
+                        if let Some(walk) = walk {
+                            frames.push(walk);
+                        }
+                        // The tick is periodic, so its report is routine: one line per connection per
+                        // `World.SimulationTickMs` at `Info` was the whole of a flowing log.
+                        self.send_quiet(io, peer, crypt, &frames, "a tick").await;
+                        if let Some((from, to)) = crossed {
+                            // The travelling body leaves the map it is in: the clock that crossed it has
+                            // already been announced, then the transfer is served.
+                            self.cross_portal(io, peer, crypt, sheet, from, to).await;
+                            return;
+                        }
                     }
                 }
                 Ok(shared::network::socket::ReadOutcome::Closed) => return,
@@ -1759,8 +1998,6 @@ impl WorldSession {
         }
     }
 
-
-
     /// Write where the destination puts the character before the redirect, or clear the saved position
     /// when the trigger states none.
     ///
@@ -1775,8 +2012,10 @@ impl WorldSession {
         let Some(pool) = self.characters.as_ref() else {
             return;
         };
-        let repository =
-            crate::characters::DatabaseCharacters::new(std::sync::Arc::clone(pool), self.log.clone());
+        let repository = crate::characters::DatabaseCharacters::new(
+            std::sync::Arc::clone(pool),
+            self.log.clone(),
+        );
         let uuid = crate::characters::uuid_text(&sheet.uuid);
         match landing {
             Some((x, y)) => {
@@ -1817,8 +2056,10 @@ impl WorldSession {
     /// (`ASURA/crates/asura-store/src/state/character.rs:226-246`).
     fn saved_position(&self, sheet: &CharacterSheet) -> Option<crate::characters::Position> {
         let pool = self.characters.as_ref()?;
-        let repository =
-            crate::characters::DatabaseCharacters::new(std::sync::Arc::clone(pool), self.log.clone());
+        let repository = crate::characters::DatabaseCharacters::new(
+            std::sync::Arc::clone(pool),
+            self.log.clone(),
+        );
         match repository.position(&crate::characters::uuid_text(&sheet.uuid)) {
             Ok(position) => position,
             Err(error) => {
@@ -1845,15 +2086,18 @@ impl WorldSession {
         map: &crate::world::MapEntry,
         saved: Option<crate::characters::Position>,
     ) -> Option<(f32, f32, u16, (f32, f32))> {
-        let landing = self.landing.lock().ok().and_then(|claimed| *claimed).map(|claimed| {
-            crate::agents::Landing {
+        let landing = self
+            .landing
+            .lock()
+            .ok()
+            .and_then(|claimed| *claimed)
+            .map(|claimed| crate::agents::Landing {
                 map_id: claimed.map_id,
                 x: claimed.landing.x,
                 y: claimed.landing.y,
                 plane: claimed.landing.plane,
                 facing: claimed.facing,
-            }
-        });
+            });
         crate::agents::entry_point(&crate::agents::Entering {
             map,
             spawns: &self.spawns,
@@ -1862,7 +2106,6 @@ impl WorldSession {
             scatter: self.settings.spawn_scatter,
         })
     }
-
 
     /// Scramble and send whole frames, and say so.
     ///
@@ -1878,7 +2121,8 @@ impl WorldSession {
         frames: &[Vec<u8>],
         what: &str,
     ) -> bool {
-        self.send_with(LogLevel::Debug, io, peer, crypt, frames, what).await
+        self.send_with(LogLevel::Debug, io, peer, crypt, frames, what)
+            .await
     }
 
     /// Send a batch whose report is routine: a periodic frame, which is a `Trace` line - below both
@@ -1891,7 +2135,8 @@ impl WorldSession {
         frames: &[Vec<u8>],
         what: &str,
     ) -> bool {
-        self.send_with(LogLevel::Trace, io, peer, crypt, frames, what).await
+        self.send_with(LogLevel::Trace, io, peer, crypt, frames, what)
+            .await
     }
 
     async fn send_with(
@@ -1907,7 +2152,11 @@ impl WorldSession {
         // (`game/Server/Capture.rs`, and `docs/port/02-wire.md` for why the layer is stated).
         for frame in frames {
             if frame.len() >= 2 {
-                crate::server::capture::record("StoC", u16::from_le_bytes([frame[0], frame[1]]), frame);
+                crate::server::capture::record(
+                    "StoC",
+                    u16::from_le_bytes([frame[0], frame[1]]),
+                    frame,
+                );
             }
         }
         let mut answer = Vec::new();
@@ -1976,7 +2225,8 @@ impl Session for WorldSession {
 }
 
 /// Read exactly as many bytes as the slice holds.
-async fn read_exactly(io: &mut SessionIo, out: &mut [u8]) -> Result<(), String> {    let mut filled = 0;
+async fn read_exactly(io: &mut SessionIo, out: &mut [u8]) -> Result<(), String> {
+    let mut filled = 0;
     while filled < out.len() {
         match io.read(&mut out[filled..]).await {
             Ok(0) => return Err("the peer closed".to_string()),
@@ -1988,6 +2238,105 @@ async fn read_exactly(io: &mut SessionIo, out: &mut [u8]) -> Result<(), String> 
 }
 
 impl WorldSession {
+    /// One party request from the party window, answered through this copy's party table
+    /// (`game/Parties/mod.rs`; ASURA `dispatch.rs:102-114` and the handlers in `party.rs:547-1090`).
+    ///
+    /// The copy's population is read first and its lock released; the party table is then asked; its
+    /// batches are delivered once that lock is released too - so the two locks are never held together.
+    /// A refused request is answered with nothing on the wire, which is ASURA's answer (what a live server
+    /// does then is not captured), and the refusal is the log line.
+    fn answer_party_request(
+        &self,
+        peer: &str,
+        map: &crate::world::MapEntry,
+        header: u16,
+        message: &[u8],
+    ) {
+        let me = self.player_id();
+        let district = self.district();
+        let body = message.get(2..).unwrap_or_default();
+        let word = party_packets::read_party_word(body);
+        let everyone = self
+            .peers
+            .lock()
+            .map(|peers| peers.everyone(map.id, district))
+            .unwrap_or_default();
+        let here = crate::parties::Here {
+            me,
+            in_outpost: map.kind == Some(crate::world::map_kind::OUTPOST),
+            max_size: self.world.max_party_size(map.id),
+            everyone,
+        };
+        let parties = self.world.parties();
+        let (what, answer) = {
+            let Ok(mut parties) = parties.lock() else {
+                return;
+            };
+            let table = parties.table(map.id, district);
+            match (header, word) {
+                (party_packets::CLIENT_PARTY_INVITE_PLAYER, Some(target)) => (
+                    format!("invites player {target}"),
+                    crate::parties::handle_invite(table, &here, u32::from(target)),
+                ),
+                (party_packets::CLIENT_PARTY_ACCEPT_INVITE, Some(party)) => (
+                    format!("accepts the invitation of party {party}"),
+                    crate::parties::handle_accept(table, &here, party),
+                ),
+                (party_packets::CLIENT_PARTY_ACCEPT_CANCEL, Some(party)) => (
+                    format!("withdraws the invitation of party {party}"),
+                    crate::parties::handle_cancel(table, &here, party),
+                ),
+                (party_packets::CLIENT_PARTY_ACCEPT_REFUSE, Some(party)) => (
+                    format!("declines the invitation of party {party}"),
+                    crate::parties::handle_refuse(table, &here, party),
+                ),
+                (party_packets::CLIENT_PARTY_LEAVE_GROUP, _) => (
+                    "leaves its party".to_string(),
+                    crate::parties::handle_leave(table, &here),
+                ),
+                (party_packets::CLIENT_PARTY_KICK_PLAYER, Some(target)) => (
+                    format!("kicks player {target}"),
+                    crate::parties::handle_kick(table, &here, u32::from(target)),
+                ),
+                _ => (
+                    format!("sends party message 0x{header:04X}"),
+                    Err(format!("{} byte(s) carry no word", body.len())),
+                ),
+            }
+        };
+        match answer {
+            Ok(plan) => {
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Gameplay connection from {peer}: party: player {me} {what}; {} batch(es) sent.",
+                        plan.len()
+                    ),
+                );
+                self.deliver_party_plan(plan);
+            }
+            Err(why) => self.say(
+                LogLevel::Info,
+                format!(
+                    "Gameplay connection from {peer}: party: player {me} {what}: refused ({why}); nothing sent."
+                ),
+            ),
+        }
+    }
+
+    /// Deliver a party plan: each player's frames through its own session
+    /// (`ASURA/crates/asura-world/src/party.rs:507-511`, `deliver`; `Peers::send_to`).
+    pub(crate) fn deliver_party_plan(&self, plan: crate::parties::Plan) {
+        if plan.is_empty() {
+            return;
+        }
+        if let Ok(peers) = self.peers.lock() {
+            for (to, frames) in plan {
+                peers.send_to(to, &frames);
+            }
+        }
+    }
+
     /// The connection ended: its place in the district is given back.
     ///
     /// The copy itself stays open - R37 holds an outpost for 15 minutes of inactivity and R40
@@ -2007,13 +2356,50 @@ impl WorldSession {
         {
             districts.leave(map_id, district, unix_now());
         }
+        // Its parties are told it left the map before its body goes: the invitations it was in are
+        // closed and its own party, if it had company, sees it leave (`game/Parties/mod.rs`,
+        // `left_instance`; ASURA sends these ahead of the farewell, `connection.rs:552-579`).
+        if let Some((map_id, district)) = entered {
+            let player_id = self.player_id();
+            let everyone = self
+                .peers
+                .lock()
+                .map(|peers| peers.everyone(map_id, district))
+                .unwrap_or_default();
+            let here = crate::parties::Here {
+                me: player_id,
+                in_outpost: self
+                    .world
+                    .map(map_id)
+                    .is_some_and(|map| map.kind == Some(crate::world::map_kind::OUTPOST)),
+                max_size: self.world.max_party_size(map_id),
+                everyone,
+            };
+            let plan = match self.world.parties().lock() {
+                Ok(mut parties) => {
+                    let plan =
+                        crate::parties::left_instance(parties.table(map_id, district), &here);
+                    parties.tidy(map_id, district);
+                    plan
+                }
+                Err(_) => Vec::new(),
+            };
+            self.deliver_party_plan(plan);
+        }
         // And the body is taken back out of everyone else's world: the player destroyed, then its agent
-        // removed, in that order (`ASURA/crates/asura-world/src/instance.rs:466-473`, `farewell`).
-        if let Ok(mut peers) = self.peers.lock()
-            && let Some(peer) = peers.leave(self.player_id())
-        {
-            let frames = crate::districts::farewell(peer.player_id, peer.agent_id);
-            peers.broadcast(peer.player_id, peer.map_id, peer.district, &frames);
+        // removed, in that order (`ASURA/crates/asura-world/src/instance.rs:466-473`, `farewell`). A
+        // travel's old connection must not remove the registry slot its own new connection already
+        // filled, so the removal is by channel.
+        let session = self.session_token.lock().ok().and_then(|token| *token);
+        if let Ok(mut peers) = self.peers.lock() {
+            let left = match session {
+                Some(session) => peers.leave_if(self.player_id(), session),
+                None => peers.leave(self.player_id()),
+            };
+            if let Some(peer) = left {
+                let frames = crate::districts::farewell(peer.player_id, peer.agent_id);
+                peers.broadcast(peer.player_id, peer.map_id, peer.district, &frames);
+            }
         }
     }
 
@@ -2075,15 +2461,18 @@ impl WorldSession {
         let Some(pool) = self.characters.as_ref() else {
             return;
         };
-        let repository =
-            crate::characters::DatabaseCharacters::new(std::sync::Arc::clone(pool), self.log.clone());
+        let repository = crate::characters::DatabaseCharacters::new(
+            std::sync::Arc::clone(pool),
+            self.log.clone(),
+        );
         let position = crate::characters::Position {
             map_id: map.id,
             x,
             y,
             plane: plane as i16,
         };
-        if let Err(error) = repository.record_position(&crate::characters::uuid_text(&uuid), &position)
+        if let Err(error) =
+            repository.record_position(&crate::characters::uuid_text(&uuid), &position)
         {
             self.say(
                 LogLevel::Warn,
@@ -2106,10 +2495,11 @@ impl WorldSession {
 mod tests {
     use super::*;
     use crate::handlers::character::creation_player_block;
-    use crate::server::packets::creation_load_block;
     use crate::server::packets::character_packets;
+    use crate::server::packets::creation_load_block;
+    use crate::server::packets::item_packets;
     use crate::server::protocol::GameVersion;
-    use crate::world::{map_kind, MapEntry};
+    use crate::world::{MapEntry, map_kind};
     use shared::cryptography::handshake::{self, CLIENT_SEED_HEADER, KEY_LEN, MASTER_SECRET_LEN};
     use std::io::{Read, Write};
     use std::sync::Arc;
@@ -2125,6 +2515,7 @@ mod tests {
                     file_id: 0,
                     name: "Character creation".to_string(),
                     instance_value: None,
+                    name_id: None,
                 },
                 MapEntry {
                     id: 148,
@@ -2132,6 +2523,7 @@ mod tests {
                     file_id: 113_021,
                     name: "Ascalon City (pre-Searing)".to_string(),
                     instance_value: Some(0xBB14_F539),
+                    name_id: None,
                 },
             ],
             vec![crate::maps::MapSpawn {
@@ -2149,18 +2541,28 @@ mod tests {
         // inventory model to draw.
         let (bags, items, sets) = world
             .load_creation(
-                    "../config/World/Vanilla/creation/inventory.json",
-                    "../config/World/Vanilla/creation/equipment.json",
-                    Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
-                    &Log::new(),
-                )
+                "../config/World/Vanilla/creation/inventory.json",
+                "../config/World/Vanilla/creation/equipment.json",
+                Some(std::path::Path::new(
+                    "../config/World/Vanilla/creation/worn_slots.json",
+                )),
+                &Log::new(),
+            )
             .expect("the creation data");
-        assert_eq!((bags, items, sets), (6, 9, 32), "the reference's own counts");
+        assert_eq!(
+            (bags, items, sets),
+            (6, 9, 32),
+            "the reference's own counts"
+        );
         world.set_templates(templates_from(world.creation().definitions()));
         world
     }
 
-    fn factory(log: Log, world: std::sync::Arc<World>, master: [u8; MASTER_SECRET_LEN]) -> shared::network::socket::SessionFactory {
+    fn factory(
+        log: Log,
+        world: std::sync::Arc<World>,
+        master: [u8; MASTER_SECRET_LEN],
+    ) -> shared::network::socket::SessionFactory {
         Arc::new(move || {
             Box::new(WorldSession::with_master(log.clone(), &world, master)) as Box<dyn Session>
         })
@@ -2300,7 +2702,8 @@ mod tests {
     }
 
     #[test]
-    fn a_travel_request_names_the_instance_in_its_first_two_bytes() {        // The client's own frame, as the working implementation's log records it: `B1 80 | 94 00 | 02 |
+    fn a_travel_request_names_the_instance_in_its_first_two_bytes() {
+        // The client's own frame, as the working implementation's log records it: `B1 80 | 94 00 | 02 |
         // 00 00 | 0...` - the header `0x80B1`, then the instance. This tree read it as `0x00B1` (the
         // server's own party message) and parsed five fields the working implementation does not read.
         let mut message = vec![0xB1, 0x80];
@@ -2321,7 +2724,10 @@ mod tests {
 
     /// The templates a test's world runs with, built from the creation content's own definitions: what
     /// the world program reads back from its table, without a database.
-    fn templates_from(items: Vec<crate::creation::Item>) -> Vec<crate::data_stores::ItemDefinition> {        items
+    fn templates_from(
+        items: Vec<crate::creation::Item>,
+    ) -> Vec<crate::data_stores::ItemDefinition> {
+        items
             .iter()
             .enumerate()
             .map(|(index, item)| crate::data_stores::ItemDefinition {
@@ -2349,9 +2755,9 @@ mod tests {
         client: &mut std::net::TcpStream,
         reading: &mut common::cryptography::Arc4,
     ) -> Vec<(u16, Vec<u8>)> {
-        let load = read_frames_until(client, reading, instance_packets::INSTANCE_LOAD_FINISH);
-        read_title_frames(client, reading);
-        load
+        // The load block ends at `INSTANCE_LOAD_FINISH`; the caller reads what follows it (this
+        // player's own title, then the introductions of everyone already in the map).
+        read_frames_until(client, reading, instance_packets::INSTANCE_LOAD_FINISH)
     }
 
     fn read_title_frames(
@@ -2402,7 +2808,9 @@ mod tests {
                     let present = pending.len();
                     pending.resize(needed, 0);
                     let incoming = &mut pending[present..];
-                    client.read_exact(incoming).expect("the load keeps arriving");
+                    client
+                        .read_exact(incoming)
+                        .expect("the load keeps arriving");
                     reading.apply(incoming);
                 }
                 Err(error) => panic!("a frame of the load did not frame: {error}"),
@@ -2458,7 +2866,11 @@ mod tests {
 
         let shared = handshake::shared_secret(&public).unwrap();
         for index in 0..MASTER_SECRET_LEN {
-            assert_eq!(answer[2 + index] ^ shared[index], 0x5A, "the master is the one drawn");
+            assert_eq!(
+                answer[2 + index] ^ shared[index],
+                0x5A,
+                "the master is the one drawn"
+            );
         }
 
         // 4. The block: scrambled with the key both sides derive, and it is exactly the creation
@@ -2489,7 +2901,10 @@ mod tests {
         for frame in &expected {
             whole.extend_from_slice(frame);
         }
-        assert_eq!(answered, whole, "the player-data block is the reference's order");
+        assert_eq!(
+            answered, whole,
+            "the player-data block is the reference's order"
+        );
 
         // The headers in order, which is what the client dispatches on.
         let mut at = 0;
@@ -2516,10 +2931,16 @@ mod tests {
             0x0037, 0x00B7, 0x00B6, 0x00DA, 0x00DB, 0x00E9, 0x003A,
             0x009F, // energy, health, and the third property
         ] {
-            assert!(headers.contains(&header), "header 0x{header:04X} is in the block");
+            assert!(
+                headers.contains(&header),
+                "header 0x{header:04X} is in the block"
+            );
         }
         let item_count = headers.iter().filter(|header| **header == 0x0161).count();
-        assert!(item_count > 9, "the screen is sent the profession's equipment too");
+        assert!(
+            item_count > 9,
+            "the screen is sent the profession's equipment too"
+        );
 
         // 6. The screen chooses another campaign and profession (`0x8060`: campaign, profession).
         // The reference answers `GameSrv_HandleCharCreationChangeProf`'s own way, and this is the
@@ -2536,7 +2957,10 @@ mod tests {
             .id;
         let mut expected: Vec<Vec<u8>> = Vec::new();
         for item in &previous {
-            expected.push(item_packets::item_remove(item_packets::ITEM_STREAM, item.id));
+            expected.push(item_packets::item_remove(
+                item_packets::ITEM_STREAM,
+                item.id,
+            ));
         }
         expected.push(character_packets::update_unlocked_skills(&[]));
         expected.push(character_packets::player_update_profession(
@@ -2546,9 +2970,9 @@ mod tests {
             0,
         ));
         for item in &next {
-            expected.push(item_packets::create_named_item(&crate::creation::named_item(
-                item,
-            )));
+            expected.push(item_packets::create_named_item(
+                &crate::creation::named_item(item),
+            ));
             if let Some(slot) = item.slot {
                 expected.push(item_packets::item_move_to_location(
                     item_packets::ITEM_STREAM,
@@ -2643,7 +3067,10 @@ mod tests {
             }
             total += read;
         }
-        assert_eq!(total, 0, "a connection for another world is closed without a word");
+        assert_eq!(
+            total, 0,
+            "a connection for another world is closed without a word"
+        );
 
         manager.stop_network();
         log.shutdown();
@@ -2669,12 +3096,13 @@ Logger.root = 6,Console
             .join("../config/World/Vanilla/titles.json");
         let catalog: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&titles_path).unwrap()).unwrap();
-        let mut expected_ids: Vec<_> = catalog["vanilla_ids"].as_array().unwrap().iter()
+        let mut expected_ids: Vec<_> = catalog["vanilla_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
             .map(|id| id.as_u64().unwrap() as u32)
             .collect();
-        expected_ids.extend(
-            (48..).take(catalog["custom_tracks"].as_array().unwrap().len()),
-        );
+        expected_ids.extend((48..).take(catalog["custom_tracks"].as_array().unwrap().len()));
         expected_ids.sort_unstable();
         configured.load_titles(titles_path, &log).unwrap();
         let world = Arc::new(configured);
@@ -2721,14 +3149,17 @@ Logger.root = 6,Console
             instance_packets::instance_load_head(),
             instance_packets::instance_player_data_start(),
             instance_packets::instance_load_player_name("Player"),
-            // The explorable byte is 1 for every load: the reference hardcodes it
-            // (`ASURA/crates/asura-world/src/map.rs:34-42`).
-            instance_packets::instance_load_info(1, 148, 1, 1, 0, 0),
+            // 148 is Ascalon City, an outpost: the explorable byte is 0. Only an explorable sends 1
+            // (`ASURA/crates/asura-world/src/map.rs:76-86`, `load_info_explorable`).
+            instance_packets::instance_load_info(1, 148, 0, 1, 0, 0),
         ];
         expected.extend(grid);
         // And the instance table: one batch, because this world's one map with a value states it.
         let (table, notes) = crate::maps::instance_table::table_for(world.maps());
-        assert!(notes.is_empty(), "every map's value is stated or absent: {notes:?}");
+        assert!(
+            notes.is_empty(),
+            "every map's value is stated or absent: {notes:?}"
+        );
         expected.extend(table.frames());
         let expected_bytes: usize = expected.iter().map(Vec::len).sum();
         let mut block = vec![0u8; expected_bytes];
@@ -2767,7 +3198,7 @@ Logger.root = 6,Console
             .creation()
             .inventory(0, character_packets::DEFAULT_PROFESSION);
         let mut expected_items = crate::creation::load_item_stream(&inventory, 0);
-        expected_items.push(misc_packets::hard_mode_unlocked(1));
+        expected_items.push(misc_packets::hard_mode_unlocked(0));
         expected_items.push(character_packets::character_update_info(""));
         expected_items.push(misc_packets::map_update_current(148, 0));
         expected_items.push(instance_packets::ready_for_map_spawn(0));
@@ -2785,16 +3216,29 @@ Logger.root = 6,Console
         for frame in &expected_items {
             whole.extend_from_slice(frame);
         }
-        assert_eq!(items, whole, "the items and the record, in the measured order");
+        assert_eq!(
+            items, whole,
+            "the items and the record, in the measured order"
+        );
         // The measured header sequence, so a reordering fails here rather than at the client.
         let headers: Vec<u16> = expected_items
             .iter()
             .map(|frame| u16::from_le_bytes([frame[0], frame[1]]))
             .collect();
-        for header in [0x0144, 0x0148, 0x0147, 0x0141, 0x00EA, 0x00ED, 0x0070, 0x0030, 0x0099, 0x01AC, 0x0199, 0x0198] {
-            assert!(headers.contains(&header), "header 0x{header:04X} is in the answer");
+        for header in [
+            0x0144, 0x0148, 0x0147, 0x0141, 0x00EA, 0x00ED, 0x0070, 0x0030, 0x0099, 0x01AC, 0x0199,
+            0x0198,
+        ] {
+            assert!(
+                headers.contains(&header),
+                "header 0x{header:04X} is in the answer"
+            );
         }
-        assert_eq!(*headers.last().unwrap(), 0x0198, "the manifest ends the block");
+        assert_eq!(
+            *headers.last().unwrap(),
+            0x0198,
+            "the manifest ends the block"
+        );
 
         // 6. The spawn request: the world answers with the map file and a point of its own list, and
         // nothing else - one `0x0196` frame, which is `spawn_block` exactly
@@ -2820,16 +3264,20 @@ Logger.root = 6,Console
             "the point {x}, {y} is within the scatter of the map's own"
         );
 
-
         // 7. The players request: the whole load block, in the reference's order, ending at the
         // message that takes the client off the loading screen. Read until that message arrives.
-        let mut ask = vec![0x90, 0x80, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
-                           0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0x00];
+        let mut ask = vec![
+            0x90, 0x80, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+            0xBB, 0xBB, 0xBB, 0xBB, 0x00,
+        ];
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
 
-        let blocks =
-            read_frames_until(&mut client, &mut reading, instance_packets::INSTANCE_LOAD_FINISH);
+        let blocks = read_frames_until(
+            &mut client,
+            &mut reading,
+            instance_packets::INSTANCE_LOAD_FINISH,
+        );
         read_title_frames(&mut client, &mut reading);
         let title_points: Vec<_> = blocks
             .iter()
@@ -2846,8 +3294,14 @@ Logger.root = 6,Console
             "the test load sends the configured IDs"
         );
         assert!(title_points.iter().all(|&(_, points)| points > 0));
-        assert!(title_points.contains(&(26, 1)), "Canthan Skill Hunter stays at one point");
-        assert!(title_points.contains(&(32, 3)), "Legendary Skill Hunter uses the captured completed state");
+        assert!(
+            title_points.contains(&(26, 1)),
+            "Canthan Skill Hunter stays at one point"
+        );
+        assert!(
+            title_points.contains(&(32, 3)),
+            "Legendary Skill Hunter uses the captured completed state"
+        );
         for (header, title, expected_rank) in [
             (GAME_CMSG_TITLE_DISPLAY, Some(32u32), 246),
             (GAME_CMSG_TITLE_DISPLAY, Some(0), 6),
@@ -2872,7 +3326,11 @@ Logger.root = 6,Console
         assert_eq!(defender.1[30..34], 20u32.to_le_bytes());
         let headers: Vec<u16> = blocks.iter().map(|(header, _)| *header).collect();
         let flags = headers.iter().position(|&header| header == 0x003C).unwrap();
-        assert_eq!(headers[flags + 1], 0x00F3, "rank records follow player flags");
+        assert_eq!(
+            headers[flags + 1],
+            0x00F3,
+            "rank records follow player flags"
+        );
         // Preforged packets-6468-5728843.jsonl:110585-110587 and
         // Northlands seq 567-569 give the Canthan Skill Hunter and Sweet Tooth order.
         for (track, ranks) in [(26u32, [213u32, 214u32]), (34, [273, 274])] {
@@ -2908,7 +3366,11 @@ Logger.root = 6,Console
             );
         }
         assert_eq!(headers.first(), Some(&0x001D), "it opens with the PvP half");
-        assert_eq!(headers.last(), Some(&0x018E), "and ends with the load's own end");
+        assert_eq!(
+            headers.last(),
+            Some(&0x018E),
+            "and ends with the load's own end"
+        );
         // The party comes after the agent and before the end, in the reference's own order: a client
         // told about a party it was never given asserts `m_partyClient`.
         let party_at = headers
@@ -2919,6 +3381,16 @@ Logger.root = 6,Console
             &headers[party_at..party_at + 4],
             &[0x01D3, 0x01CC, 0x01D4, 0x01B3],
             "the party before the character's own party word: {headers:04X?}"
+        );
+        // The guild block goes right in front of the party: a character in no guild is told `0x011C`
+        // alone there (`ASURA/crates/asura-world/src/player.rs:740-756`, `guild.rs:165-187`).
+        let guild_at = headers
+            .iter()
+            .position(|header| *header == 0x011C)
+            .expect("the guild block's end marker");
+        assert!(
+            guild_at < party_at,
+            "the guild block ends before the party: {headers:04X?}"
         );
         // The agent's own body is the frame that puts a body in the map, and it carries the point the
         // entry-position answer named.
@@ -2982,7 +3454,8 @@ Logger.root = 6,Console
     ) -> (
         std::net::TcpStream,
         common::cryptography::Arc4,
-        Vec<u16>,
+        Vec<(u16, Vec<u8>)>,
+        u32,
     ) {
         let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
         client
@@ -3012,7 +3485,12 @@ Logger.root = 6,Console
         let mut sending = common::cryptography::Arc4::new(&key);
 
         // The head block ends with the instance table; the ping pair follows it unasked.
-        read_frames_until(&mut client, &mut reading, instance_packets::INSTANCE_TABLE);
+        let head = read_frames_until(&mut client, &mut reading, instance_packets::INSTANCE_TABLE);
+        let controlled = head
+            .iter()
+            .find(|(header, _)| *header == instance_packets::INSTANCE_LOAD_INFO)
+            .map(|(_, body)| u32::from_le_bytes(body[2..6].try_into().unwrap()))
+            .expect("the load head names the controlled agent");
         let mut ping = vec![0u8; 8];
         client.read_exact(&mut ping).unwrap();
         reading.apply(&mut ping);
@@ -3045,15 +3523,16 @@ Logger.root = 6,Console
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
         let players = read_load_frames(&mut client, &mut reading);
-        let headers = players.iter().map(|(header, _)| *header).collect();
-        (client, reading, headers)
+        (client, reading, players, controlled)
     }
 
-    /// Two players in one copy of a map: the second is told about the first before the load's own block,
-    /// the first is told the second arrived, and told again when it leaves.
+    /// Two players in one copy of a map: the second is told about the first **after** its own load
+    /// block (so it already knows its team token), the first is told the second arrived, and told again
+    /// when it leaves.
     ///
-    /// `ASURA/crates/asura-world/src/player.rs:499-532` and `instance.rs:432-473`: the introduction is
-    /// the player, its party size, its party and its agent; the farewell is the player destroyed and the
+    /// `ASURA/crates/asura-world/src/player.rs:784-851` and `instance.rs:1031-1124`: the introduction
+    /// is the player, its party pair, its professions and level, its flags or title, its effects, its
+    /// agent, what it wears, visual equipment and cape; the farewell is the player destroyed and the
     /// agent removed.
     #[test]
     fn two_connections_in_one_map_introduce_each_other() {
@@ -3068,7 +3547,9 @@ Logger.root = 6,Console
         let mut manager = shared::network::socket_mgr::SocketMgr::new(factory);
         let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
 
-        let (client, mut reading, first) = load_a_player(port, master, [0xBB; 16]);
+        let (mut first_client, mut reading, first_frames, first_controlled) =
+            load_a_player(port, master, [0xBB; 16]);
+        let first: Vec<u16> = first_frames.iter().map(|(header, _)| *header).collect();
         assert_eq!(
             first.first(),
             Some(&0x001D),
@@ -3079,59 +3560,135 @@ Logger.root = 6,Console
             1,
             "one body in the map, its own: {first:04X?}"
         );
+        // `0x019A` names the agent this client controls; its own `0x0020` must be that same body.
+        let first_own_agent = first_frames
+            .iter()
+            .find(|(header, _)| *header == 0x0020)
+            .map(|(_, body)| u32::from_le_bytes(body[2..6].try_into().unwrap()))
+            .expect("the load creates its own agent");
+        assert_eq!(
+            first_controlled, first_own_agent,
+            "the first load controls the agent it creates"
+        );
+        // The block ends at `INSTANCE_LOAD_FINISH`; its own displayed rank is the frame after it.
+        let first_own_title = read_title_frames(&mut first_client, &mut reading);
+        assert_eq!(
+            first_own_title.last().unwrap().1,
+            title_packets::rank_display(1, world.titles().initial_display_rank())
+        );
 
-        let (mut second_client, mut second_reading, second) =
+        let (mut second_client, mut second_reading, second_frames, second_controlled) =
             load_a_player(port, master, [0xCC; 16]);
-        // The second player's answer opens with the first player's introduction, then its own block.
+        let second: Vec<u16> = second_frames.iter().map(|(header, _)| *header).collect();
         assert_eq!(
-            &second[..4],
-            &[0x0059, 0x00B0, 0x00B1, 0x0020],
-            "the introduction comes before the block: {second:04X?}"
+            second.first(),
+            Some(&0x001D),
+            "the second player's block comes first, before any introduction: {second:04X?}"
         );
         assert_eq!(
-            second[4], 0x001D,
-            "and the block itself follows it: {second:04X?}"
+            second.last(),
+            Some(&instance_packets::INSTANCE_LOAD_FINISH),
+            "and ends before the other players are introduced: {second:04X?}"
+        );
+        // The bug this guards: `0x019A` used to name agent 1 for every connection, while the second
+        // connection's own `0x0020` was agent 2. Its health and energy then went to a body the client
+        // was not controlling, and its own bars stayed empty.
+        let second_own_agent = second_frames
+            .iter()
+            .find(|(header, _)| *header == 0x0020)
+            .map(|(_, body)| u32::from_le_bytes(body[2..6].try_into().unwrap()))
+            .expect("the load creates its own agent");
+        assert_eq!(
+            second_controlled, second_own_agent,
+            "the second load controls the agent it creates, not the first player's"
+        );
+        let second_own_title = read_title_frames(&mut second_client, &mut second_reading);
+        assert_eq!(
+            second_own_title.last().unwrap().1,
+            title_packets::rank_display(2, world.titles().initial_display_rank())
         );
 
-        // And the first player is told the second arrived: the introduction, the items it wears in the
-        // unnamed form, what the agent is drawn wearing, and its cape (`player.rs:509-532`).
-        let mut first_client = client;
-        let arrived = read_frames_until(
-            &mut first_client,
-            &mut reading,
+        // The first player is introduced **after** the second's own block, so the second already knows
+        // its team token when it creates the first (`ASURA/crates/asura-world/src/player.rs:784-822`).
+        let intro = read_frames_until(
+            &mut second_client,
+            &mut second_reading,
             misc_packets::AGENT_DISPLAY_CAPE,
         );
-        // The world keeps ticking the connection while it waits, so the ticks are set aside first: what
-        // is being read is the announcement, in the order the working implementation sends it.
-        let headers: Vec<u16> = arrived
+        let headers: Vec<u16> = intro
             .iter()
             .map(|(header, _)| *header)
             .filter(|header| *header != misc_packets::WORLD_SIMULATION_TICK)
             .collect();
         assert_eq!(
-            &headers[..4],
-            &[0x0059, 0x00B0, 0x00B1, 0x0020],
-            "the other player's introduction: {headers:04X?}"
+            headers.first(),
+            Some(&0x0059),
+            "the first player's introduction: {headers:04X?}"
         );
         assert!(
-            headers.contains(&item_packets::CREATE_UNNAMED_ITEM),
-            "and what it wears, in the form a bag slot uses: {headers:04X?}"
+            headers.contains(&0x00A6),
+            "its professions, which the target frame needs: {headers:04X?}"
+        );
+        assert!(
+            headers.contains(&0x009F),
+            "its public level, which the party window needs: {headers:04X?}"
         );
         assert!(
             headers.contains(&misc_packets::UPDATE_AGENT_VISUAL_EQUIPMENT),
             "and the nine items its agent is drawn wearing: {headers:04X?}"
         );
         assert_eq!(headers.last(), Some(&misc_packets::AGENT_DISPLAY_CAPE));
-        let first_selection = read_title_frames(&mut second_client, &mut second_reading);
+        let profession = intro
+            .iter()
+            .find(|(header, _)| *header == 0x00A6)
+            .expect("an agent profession");
         assert_eq!(
-            first_selection.last().unwrap().1,
-            title_packets::rank_display(1, world.titles().initial_display_rank())
+            &profession.1[2..6],
+            &1u32.to_le_bytes(),
+            "the first player's agent"
         );
-        let second_selection = read_title_frames(&mut first_client, &mut reading);
         assert_eq!(
-            second_selection.last().unwrap().1,
-            title_packets::rank_display(2, world.titles().initial_display_rank())
+            profession.1[6], 1,
+            "its primary profession, not the newcomer's"
         );
+        let level = intro
+            .iter()
+            .find(|(header, body)| {
+                *header == 0x009F
+                    && body[2..6] == agent_packets::AGENT_PROPERTY_PUBLIC_LEVEL.to_le_bytes()
+            })
+            .expect("a public-level property");
+        assert_eq!(&level.1[10..14], &1u32.to_le_bytes(), "its own level");
+
+        // And the first player is told the second arrived, with the same whole introduction.
+        let arrived = read_frames_until(
+            &mut first_client,
+            &mut reading,
+            misc_packets::AGENT_DISPLAY_CAPE,
+        );
+        let headers: Vec<u16> = arrived
+            .iter()
+            .map(|(header, _)| *header)
+            .filter(|header| *header != misc_packets::WORLD_SIMULATION_TICK)
+            .collect();
+        assert_eq!(
+            headers.first(),
+            Some(&0x0059),
+            "the newcomer's introduction: {headers:04X?}"
+        );
+        assert!(
+            headers.contains(&0x00A6),
+            "with its professions: {headers:04X?}"
+        );
+        assert!(
+            headers.contains(&item_packets::ITEM_LOW_DETAIL),
+            "and what it wears, in the form an introduction declares: {headers:04X?}"
+        );
+        assert!(
+            headers.contains(&misc_packets::UPDATE_AGENT_VISUAL_EQUIPMENT),
+            "and the nine items its agent is drawn wearing: {headers:04X?}"
+        );
+        assert_eq!(headers.last(), Some(&misc_packets::AGENT_DISPLAY_CAPE));
 
         // The second player leaves; the first is told the player is gone and the agent with it.
         let _ = second_client.shutdown(std::net::Shutdown::Both);
@@ -3159,8 +3716,8 @@ Logger.root = 6,Console
         // version message names the creation instance on purpose: what loads must be the map the
         // record names, with the district and language the request carried (R57).
         use common::configuration::{Config, Policy};
-        use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
-        use database::updater::{collect_files, UpdateState};
+        use database::database::{DatabaseKind, DatabaseWorkerPool, read_settings};
+        use database::updater::{UpdateState, collect_files};
 
         let _serial_auth = database::updater::apply::test_lock("auth");
         let _serial_characters = database::updater::apply::test_lock("characters");
@@ -3176,11 +3733,12 @@ Logger.root = 6,Console
             UpdateState::Released,
         )
         .expect("the login schema");
-        pool.apply_updates(&schema, &log).expect("the schema applies");
+        pool.apply_updates(&schema, &log)
+            .expect("the schema applies");
         let login = Arc::new(std::sync::Mutex::new(pool));
 
-        let settings = read_settings(&config, DatabaseKind::Character)
-            .expect("the character settings");
+        let settings =
+            read_settings(&config, DatabaseKind::Character).expect("the character settings");
         let mut pool = DatabaseWorkerPool::open(DatabaseKind::Character, &settings, &log)
             .expect("the character pool opens");
         let schema = collect_files(
@@ -3188,7 +3746,8 @@ Logger.root = 6,Console
             UpdateState::Released,
         )
         .expect("the character schema");
-        pool.apply_updates(&schema, &log).expect("the schema applies");
+        pool.apply_updates(&schema, &log)
+            .expect("the schema applies");
         let characters = Arc::new(std::sync::Mutex::new(pool));
 
         // The record the login would have written for this connection.
@@ -3297,7 +3856,10 @@ Logger.root = 6,Console
         // instance table after the instance's record, so it is read frame by frame up to the table.
         let grid = crate::maps::cartography::init_frames(crate::maps::cartography::grid_for(148));
         let (table, notes) = crate::maps::instance_table::table_for(world.maps());
-        assert!(notes.is_empty(), "every map's value is stated or absent: {notes:?}");
+        assert!(
+            notes.is_empty(),
+            "every map's value is stated or absent: {notes:?}"
+        );
         let mut expected = vec![
             instance_packets::instance_load_head(),
             instance_packets::instance_player_data_start(),
@@ -3321,12 +3883,10 @@ Logger.root = 6,Console
 
         // R12: the character had no unlock rows, so the load wrote the world's first outpost for
         // it before entering - the same starting unlock a confirm writes.
-        let unlocked = crate::characters::DatabaseCharacters::new(
-            Arc::clone(&characters),
-            log.clone(),
-        )
-        .unlocked_maps(&character_text)
-        .expect("the character's unlocks");
+        let unlocked =
+            crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
+                .unlocked_maps(&character_text)
+                .expect("the character's unlocks");
         assert_eq!(unlocked, vec![148], "the starting unlock the load wrote");
 
         // 4. The ping pair, then the character's own items - the rows the confirm wrote, drawn the
@@ -3340,7 +3900,7 @@ Logger.root = 6,Console
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
         let mut expected_items = crate::creation::load_item_stream(&starting, 1234);
-        expected_items.push(misc_packets::hard_mode_unlocked(1));
+        expected_items.push(misc_packets::hard_mode_unlocked(0));
         expected_items.push(character_packets::character_update_info(""));
         expected_items.push(misc_packets::map_update_current(148, 0));
         expected_items.push(instance_packets::ready_for_map_spawn(0));
@@ -3376,7 +3936,11 @@ Logger.root = 6,Console
             &113_021u32.to_le_bytes(),
             "the outpost's file, so the record decided the map"
         );
-        assert_eq!(&spawn[26..32], &[0x1E, 0x00, 0xF4, 0x01, 0x00, 0x00], "the first tick");
+        assert_eq!(
+            &spawn[26..32],
+            &[0x1E, 0x00, 0xF4, 0x01, 0x00, 0x00],
+            "the first tick"
+        );
 
         // 4c. A drag in the inventory: the item's row moves, and the client is told the placement.
         let mut ask = vec![0x72, 0x80];
@@ -3389,7 +3953,11 @@ Logger.root = 6,Console
         client.read_exact(&mut moved).unwrap();
         reading.apply(&mut moved);
         assert_eq!(&moved[..2], &[0x3E, 0x01], "the placement");
-        assert_eq!(&moved[2..4], &item_packets::ITEM_STREAM.to_le_bytes(), "the stream");
+        assert_eq!(
+            &moved[2..4],
+            &item_packets::ITEM_STREAM.to_le_bytes(),
+            "the stream"
+        );
         assert_eq!(&moved[4..8], &1u32.to_le_bytes(), "the item");
         assert_eq!(&moved[8..10], &3u16.to_le_bytes(), "the bag");
         assert_eq!(moved[10], 7, "the slot");
@@ -3400,7 +3968,11 @@ Logger.root = 6,Console
             .iter()
             .find(|row| row.item_id == 1)
             .expect("the item is one of the character's");
-        assert_eq!((moved_row.bag_id, moved_row.slot), (3, 7), "the row moved with it");
+        assert_eq!(
+            (moved_row.bag_id, moved_row.slot),
+            (3, 7),
+            "the row moved with it"
+        );
 
         // 4d. An equip: the item goes to the slot its kind is worn in, in the equipped bag, and whatever
         // was worn there comes off to the first free carrying slot
@@ -3472,7 +4044,11 @@ Logger.root = 6,Console
         reading.apply(&mut placed);
         assert_eq!(&placed[..2], &[0x3E, 0x01], "the placement");
         assert_eq!(&placed[4..8], &worn.id.to_le_bytes(), "the item");
-        assert_eq!(&placed[8..10], &equipped_bag.id.to_le_bytes(), "the equipped bag");
+        assert_eq!(
+            &placed[8..10],
+            &equipped_bag.id.to_le_bytes(),
+            "the equipped bag"
+        );
         assert_eq!(placed[10], worn_slot, "the slot its kind is worn in");
         // And what the agent is drawn wearing is sent again.
         let mut drawn = vec![0u8; 2 + 4 + 9 * 4];
@@ -3489,13 +4065,14 @@ Logger.root = 6,Console
             .find(|item| item.id != worn.id && item.id != 1 && item.quantity > 1)
             .expect("the set carries a stack of more than one")
             .id;
-        let before = crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
-            .items_of(&character_text)
-            .expect("the item rows are readable")
-            .iter()
-            .find(|row| row.item_id == dropped)
-            .map(|row| row.quantity)
-            .expect("the stack is one of the character's");
+        let before =
+            crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
+                .items_of(&character_text)
+                .expect("the item rows are readable")
+                .iter()
+                .find(|row| row.item_id == dropped)
+                .map(|row| row.quantity)
+                .expect("the stack is one of the character's");
         let mut ask = vec![0x2C, 0x80];
         ask.extend_from_slice(&dropped.to_le_bytes());
         ask.push(1);
@@ -3516,13 +4093,14 @@ Logger.root = 6,Console
             "the drop is answered with nothing, so the entry position is next; got {}",
             shared::network::socket::hex(&next)
         );
-        let after = crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
-            .items_of(&character_text)
-            .expect("the item rows are readable")
-            .iter()
-            .find(|row| row.item_id == dropped)
-            .map(|row| row.quantity)
-            .expect("the stack is still there");
+        let after =
+            crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
+                .items_of(&character_text)
+                .expect("the item rows are readable")
+                .iter()
+                .find(|row| row.item_id == dropped)
+                .map(|row| row.quantity)
+                .expect("the stack is still there");
         assert_eq!(after, before - 1, "one was taken off the stack");
 
         // 5. The record is claimed once: a second claim finds nothing.
@@ -3539,8 +4117,11 @@ Logger.root = 6,Console
                 &[&character_text],
             )
             .unwrap();
-            pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&character_text])
-                .unwrap();
+            pool.query_with(
+                "DELETE FROM \"characters\" WHERE \"uuid\" = $1",
+                &[&character_text],
+            )
+            .unwrap();
         }
 
         manager.stop_network();
@@ -3558,8 +4139,8 @@ Logger.root = 6,Console
         // login records a travel to 147; the load proceeds, and answering the players ask writes 147
         // into the reached instances.
         use common::configuration::{Config, Policy};
-        use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
-        use database::updater::{collect_files, UpdateState};
+        use database::database::{DatabaseKind, DatabaseWorkerPool, read_settings};
+        use database::updater::{UpdateState, collect_files};
 
         let _serial_auth = database::updater::apply::test_lock("auth");
         let _serial_characters = database::updater::apply::test_lock("characters");
@@ -3575,7 +4156,8 @@ Logger.root = 6,Console
             UpdateState::Released,
         )
         .expect("the login schema");
-        pool.apply_updates(&schema, &log).expect("the schema applies");
+        pool.apply_updates(&schema, &log)
+            .expect("the schema applies");
         let login = Arc::new(std::sync::Mutex::new(pool));
 
         let settings =
@@ -3587,7 +4169,8 @@ Logger.root = 6,Console
             UpdateState::Released,
         )
         .expect("the character schema");
-        pool.apply_updates(&schema, &log).expect("the schema applies");
+        pool.apply_updates(&schema, &log)
+            .expect("the schema applies");
         let characters = Arc::new(std::sync::Mutex::new(pool));
 
         // The travel the login would have written for this connection: map 147, which the character
@@ -3653,6 +4236,7 @@ Logger.root = 6,Console
             file_id: 112_508,
             name: "Ascalon Academy".to_string(),
             instance_value: None,
+            name_id: None,
         });
         let mut spawns = prepared.spawns().to_vec();
         spawns.push(crate::maps::MapSpawn {
@@ -3777,8 +4361,11 @@ Logger.root = 6,Console
                 &[&character_text],
             )
             .unwrap();
-            pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&character_text])
-                .unwrap();
+            pool.query_with(
+                "DELETE FROM \"characters\" WHERE \"uuid\" = $1",
+                &[&character_text],
+            )
+            .unwrap();
         }
 
         manager.stop_network();
@@ -3792,8 +4379,8 @@ Logger.root = 6,Console
         // comes out, and the answer says the same name. This is the stage's proof with a database in
         // it rather than a stub.
         use common::configuration::{Config, Policy};
-        use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
-        use database::updater::{collect_files, UpdateState};
+        use database::database::{DatabaseKind, DatabaseWorkerPool, read_settings};
+        use database::updater::{UpdateState, collect_files};
 
         // A console appender, so the session's own words are visible in this test's output.
         let _serial = database::updater::apply::test_lock("characters");
@@ -3817,14 +4404,12 @@ Logger.root = 6,Console
             UpdateState::Released,
         )
         .expect("the characters schema");
-        pool.apply_updates(&schema, &log).expect("the schema applies");
+        pool.apply_updates(&schema, &log)
+            .expect("the schema applies");
         // The name this test uses may be left behind by an earlier run, and a taken name is a
         // refusal, so the row goes first: the test's own character and nobody else's.
-        pool.query_with(
-            "DELETE FROM characters WHERE name = $1",
-            &[&"Kryta Test"],
-        )
-        .expect("no leftover character");
+        pool.query_with("DELETE FROM characters WHERE name = $1", &[&"Kryta Test"])
+            .expect("no leftover character");
         let pool = Arc::new(std::sync::Mutex::new(pool));
 
         let world = Arc::new(world());
@@ -3903,10 +4488,18 @@ Logger.root = 6,Console
 
         // The answer: `0x0188` with the character's id, its name, and the twenty-six bytes measured
         // after them.
-        let mut answered = vec![0u8; 2 + 16 + 2 + units.len() * 2 + 2 + 2 + crate::characters::CHARACTER_SETTINGS_LEN];
+        let mut answered =
+            vec![
+                0u8;
+                2 + 16 + 2 + units.len() * 2 + 2 + 2 + crate::characters::CHARACTER_SETTINGS_LEN
+            ];
         client.read_exact(&mut answered).unwrap();
         reading.apply(&mut answered);
-        assert_eq!(&answered[..2], &0x0188u16.to_le_bytes(), "the creation succeeded");
+        assert_eq!(
+            &answered[..2],
+            &0x0188u16.to_le_bytes(),
+            "the creation succeeded"
+        );
 
         manager.stop_network();
 
@@ -3930,9 +4523,16 @@ Logger.root = 6,Console
         // The character's items are rows now, and the rows draw the same stream the creation
         // record's set draws: one row per item, and the load's block is byte-identical.
         let characters = crate::characters::DatabaseCharacters::new(Arc::clone(&pool), log.clone());
-        let held = characters.items_of(&uuid_text).expect("the item rows are readable");
-        assert!(!held.is_empty(), "the confirm writes the character's starting items");
-        let expected = world.creation().inventory(0, character_packets::DEFAULT_PROFESSION);
+        let held = characters
+            .items_of(&uuid_text)
+            .expect("the item rows are readable");
+        assert!(
+            !held.is_empty(),
+            "the confirm writes the character's starting items"
+        );
+        let expected = world
+            .creation()
+            .inventory(0, character_packets::DEFAULT_PROFESSION);
         assert_eq!(
             held.len(),
             expected.items.len(),
@@ -3962,5 +4562,4 @@ Logger.root = 6,Console
         );
         log.shutdown();
     }
-
 }

@@ -8,8 +8,8 @@
 
 use shared::network::http::Response;
 
-use crate::web::{components, layout};
 use crate::Manage;
+use crate::web::{components, layout};
 
 /// The schema page.
 pub fn page(manage: &Manage) -> Response {

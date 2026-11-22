@@ -25,7 +25,10 @@ pub use shared::packets::{Frame, FrameError, HEADER_LEN};
 /// The walk is `shared::packets::Frame` - the mechanism both connections use - and the rows are
 /// `tables` beside this file, because a world connection is what this program serves.
 pub fn decode_game_message(bytes: &[u8], from_client: bool) -> Result<(Frame, usize), FrameError> {
-    let Some(header) = bytes.first_chunk::<2>().map(|pair| u16::from_le_bytes(*pair)) else {
+    let Some(header) = bytes
+        .first_chunk::<2>()
+        .map(|pair| u16::from_le_bytes(*pair))
+    else {
         return Err(FrameError::Incomplete { needed: HEADER_LEN });
     };
     let Some(row) = tables::lookup(header, from_client) else {
@@ -243,7 +246,11 @@ mod tests {
     /// The world's table holds what the protocol has for a world connection.
     #[test]
     fn the_world_table_has_its_six_hundred_and_eighty_two_rows() {
-        assert_eq!(tables::rows().count(), 682, "the same rows ASURA's table has");
+        assert_eq!(
+            tables::rows().count(),
+            682,
+            "the same rows ASURA's table has"
+        );
     }
 
     /// The creation confirm frames to the client's own size: **sixteen bytes plus twice the name**
@@ -257,8 +264,7 @@ mod tests {
             let mut message = vec![0u8; 16 + units * 2];
             message[0..2].copy_from_slice(&0x808Bu16.to_le_bytes());
             message[2..4].copy_from_slice(&(units as u16).to_le_bytes());
-            let (frame, used) =
-                decode_game_message(&message, true).expect("the confirm frames");
+            let (frame, used) = decode_game_message(&message, true).expect("the confirm frames");
             assert_eq!(frame.header(), 0x808B);
             assert_eq!(used, 16 + units * 2, "{units} unit(s) of name");
         }
@@ -305,7 +311,11 @@ mod tests {
         assert_eq!(&bytes[8..12], &1u32.to_le_bytes(), "h0008");
         assert_eq!(&bytes[12..16], &2u32.to_le_bytes(), "map_token");
         assert_eq!(&bytes[16..20], &0u32.to_le_bytes(), "map_id");
-        assert_eq!(&bytes[20..24], &0xA2E3_DB8Cu32.to_le_bytes(), "player_token");
+        assert_eq!(
+            &bytes[20..24],
+            &0xA2E3_DB8Cu32.to_le_bytes(),
+            "player_token"
+        );
         assert_eq!(&bytes[24..40], &[0xAA; 16], "the account");
         assert_eq!(&bytes[40..56], &[0xBB; 16], "the character");
         assert_eq!(&bytes[56..64], &[0u8; 8], "h0038 and h003C");
@@ -317,9 +327,7 @@ mod tests {
         for cut in [0usize, 1, 4, 24, 63] {
             assert_eq!(
                 GameVersion::decode(&bytes[..cut]),
-                Err(GameVersionError::Incomplete {
-                    needed: 64 - cut
-                }),
+                Err(GameVersionError::Incomplete { needed: 64 - cut }),
                 "cut at {cut}"
             );
         }

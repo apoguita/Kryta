@@ -138,10 +138,7 @@ impl Portals {
     pub fn new(arches: Vec<Arch>, extent: f32) -> Portals {
         let mut maps: HashMap<u32, MapPortals> = HashMap::new();
         for arch in arches {
-            maps.entry(arch.from_map)
-                .or_default()
-                .arches
-                .push(arch);
+            maps.entry(arch.from_map).or_default().arches.push(arch);
         }
         for map in maps.values_mut() {
             map.arches.sort_by_key(|arch| arch.idx);
@@ -164,7 +161,10 @@ impl Portals {
 
     /// How many maps state any doorway, for the start-up line.
     pub fn maps_with_doorways(&self) -> usize {
-        self.maps.values().filter(|map| !map.arches.is_empty()).count()
+        self.maps
+            .values()
+            .filter(|map| !map.arches.is_empty())
+            .count()
     }
 
     /// How many arches the rows hold, for the start-up line.

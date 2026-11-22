@@ -10,8 +10,8 @@
 
 use shared::network::http::Response;
 
-use crate::web::{components, layout};
 use crate::Manage;
+use crate::web::{components, layout};
 
 /// The world content page.
 pub fn page(manage: &Manage) -> Response {
@@ -136,7 +136,12 @@ pub fn page(manage: &Manage) -> Response {
                 instance.map_id.to_string(),
                 instance.district.to_string(),
                 instance.language.to_string(),
-                if instance.kind == 0 { "outpost" } else { "explorable" }.to_string(),
+                if instance.kind == 0 {
+                    "outpost"
+                } else {
+                    "explorable"
+                }
+                .to_string(),
                 instance.opened_at.clone().unwrap_or_default(),
                 instance
                     .empty_since
@@ -178,14 +183,33 @@ pub fn page(manage: &Manage) -> Response {
         spawns = spawns.len(),
         arrivals = arrivals.len(),
         item_table = components::table(
-            &["file id", "type", "dyes", "model", "value", "profession", "stack", "name"],
+            &[
+                "file id",
+                "type",
+                "dyes",
+                "model",
+                "value",
+                "profession",
+                "stack",
+                "name"
+            ],
             &item_rows
         ),
         items = definitions.len(),
-        set_table = components::table(&["campaign", "profession", "items", "first file ids"], &set_rows),
+        set_table = components::table(
+            &["campaign", "profession", "items", "first file ids"],
+            &set_rows
+        ),
         sets = sets.len(),
         instance_table = components::table(
-            &["map", "district", "language", "kind", "opened", "empty since"],
+            &[
+                "map",
+                "district",
+                "language",
+                "kind",
+                "opened",
+                "empty since"
+            ],
             &instance_rows
         ),
         instances = instances.len(),

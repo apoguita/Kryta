@@ -52,8 +52,18 @@ pub struct WorldConfig {
     pub explorable_disconnect_hold: u32,
     /// Whether an outpost that offers a mission presents the "Enter Mission" button (R56).
     pub mission_button: bool,
-    /// The health a player agent is created with, sent as agent int-property 42 at load.
-    pub agent_health: u32,
+    /// Seconds between a member's `/resign` and its death (ASURA `travel.json`, `resign_secs`).
+    pub resign_secs: u32,
+    /// Seconds a leader's party-travel countdown runs (ASURA `travel.json`, `countdown_secs`).
+    pub countdown_secs: u32,
+    /// A player's maximum health before levels, sent as agent int-property 42 at load.
+    ///
+    /// `ASURA/config/World/Vanilla/combat.json`, `health_base`: maximum health is this plus
+    /// `health_per_level` times the character's level (`docs/52-skills.md`, "A level 1 character now
+    /// shows 100 health"). The old fixed 400 was the reference's creation-path number.
+    pub agent_health_base: u32,
+    /// Maximum health each level adds (`combat.json`, `health_per_level`).
+    pub agent_health_per_level: u32,
     /// The energy a player agent is created with, sent as agent int-property 41 at load.
     pub agent_energy: u32,
     /// The energy regeneration a player agent is created with, sent as agent float-property 43. Zero is
@@ -122,7 +132,10 @@ impl Default for WorldConfig {
             compass_range: 10_000.0,
             explorable_disconnect_hold: 15 * 60,
             mission_button: true,
-            agent_health: 400,
+            resign_secs: 5,
+            countdown_secs: 10,
+            agent_health_base: 80,
+            agent_health_per_level: 20,
             agent_energy: 25,
             agent_energy_regen: 0.0,
             agent_speed: 288.0,
@@ -181,9 +194,13 @@ impl TravelExplorable {
     /// `travel.rs:45-51`, `explorable_flag_mode`.
     pub fn mode(self) -> &'static str {
         match self {
-            TravelExplorable::Zero => "0 for every travel (default: an explorable is announced as an outpost)",
+            TravelExplorable::Zero => {
+                "0 for every travel (default: an explorable is announced as an outpost)"
+            }
             TravelExplorable::One => "1 for every travel",
-            TravelExplorable::Auto => "auto: the destination's own kind, which is what a live server sends",
+            TravelExplorable::Auto => {
+                "auto: the destination's own kind, which is what a live server sends"
+            }
         }
     }
 }
@@ -204,29 +221,45 @@ impl WorldConfig {
             Ok(value)
         };
 
-        settings.district_allotment = small(config, "DistrictAllotment", settings.district_allotment)?;
+        settings.district_allotment =
+            small(config, "DistrictAllotment", settings.district_allotment)?;
         settings.party_size_cap = small(config, "PartySizeCap", settings.party_size_cap)?;
-        settings.explorable_disconnect_hold =
-            small(config, "ExplorableDisconnectHold", settings.explorable_disconnect_hold)?;
+        settings.explorable_disconnect_hold = small(
+            config,
+            "ExplorableDisconnectHold",
+            settings.explorable_disconnect_hold,
+        )?;
 
         settings.spawn_scatter = number(config, "SpawnScatter", settings.spawn_scatter)?;
         settings.compass_range = number(config, "CompassRange", settings.compass_range)?;
         settings.instance_tick = flag(config, "InstanceTick", settings.instance_tick)?;
-        settings.simulation_tick_ms = small(config, "SimulationTickMs", settings.simulation_tick_ms)?;
+        settings.simulation_tick_ms =
+            small(config, "SimulationTickMs", settings.simulation_tick_ms)?;
         settings.ping_value = small(config, "PingValue", settings.ping_value)?;
         settings.sweep_interval_ms = small(config, "SweepIntervalMs", settings.sweep_interval_ms)?;
         settings.mission_button = flag(config, "MissionButton", settings.mission_button)?;
+        settings.resign_secs = small(config, "ResignSecs", settings.resign_secs)?;
+        settings.countdown_secs = small(config, "CountdownSecs", settings.countdown_secs)?;
 
         // The agent a load creates, and the look of a character with no bits of its own. The numbers
-        // are the pack's (`ASURA/config/World/Vanilla/agent_defaults.json`, `character_defaults.json`):
-        // health 400, energy 25, regeneration 0, speed 288, profession 1 with hair style 3.
-        settings.agent_health = small(config, "AgentHealth", settings.agent_health)?;
+        // are the pack's (`ASURA/config/World/Vanilla/combat.json`, `character_defaults.json`):
+        // health 80 + 20 per level, energy 25, regeneration 0, speed 288, profession 1 with hair style 3.
+        settings.agent_health_base = small(config, "AgentHealthBase", settings.agent_health_base)?;
+        settings.agent_health_per_level = small(
+            config,
+            "AgentHealthPerLevel",
+            settings.agent_health_per_level,
+        )?;
         settings.agent_energy = small(config, "AgentEnergy", settings.agent_energy)?;
-        settings.agent_energy_regen = number(config, "AgentEnergyRegen", settings.agent_energy_regen)?;
+        settings.agent_energy_regen =
+            number(config, "AgentEnergyRegen", settings.agent_energy_regen)?;
         settings.agent_speed = number(config, "AgentSpeed", settings.agent_speed)?;
         settings.appearance = small(config, "Appearance", settings.appearance)?;
-        settings.max_allowed_correction =
-            number(config, "MaxAllowedCorrection", settings.max_allowed_correction)?;
+        settings.max_allowed_correction = number(
+            config,
+            "MaxAllowedCorrection",
+            settings.max_allowed_correction,
+        )?;
         // What a redirect's `is_explorable` carries. `travel.rs:33-69` reads the same three words from
         // `ASURA_TRAVEL_EXPLORABLE`; here it is the program's file (rule 7), with the same default.
         let (travel_explorable, _) = config
@@ -235,11 +268,9 @@ impl WorldConfig {
         settings.point_box_half_extent =
             number(config, "PointBoxHalfExtent", settings.point_box_half_extent)?;
         settings.starting_outpost = small(config, "StartingOutpost", settings.starting_outpost)?;
-        settings.travel_explorable = TravelExplorable::parse(&travel_explorable)
-            .ok_or_else(|| {
-                format!(
-                    "World.TravelExplorable is not one of 0, 1, auto: '{travel_explorable}'"
-                )
+        settings.travel_explorable =
+            TravelExplorable::parse(&travel_explorable).ok_or_else(|| {
+                format!("World.TravelExplorable is not one of 0, 1, auto: '{travel_explorable}'")
             })?;
         let (public_address, _) = config
             .value_string("World.PublicAddress", &settings.public_address)
@@ -269,8 +300,9 @@ impl WorldConfig {
             settings.starting_outpost,
         ));
         notes.push(format!(
-            "World: a player agent is created with {} health, {} energy, {:.1} energy a second and a walking speed of {:.0}; a character with no appearance of its own is drawn as 0x{:08X}.",
-            settings.agent_health,
+            "World: a player agent is created with {} health plus {} a level, {} energy, {:.1} energy a second and a walking speed of {:.0}; a character with no appearance of its own is drawn as 0x{:08X}.",
+            settings.agent_health_base,
+            settings.agent_health_per_level,
             settings.agent_energy,
             settings.agent_energy_regen,
             settings.agent_speed,
@@ -304,7 +336,11 @@ mod tests {
     use common::configuration::Policy;
 
     fn config(text: &str) -> Config {
-        Config::parse(text, std::path::PathBuf::from("test.conf"), Policy::default())
+        Config::parse(
+            text,
+            std::path::PathBuf::from("test.conf"),
+            Policy::default(),
+        )
     }
 
     #[test]
@@ -318,7 +354,10 @@ mod tests {
             settings.simulation_tick_ms, 100,
             "R33's cadence, ASURA's own intervals file"
         );
-        assert_eq!(settings.sweep_interval_ms, 1000, "R33/R40's sweep, a second");
+        assert_eq!(
+            settings.sweep_interval_ms, 1000,
+            "R33/R40's sweep, a second"
+        );
         assert_eq!(settings.compass_range, 10_000.0, "R34");
         assert_eq!(settings.explorable_disconnect_hold, 900, "R37");
         assert!(settings.mission_button, "R56");
@@ -344,8 +383,14 @@ mod tests {
         assert_eq!(settings.district_allotment, 40);
         assert_eq!(settings.spawn_scatter, 100.0);
         assert!(!settings.instance_tick);
-        assert_eq!(settings.party_size_cap, 8, "the keys the file does not state keep the game's value");
-        assert!(notes[0].contains("40"), "the log line carries the numbers in force");
+        assert_eq!(
+            settings.party_size_cap, 8,
+            "the keys the file does not state keep the game's value"
+        );
+        assert!(
+            notes[0].contains("40"),
+            "the log line carries the numbers in force"
+        );
     }
 
     #[test]
@@ -361,28 +406,42 @@ mod tests {
         let zero = TravelExplorable::parse("0").unwrap();
         let one = TravelExplorable::parse("1").unwrap();
         let auto = TravelExplorable::parse("auto").unwrap();
-        assert_eq!(zero.flag(1), 0, "the default announces an explorable as an outpost");
+        assert_eq!(
+            zero.flag(1),
+            0,
+            "the default announces an explorable as an outpost"
+        );
         assert_eq!(one.flag(0), 1, "one for every travel");
         assert_eq!(auto.flag(1), 1, "auto: an explorable");
         assert_eq!(auto.flag(4), 1, "auto: 4 is an explorable type");
         assert_eq!(auto.flag(6), 1, "auto: 6 is an explorable type");
         assert_eq!(auto.flag(0), 0, "auto: an outpost");
-        assert_eq!(auto.flag(11), 0, "auto: character creation is not an explorable");
-        assert!(TravelExplorable::parse("2").is_none(), "only the three words");
-        assert!(zero.mode().contains("default"), "the mode names itself for the log");
+        assert_eq!(
+            auto.flag(11),
+            0,
+            "auto: character creation is not an explorable"
+        );
+        assert!(
+            TravelExplorable::parse("2").is_none(),
+            "only the three words"
+        );
+        assert!(
+            zero.mode().contains("default"),
+            "the mode names itself for the log"
+        );
     }
 
     #[test]
     fn a_file_states_the_travels_explorable_flag_or_is_refused() {
-        let (settings, notes) = WorldConfig::read(&config("World.TravelExplorable = auto\n"))
-            .expect("reads");
+        let (settings, notes) =
+            WorldConfig::read(&config("World.TravelExplorable = auto\n")).expect("reads");
         assert_eq!(settings.travel_explorable, TravelExplorable::Auto);
         assert!(
             notes.iter().any(|note| note.contains("is_explorable")),
             "the read is reported: {notes:?}"
         );
-        let error = WorldConfig::read(&config("World.TravelExplorable = maybe\n"))
-            .expect_err("refused");
+        let error =
+            WorldConfig::read(&config("World.TravelExplorable = maybe\n")).expect_err("refused");
         assert!(error.contains("World.TravelExplorable"), "{error}");
     }
 }

@@ -70,9 +70,7 @@ impl Logger {
     /// Reference: `Logger::write`: a disabled logger passes nothing, a logger configured above the
     /// message's severity passes nothing, and an empty message is dropped.
     pub fn write(&self, message: &LogMessage) {
-        if self.level == LogLevel::Disabled
-            || self.level < message.level
-            || message.text.is_empty()
+        if self.level == LogLevel::Disabled || self.level < message.level || message.text.is_empty()
         {
             return;
         }
@@ -128,10 +126,7 @@ mod tests {
         logger.write(&LogMessage::new(LogLevel::Debug, "root", "no"));
 
         let locked = appender.lock().unwrap();
-        let collector = locked
-            .base()
-            .name()
-            .to_string();
+        let collector = locked.base().name().to_string();
         assert_eq!(collector, "collector");
     }
 

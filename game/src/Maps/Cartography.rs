@@ -195,7 +195,11 @@ mod tests {
         assert_eq!(&slice[..2], &[0x8A, 0x00], "a slice of the grid");
         assert_eq!(slice.len(), 260, "a u16 count and the fixed 64-slot array");
         let count = u16::from_le_bytes([slice[2], slice[3]]);
-        assert_eq!(count, blob.len().div_ceil(4) as u16, "the dwords that count");
+        assert_eq!(
+            count,
+            blob.len().div_ceil(4) as u16,
+            "the dwords that count"
+        );
         assert_eq!(&slice[4..4 + blob.len()], &blob[..], "the blob");
         assert!(
             slice[4 + blob.len()..].iter().all(|byte| *byte == 0),

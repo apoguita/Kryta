@@ -148,7 +148,7 @@ impl DatabaseItems {
                 }
                 Err(_) => {
                     return Err(
-                        "the world database answered no query: it is shutting down".to_string(),
+                        "the world database answered no query: it is shutting down".to_string()
                     );
                 }
             }

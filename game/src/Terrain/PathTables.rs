@@ -133,6 +133,10 @@ mod tests {
             );
         }
         // And it is not the FPU's own answer: the tables are coarse enough that an input differs.
-        assert_ne!(path_sqrt(2.0), 2.0f32.sqrt(), "the table is the game's, not the FPU's");
+        assert_ne!(
+            path_sqrt(2.0),
+            2.0f32.sqrt(),
+            "the table is the game's, not the FPU's"
+        );
     }
 }

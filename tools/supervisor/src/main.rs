@@ -35,9 +35,9 @@ mod control;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 use common::configuration::json::Document;
@@ -104,7 +104,10 @@ fn load(path: &std::path::Path) -> Result<Stack, String> {
             stdin,
         });
     }
-    Ok(Stack { services, control_port })
+    Ok(Stack {
+        services,
+        control_port,
+    })
 }
 
 /// The built binary of a service, beside the repository root.
@@ -152,7 +155,11 @@ fn start(service: &Service, lines: Sender<ServiceLine>) -> Result<Child, String>
         .args(&service.args)
         // This variable makes the service print its readiness handshake to the piped stdout.
         .env("KRYTA_STACK", "1")
-        .stdin(if service.stdin { Stdio::inherit() } else { Stdio::null() })
+        .stdin(if service.stdin {
+            Stdio::inherit()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         // A fatal error must reach the terminal even if the child and supervisor exit immediately.
         .stderr(Stdio::inherit())
@@ -233,7 +240,10 @@ fn take_control_port(port: u16) -> Result<(), String> {
     let image = process_image(pid).unwrap_or_else(|| format!("pid {pid}"));
     let own = std::env::current_exe()
         .ok()
-        .and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()))
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
         .unwrap_or_else(|| "kryta-supervisor".to_string());
     if !image.eq_ignore_ascii_case(&own) {
         return Err(format!(
@@ -253,7 +263,9 @@ fn take_control_port(port: u16) -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    Err(format!("the control port {port} is still held after stopping pid {pid}"))
+    Err(format!(
+        "the control port {port} is still held after stopping pid {pid}"
+    ))
 }
 
 /// The process listening on a port, from one `netstat -ano` snapshot.
@@ -409,7 +421,9 @@ fn wait_ready(
                     state_word(state, &name, &format!("up on {}", services[index].port));
                 }
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return ready.iter().all(|up| *up),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return ready.iter().all(|up| *up);
+            }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
         }
 
@@ -419,7 +433,11 @@ fn wait_ready(
             if let Ok(Some(status)) = child.try_wait() {
                 report(&service.name, &format!("exited with {status}"));
                 dump_tail(tails, &service.name);
-                state_word(state, &service.name, &format!("exited {}", status.code().unwrap_or(1)));
+                state_word(
+                    state,
+                    &service.name,
+                    &format!("exited {}", status.code().unwrap_or(1)),
+                );
                 return false;
             }
         }
@@ -429,7 +447,10 @@ fn wait_ready(
         if Instant::now() >= deadline {
             for (index, service) in services.iter().enumerate() {
                 if !ready[index] {
-                    report(&service.name, &format!("no READY line within {READY_TIMEOUT:?}"));
+                    report(
+                        &service.name,
+                        &format!("no READY line within {READY_TIMEOUT:?}"),
+                    );
                     state_word(state, &service.name, "no READY line");
                 }
             }
@@ -486,15 +507,22 @@ fn restart(
         }
     }
     state_word(state, &service.name, "restarted, no READY line");
-    Err(format!("{} restarted but said no READY line in {READY_TIMEOUT:?}", service.name))
+    Err(format!(
+        "{} restarted but said no READY line in {READY_TIMEOUT:?}",
+        service.name
+    ))
 }
 
 fn usage() {
     println!("Allowed options:");
     println!("  -h [ --help ]             print usage message");
-    println!("  -c [ --config ] arg       use <arg> as the service list (default: {DEFAULT_STACK})");
+    println!(
+        "  -c [ --config ] arg       use <arg> as the service list (default: {DEFAULT_STACK})"
+    );
     println!("  --check                   start, wait for every READY line, stop, and say so");
-    println!("  -l [ --logs ]             also print each service's standard output (its log is on disk)");
+    println!(
+        "  -l [ --logs ]             also print each service's standard output (its log is on disk)"
+    );
     println!("  status                    ask a running stack what it is doing");
     println!("  stop [service]            stop one service, or every service");
     println!("  restart <service>         start one service again");
@@ -519,7 +547,9 @@ fn main() -> std::process::ExitCode {
     // A verb is a client of a running stack; everything else starts one.
     if client_line(&raw).is_some() {
         let mut config_path = std::path::PathBuf::from(DEFAULT_STACK);
-        if let Some(rest) = raw.iter().position(|argument| argument == "-c" || argument == "--config")
+        if let Some(rest) = raw
+            .iter()
+            .position(|argument| argument == "-c" || argument == "--config")
             && let Some(value) = raw.get(rest + 1)
         {
             config_path = std::path::PathBuf::from(value);
@@ -625,7 +655,15 @@ fn main() -> std::process::ExitCode {
     }
 
     let mut ready = vec![false; services.len()];
-    let mut all_up = wait_ready(&services, &mut ready, &mut children, &received, &state, &mut tails, logs);
+    let mut all_up = wait_ready(
+        &services,
+        &mut ready,
+        &mut children,
+        &received,
+        &state,
+        &mut tails,
+        logs,
+    );
     if all_up {
         let list: Vec<String> = services
             .iter()
@@ -668,7 +706,10 @@ fn main() -> std::process::ExitCode {
         for request in requests.try_iter() {
             let answer = match request.action {
                 control::Action::Stop(name) => {
-                    if let Some(index) = children.iter().position(|(service, _)| service.name == name) {
+                    if let Some(index) = children
+                        .iter()
+                        .position(|(service, _)| service.name == name)
+                    {
                         let (_, mut child) = children.remove(index);
                         let _ = child.kill();
                         let _ = child.wait();
@@ -682,17 +723,31 @@ fn main() -> std::process::ExitCode {
                     }
                 }
                 control::Action::Restart(name) => {
-                    let service = services.iter().find(|service| service.name == name).cloned();
+                    let service = services
+                        .iter()
+                        .find(|service| service.name == name)
+                        .cloned();
                     match service {
                         None => format!("no such service: {name}"),
                         Some(service) => {
-                            if let Some(index) = children.iter().position(|(running, _)| running.name == name) {
+                            if let Some(index) = children
+                                .iter()
+                                .position(|(running, _)| running.name == name)
+                            {
                                 let (_, mut child) = children.remove(index);
                                 let _ = child.kill();
                                 let _ = child.wait();
                             }
                             stopped.remove(&name);
-                            match restart(&service, &mut children, &lines, &received, &state, &mut tails, logs) {
+                            match restart(
+                                &service,
+                                &mut children,
+                                &lines,
+                                &received,
+                                &state,
+                                &mut tails,
+                                logs,
+                            ) {
                                 Ok(()) => format!("restarted {name}"),
                                 Err(error) => error,
                             }
@@ -724,7 +779,9 @@ fn main() -> std::process::ExitCode {
                     if request > MAX_RESTARTS {
                         report(
                             &service.name,
-                            &format!("asked to restart more than {MAX_RESTARTS} times; stopping the stack"),
+                            &format!(
+                                "asked to restart more than {MAX_RESTARTS} times; stopping the stack"
+                            ),
                         );
                         all_up = false;
                         exit_code = 2;
@@ -735,12 +792,17 @@ fn main() -> std::process::ExitCode {
                     } else {
                         report(
                             &service.name,
-                            &format!("asked to restart (exit 2), request {request} of {MAX_RESTARTS}"),
+                            &format!(
+                                "asked to restart (exit 2), request {request} of {MAX_RESTARTS}"
+                            ),
                         );
                         asked.push(service.name.clone());
                     }
                 } else {
-                    report(&service.name, &format!("exited with {status}; stopping the rest"));
+                    report(
+                        &service.name,
+                        &format!("exited with {status}; stopping the rest"),
+                    );
                     all_up = false;
                     exit_code = code as u8;
                     // Keep the initiating service's result. The remaining children are stopped below;
@@ -755,12 +817,26 @@ fn main() -> std::process::ExitCode {
         // A restart the loop noticed: the service that asked is started again and the stack keeps
         // running with a new process in it, never two (`Main.cpp:434-439` names this restarter).
         for name in asked {
-            if let Some(index) = children.iter().position(|(service, _)| service.name == name) {
+            if let Some(index) = children
+                .iter()
+                .position(|(service, _)| service.name == name)
+            {
                 let (_, mut child) = children.remove(index);
                 let _ = child.wait();
             }
-            if let Some(service) = services.iter().find(|service| service.name == name).cloned()
-                && let Err(error) = restart(&service, &mut children, &lines, &received, &state, &mut tails, logs)
+            if let Some(service) = services
+                .iter()
+                .find(|service| service.name == name)
+                .cloned()
+                && let Err(error) = restart(
+                    &service,
+                    &mut children,
+                    &lines,
+                    &received,
+                    &state,
+                    &mut tails,
+                    logs,
+                )
             {
                 report(&name, &error);
             }
@@ -806,9 +882,15 @@ mod tests {
         assert_eq!(stack.services.len(), 2);
         assert_eq!(stack.control_port, 7612);
         assert_eq!(stack.services[0].name, "auth");
-        assert_eq!(stack.services[1].args, vec!["-c", "worldserver/worldserver.json"]);
+        assert_eq!(
+            stack.services[1].args,
+            vec!["-c", "worldserver/worldserver.json"]
+        );
         assert_eq!(stack.services[1].port, 6113);
-        assert!(!stack.services[0].stdin, "only the named service inherits the terminal");
+        assert!(
+            !stack.services[0].stdin,
+            "only the named service inherits the terminal"
+        );
         assert!(stack.services[1].stdin);
     }
 
@@ -822,11 +904,15 @@ mod tests {
 
     #[test]
     fn a_stack_without_a_control_port_leaves_the_channel_off() {
-        let path = write_stack("{\"services\": [{\"name\": \"a\", \"program\": \"p\", \"port\": 1}]}");
+        let path =
+            write_stack("{\"services\": [{\"name\": \"a\", \"program\": \"p\", \"port\": 1}]}");
         let stack = load(&path).expect("the list reads");
         let _ = std::fs::remove_file(&path);
         assert_eq!(stack.control_port, 0);
-        assert!(!stack.services[0].stdin, "no service is named the terminal's");
+        assert!(
+            !stack.services[0].stdin,
+            "no service is named the terminal's"
+        );
     }
 
     #[test]
@@ -841,7 +927,11 @@ mod tests {
         assert_eq!(verbs(&["restart", "world"]), Some("restart world".into()));
         assert_eq!(verbs(&["quit"]), Some("quit".into()));
         assert_eq!(verbs(&[]), None);
-        assert_eq!(verbs(&["--check"]), None, "--check starts a stack, it does not ask one");
+        assert_eq!(
+            verbs(&["--check"]),
+            None,
+            "--check starts a stack, it does not ask one"
+        );
         assert_eq!(verbs(&["restart"]), None, "restart needs a service");
     }
 
@@ -854,7 +944,11 @@ mod tests {
                      \x20 TCP    127.0.0.1:6113         192.168.1.2:51800      ESTABLISHED     1200\n\
                      \x20 UDP    0.0.0.0:6602           *:*                                    3000\n";
         assert_eq!(holder_in(6602, table), Some(20004));
-        assert_eq!(holder_in(6113, table), None, "only a LISTENING row owns the port");
+        assert_eq!(
+            holder_in(6113, table),
+            None,
+            "only a LISTENING row owns the port"
+        );
         assert_eq!(holder_in(6603, table), None);
     }
 
@@ -884,6 +978,10 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        assert_eq!(found, Some(std::process::id()), "the socket's owner is this test");
+        assert_eq!(
+            found,
+            Some(std::process::id()),
+            "the socket's owner is this test"
+        );
     }
 }

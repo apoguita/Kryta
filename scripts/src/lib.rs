@@ -9,10 +9,10 @@
 //!
 //! The engine never names a quest, a district or a boss; content does, here and in `modules/`.
 
-#[path = "AddScripts.rs"]
-mod add_scripts;
 #[path = "AddModulesScripts.rs"]
 mod add_modules_scripts;
+#[path = "AddScripts.rs"]
+mod add_scripts;
 
 pub use add_modules_scripts::add_modules_scripts;
 pub use add_scripts::add_scripts;

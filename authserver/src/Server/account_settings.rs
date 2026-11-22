@@ -1,4 +1,5 @@
-//! The account settings block: the 591 bytes a client is handed on every login.
+//! The account settings block: the 591 bytes a login is answered with when the account has never
+//! uploaded settings of its own (`account.settings` is NULL; `data/sql/base/db_auth/account_settings.sql`).
 //!
 //! **A protocol payload, not a configuration option.** Nobody configures it: it is what this client
 //! expects, byte for byte, and the reference builds the same message out of its own structs. It is a

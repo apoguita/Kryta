@@ -7,8 +7,8 @@
 //! the acceptor, stops every thread and waits, in that order.
 
 use std::net::TcpStream;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::logging::{Log, LogLevel};
 
@@ -339,7 +339,10 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(25));
         }
-        assert!(bound_here, "the port stayed bound after the manager stopped");
+        assert!(
+            bound_here,
+            "the port stayed bound after the manager stopped"
+        );
     }
 
     #[test]

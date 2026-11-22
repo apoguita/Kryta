@@ -82,6 +82,11 @@
     "doc": "Which slot of the client's equipped bag each kind of item is worn in - a record list, read at start-up. The number is the client's own: a kind no row names is not worn, and a piece whose slot is wrong is a piece the character is drawn without."
   },
 
+  "GuildsFile": {
+    "value": "config/Server/guilds.json",
+    "doc": "The guild settings: what a new guild starts with (the 0x0121 bytes, allegiance, rating, rank), the 0x0133 counter's start and step, and the two placeholder prices, which are read and logged and never charged (game/Guilds/mod.rs, ported from ASURA's file of the same name). Read at start-up; a missing or malformed file stops the program."
+  },
+
   "CommandsFile": {
     "value": "config/Server/commands.json",
     "doc": "The chat command surface: the names a player may type, what each takes, and which server operation it runs. A record list, read at start-up; a name it grants with no operation behind it is refused then, not when a player types it (docs/decisions/0011-the-command-surface-is-content.md)."
@@ -129,9 +134,21 @@
       "value": true,
       "doc": "Whether an outpost that offers a mission presents the 'Enter Mission' button (R56)."
     },
-    "AgentHealth": {
-      "value": 400,
-      "doc": "The health a player agent is created with, sent as agent int-property 42 at load. The game's value for a fresh body is 400."
+    "ResignSecs": {
+      "value": 5,
+      "doc": "Seconds between a party member's /resign and its death, from ASURA's travel.json resign_secs and the live batch (5.55 s measured)."
+    },
+    "CountdownSecs": {
+      "value": 10,
+      "doc": "Seconds a leader's world-map party travel counts down before the redirect, from ASURA's travel.json countdown_secs and the live capture (10.05 s)."
+    },
+    "AgentHealthBase": {
+      "value": 80,
+      "doc": "A player's maximum health before levels, sent as agent int-property 42 at load: maximum health is this plus AgentHealthPerLevel times the character's level. ASURA's combat.json carries 80, so a level 1 character shows 100 health."
+    },
+    "AgentHealthPerLevel": {
+      "value": 20,
+      "doc": "Maximum health each character level adds, sent through the same property 42 as AgentHealthBase. ASURA's combat.json carries 20."
     },
     "AgentEnergy": {
       "value": 25,

@@ -168,7 +168,9 @@ mod tests {
         let body = all_chat_body("hello");
         assert_eq!(
             body,
-            vec![0x0108, 0x0107, 0x0068, 0x0065, 0x006C, 0x006C, 0x006F, 0x0001]
+            vec![
+                0x0108, 0x0107, 0x0068, 0x0065, 0x006C, 0x006C, 0x006F, 0x0001
+            ]
         );
         assert_eq!(body.len(), 8, "the eight units the render carried");
 

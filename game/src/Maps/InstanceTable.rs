@@ -71,6 +71,7 @@ mod tests {
             file_id: 0,
             name: format!("map {id}"),
             instance_value: value,
+            name_id: None,
         }
     }
 
@@ -78,7 +79,10 @@ mod tests {
     fn a_map_without_a_value_is_left_out() {
         let (table, notes) = table_for(&[map(148, Some(0xBB14_F539)), map(0, None)]);
         assert_eq!(table.pairs, vec![(148, 0xBB14_F539)]);
-        assert!(notes.is_empty(), "leaving a map out is not a fault: {notes:?}");
+        assert!(
+            notes.is_empty(),
+            "leaving a map out is not a fault: {notes:?}"
+        );
     }
 
     #[test]
@@ -99,7 +103,11 @@ mod tests {
             let expected = table.pairs.chunks(BATCH).nth(index).expect("a batch").len();
             assert_eq!(&frame[..2], &[0xA0, 0x01], "the instance table");
             assert_eq!(frame[2] as usize, expected, "the batch's own count");
-            assert_eq!(frame.len(), 3 + expected * 6, "a count and six bytes a pair");
+            assert_eq!(
+                frame.len(),
+                3 + expected * 6,
+                "a count and six bytes a pair"
+            );
         }
     }
 

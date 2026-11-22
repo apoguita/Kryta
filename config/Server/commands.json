@@ -13,6 +13,12 @@
       "doc": "a server transfer to the map the argument names, or one of the reference's refusals (unknown map, no config, already here)"
     },
     {
+      "command": "resign",
+      "operation": "chat.resign",
+      "parameters": [],
+      "doc": "resign from the party: after the pack's delay the member dies; when every present member has resigned the party is defeated and its leader may return to the last outpost"
+    },
+    {
       "command": "maps",
       "operation": "chat.maps",
       "parameters": [],
@@ -23,6 +29,28 @@
       "operation": "chat.stuck",
       "parameters": [],
       "doc": "broadcast where this agent stands - a position, not AGENT_STOP_MOVING"
+    },
+    {
+      "command": "guild",
+      "operation": "chat.guild",
+      "parameters": [
+        "verb"
+      ],
+      "doc": "`/guild create` opens the Guild Registration window, whose form sends the create request (0x8036); ASURA's stand-in for a Guild Registrar NPC (ASURA chat.rs:243-247, guild.rs:254-294). Any other verb is logged with the usage"
+    },
+    {
+      "command": ".exp",
+      "operation": "chat.experience",
+      "parameters": [
+        "total"
+      ],
+      "doc": "set total experience; the level is what the pack's curve (experience.json) says, and the bar moves by 0x00EE for a rise of one level or less, or the progress record 0x00E9 is restated (ASURA chat.rs:291-296, player.rs:462-569; preforged's /.exp)"
+    },
+    {
+      "command": "xp",
+      "operation": "chat.experience_read",
+      "parameters": [],
+      "doc": "a server line with the character's total experience and level (ASURA chat.rs:297-302; preforged's /xp). ASURA's /xp also sets with an argument; one name is one row here, so setting is /.exp"
     },
     {
       "command": "server info",

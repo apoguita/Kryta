@@ -33,7 +33,10 @@ pub fn table(headers: &[&str], rows: &[String]) -> String {
         .iter()
         .map(|header| format!("<th>{header}</th>"))
         .collect::<String>();
-    format!("<table><thead><tr>{head}</tr></thead><tbody>{}</tbody></table>", rows.join(""))
+    format!(
+        "<table><thead><tr>{head}</tr></thead><tbody>{}</tbody></table>",
+        rows.join("")
+    )
 }
 
 /// One row of a table, from its already-escaped cells.
@@ -87,7 +90,10 @@ pub fn tab(href: Option<&str>, label: &str, current: bool) -> String {
 
 /// The section tabs under an account or a character, from the tabs a caller built.
 pub fn section_nav(tabs: &[String]) -> String {
-    format!("<nav class=\"section-nav\" aria-label=\"Sections\">{}</nav>", tabs.join(""))
+    format!(
+        "<nav class=\"section-nav\" aria-label=\"Sections\">{}</nav>",
+        tabs.join("")
+    )
 }
 
 /// A labelled field whose control is already-built markup.
@@ -113,9 +119,7 @@ pub fn text_input_placeholder(name: &str, placeholder: &str) -> String {
 
 /// A number input between two bounds.
 pub fn number_input(name: &str, value: impl Display, min: i64, max: i64) -> String {
-    format!(
-        "<input type=\"number\" name=\"{name}\" min=\"{min}\" max=\"{max}\" value=\"{value}\">"
-    )
+    format!("<input type=\"number\" name=\"{name}\" min=\"{min}\" max=\"{max}\" value=\"{value}\">")
 }
 
 /// A hidden form field.
@@ -144,7 +148,10 @@ mod tests {
     fn data_is_escaped_and_markup_is_not() {
         assert_eq!(escape("<b>A & B</b>"), "&lt;b&gt;A &amp; B&lt;/b&gt;");
         assert_eq!(badge(true), "<span class=\"badge active\">active</span>");
-        assert_eq!(badge(false), "<span class=\"badge inactive\">inactive</span>");
+        assert_eq!(
+            badge(false),
+            "<span class=\"badge inactive\">inactive</span>"
+        );
     }
 
     #[test]
@@ -157,13 +164,22 @@ mod tests {
 
     #[test]
     fn a_tab_without_a_href_is_a_quiet_label() {
-        assert_eq!(tab(None, "Shared storage", false), "<span>Shared storage</span>");
-        assert_eq!(tab(Some("/x"), "Overview", true), "<a class=\"current\" href=\"/x\">Overview</a>");
+        assert_eq!(
+            tab(None, "Shared storage", false),
+            "<span>Shared storage</span>"
+        );
+        assert_eq!(
+            tab(Some("/x"), "Overview", true),
+            "<a class=\"current\" href=\"/x\">Overview</a>"
+        );
     }
 
     #[test]
     fn a_table_keeps_its_rows_in_order() {
-        let table = table(&["name", "state"], &[row(&["A".to_string(), "active".to_string()])]);
+        let table = table(
+            &["name", "state"],
+            &[row(&["A".to_string(), "active".to_string()])],
+        );
         assert!(table.contains("<th>name</th><th>state</th>"));
         assert!(table.contains("<td>A</td><td>active</td>"));
     }

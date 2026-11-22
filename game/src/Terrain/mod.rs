@@ -23,6 +23,8 @@ pub mod map_data;
 pub mod path_tables;
 
 pub use graph_dump::{DumpedGraph, decode, encode};
-pub use map_data::{Bounds, NodeRef, PathStaticData, Plane, Portal, SinkNode, Trapezoid, Vec2f, XNode, YNode};
+pub use map_data::{
+    Bounds, NodeRef, PathStaticData, Plane, Portal, SinkNode, Trapezoid, Vec2f, XNode, YNode,
+};
 pub use path_tables::{path_reciproc, path_sqrt};
 pub use pathfind::{PathGraphs, Pos, Walk, Waypoint};

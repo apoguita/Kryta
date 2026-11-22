@@ -159,16 +159,35 @@ pub fn character_update_factions(progress: &[u32; FACTIONS_DWORDS]) -> Vec<u8> {
     frame(CHARACTER_UPDATE_FACTIONS, &body)
 }
 
-/// `GAME_SMSG_PLAYER_DESTROY` (`0x005A`): a player has left the map - eight bytes, a four-byte game
-/// header and the player id.
+/// `0x00EE` (`GAME_SMSG_CHARACTER_FACTION_UPDATE` in the table, `GAME_SMSG_AGENT_KILL_REWARD` in
+/// ASURA's): one player attribute's delta - the attribute, then the amount, ten bytes.
+pub const AGENT_KILL_REWARD: u16 = 0x00EE;
+
+/// The attribute id an experience award rides (`0x00EE`'s first dword;
+/// `ASURA/crates/asura-protocol/src/game/skill.rs:30-31`).
+pub const ATTRIBUTE_EXPERIENCE: u32 = 0;
+
+/// `0x00EE`: one player attribute's delta. Attribute 0 is experience; the client applies `+=` to the
+/// sheet, which is what makes the experience bar move without re-sending the whole `0x00E9` block.
 ///
-/// `GameSrv_BroadcastPlayerDestroy` (`GmPlayer.c:314`); `ASURA/crates/asura-protocol/src/game/mod.rs:1352`,
-/// `player_destroy`. The client's own sniffer calls `0x5A` `AGENT_DESTROY_PLAYER`, and the capture
-/// carries `5a 00 00 00 | 0b 00 00 00`.
+/// Ported from `ASURA/crates/asura-protocol/src/game/skill.rs:19-28`, `agent_kill_reward`, whose source is
+/// Rurik's `toolkit/authsrv/authsrv.py:5911-5960` (23 of 23 live kill frames, 10 of 10 quest hand-ins).
+pub fn agent_kill_reward(attribute: u32, delta: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(8);
+    body.extend_from_slice(&attribute.to_le_bytes());
+    body.extend_from_slice(&delta.to_le_bytes());
+    frame(AGENT_KILL_REWARD, &body)
+}
+
+/// `GAME_SMSG_PLAYER_DESTROY` (`0x005A`): a player has left the map - **six bytes**, a two-byte header and
+/// the player id (Headquarter's `GAME_SERVER_0090`).
+///
+/// `GameSrv_BroadcastPlayerDestroy` (`GmPlayer.c:314`); ported from
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:2173-2179` (ASURA `071735e`). The client's own sniffer
+/// calls `0x5A` `AGENT_DESTROY_PLAYER`; the `5a 00 00 00 | 0b 00 00 00` capture this used to copy as eight
+/// bytes is the struct layer, as for `party_packets::player_update_party_size`.
 pub fn player_destroy(player: u32) -> (u16, Vec<u8>) {
-    let mut body = vec![0u8; 6];
-    body[2..6].copy_from_slice(&player.to_le_bytes());
-    (PLAYER_DESTROY, frame(PLAYER_DESTROY, &body))
+    (PLAYER_DESTROY, frame(PLAYER_DESTROY, &player.to_le_bytes()))
 }
 
 /// One of the four faction caps: the header names the faction, then the cap.
@@ -218,6 +237,12 @@ pub fn character_update_party(member: u16, flag: u8) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    /// Six bytes, the client's table (`ASURA/crates/asura-protocol/src/game/mod.rs:2173-2179`).
+    #[test]
+    fn a_player_leaves_in_six_bytes() {
+        assert_eq!(player_destroy(11).1, vec![0x5A, 0x00, 11, 0, 0, 0]);
+    }
+
     #[test]
     fn a_profession_is_the_agent_and_three_bytes() {
         assert_eq!(
@@ -252,7 +277,11 @@ mod tests {
     #[test]
     fn the_faction_record_is_fifteen_dwords() {
         let frame = character_update_factions(&[0u32; FACTIONS_DWORDS]);
-        assert_eq!(frame.len(), 2 + 15 * 4, "fifteen dwords, as the reference sends");
+        assert_eq!(
+            frame.len(),
+            2 + 15 * 4,
+            "fifteen dwords, as the reference sends"
+        );
     }
 
     #[test]
@@ -260,6 +289,16 @@ mod tests {
         assert_eq!(
             faction_max(FACTION_MAX_KURZICK, 10_000),
             vec![0xEA, 0x00, 0x10, 0x27, 0, 0]
+        );
+    }
+
+    /// `0x00EE [0, 2000]`: experience 2000, the two dwords Rurik measured on the kill template, ten
+    /// bytes as the table declares (`ASURA/crates/asura-protocol/src/game/skill.rs:460-466`).
+    #[test]
+    fn a_kill_reward_is_the_attribute_and_the_delta() {
+        assert_eq!(
+            agent_kill_reward(ATTRIBUTE_EXPERIENCE, 2000),
+            vec![0xEE, 0x00, 0, 0, 0, 0, 0xD0, 0x07, 0, 0]
         );
     }
 }

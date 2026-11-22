@@ -98,7 +98,11 @@ impl Table {
     /// wrong is an error - a row without a name, a name stated twice, a parameter list the parser cannot
     /// honour, or an operation this server does not have - because a command that cannot work is worse
     /// than one that does not exist.
-    pub fn load(path: impl AsRef<std::path::Path>, log: &Log, registry: &Registry) -> Result<Self, String> {
+    pub fn load(
+        path: impl AsRef<std::path::Path>,
+        log: &Log,
+        registry: &Registry,
+    ) -> Result<Self, String> {
         let path = path.as_ref();
         if !path.exists() {
             log.out(
@@ -263,7 +267,10 @@ impl Table {
             for name in row.names() {
                 let rest = if line == name {
                     ""
-                } else if let Some(rest) = line.strip_prefix(name).and_then(|rest| rest.strip_prefix(' ')) {
+                } else if let Some(rest) = line
+                    .strip_prefix(name)
+                    .and_then(|rest| rest.strip_prefix(' '))
+                {
                     rest.trim()
                 } else {
                     continue;
@@ -272,7 +279,10 @@ impl Table {
                 if values.len() != row.parameters.len() {
                     continue;
                 }
-                if best.as_ref().is_none_or(|(found, _)| found.command.len() < name.len()) {
+                if best
+                    .as_ref()
+                    .is_none_or(|(found, _)| found.command.len() < name.len())
+                {
                     best = Some((row, values));
                 }
             }
@@ -295,7 +305,7 @@ impl Table {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chat::operations::{register_chat, Registry};
+    use crate::chat::operations::{Registry, register_chat};
     use common::configuration::json::Document;
 
     /// The registry a world builds: the chat operations plus the two a program registers itself.
@@ -351,20 +361,26 @@ mod tests {
     /// operation the registry has.
     #[test]
     fn the_shipped_table_binds_its_rows_to_registered_operations() {
-        let document = Document::read("../config/Server/commands.json").expect("the shipped file parses");
-        let records = document.records("commands").expect("commands is a record list");
-        assert_eq!(records.len(), 6);
+        let document =
+            Document::read("../config/Server/commands.json").expect("the shipped file parses");
+        let records = document
+            .records("commands")
+            .expect("commands is a record list");
+        assert_eq!(records.len(), 10);
 
         let registry = registry();
         let table = Table::load("../config/Server/commands.json", &Log::new(), &registry)
             .expect("the shipped table reads");
-        assert_eq!(table.len(), 6);
+        assert_eq!(table.len(), 10);
 
         let tp = table.command("tp").expect("/tp is answered");
         assert_eq!(tp.operation, "chat.transfer");
         assert!(tp.takes_argument());
         assert!(tp.serves(Surface::Chat));
-        assert!(!tp.serves(Surface::Console), "a chat row is not a console row");
+        assert!(
+            !tp.serves(Surface::Console),
+            "a chat row is not a console row"
+        );
         assert_eq!(
             table.command("teleport").map(|row| row.operation.as_str()),
             Some("chat.transfer"),
@@ -372,6 +388,12 @@ mod tests {
         );
         assert_eq!(table.command("maps").unwrap().operation, "chat.maps");
         assert_eq!(table.command("stuck").unwrap().operation, "chat.stuck");
+        assert_eq!(table.command("guild").unwrap().operation, "chat.guild");
+        assert_eq!(table.command(".exp").unwrap().operation, "chat.experience");
+        assert_eq!(
+            table.command("xp").unwrap().operation,
+            "chat.experience_read"
+        );
         assert!(table.command("say").is_none());
 
         // The console rows: the reference's own console names, bound the same way.
@@ -384,21 +406,47 @@ mod tests {
             assert_eq!(row.operation, operation);
             assert!(!row.takes_argument());
             assert!(row.serves(Surface::Console));
-            assert!(!row.serves(Surface::Chat), "a console row is not a chat row");
-            let (resolved, values) = table.resolve_console(name).expect("the console resolves it");
+            assert!(
+                !row.serves(Surface::Chat),
+                "a console row is not a chat row"
+            );
+            let (resolved, values) = table
+                .resolve_console(name)
+                .expect("the console resolves it");
             assert_eq!(resolved.command, name);
             assert!(values.is_empty());
         }
 
         // The two resolvers keep the surfaces apart.
-        assert!(table.resolve_console("server info now").is_none(), "it takes no values");
-        assert!(table.resolve_console("tp ascalon").is_none(), "a chat row is not console-visible");
-        assert!(table.resolve_chat("server info").is_none(), "a console row is not chat-visible");
-        let (row, values) = table.resolve_chat("tp ascalon city").expect("a chat row resolves");
+        assert!(
+            table.resolve_console("server info now").is_none(),
+            "it takes no values"
+        );
+        assert!(
+            table.resolve_console("tp ascalon").is_none(),
+            "a chat row is not console-visible"
+        );
+        assert!(
+            table.resolve_chat("server info").is_none(),
+            "a console row is not chat-visible"
+        );
+        let (row, values) = table
+            .resolve_chat("tp ascalon city")
+            .expect("a chat row resolves");
         assert_eq!(row.command, "tp");
-        assert_eq!(values, vec!["ascalon city".to_string()], "the line after the name is one value");
-        assert!(table.resolve_chat("tp").is_none(), "a row that takes a value needs one");
-        assert!(table.resolve_chat("maps extra").is_none(), "a row that takes none refuses one");
+        assert_eq!(
+            values,
+            vec!["ascalon city".to_string()],
+            "the line after the name is one value"
+        );
+        assert!(
+            table.resolve_chat("tp").is_none(),
+            "a row that takes a value needs one"
+        );
+        assert!(
+            table.resolve_chat("maps extra").is_none(),
+            "a row that takes none refuses one"
+        );
     }
 
     /// A name the registry does not have is refused when the file is read, and the refusal lists what
@@ -413,7 +461,10 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("chat.warp"), "{error}");
-        assert!(error.contains("chat.transfer"), "the refusal lists what exists: {error}");
+        assert!(
+            error.contains("chat.transfer"),
+            "the refusal lists what exists: {error}"
+        );
     }
 
     /// A row must take what its operation takes: the count is the registration's, not the file's.
@@ -434,12 +485,14 @@ mod tests {
     #[test]
     fn a_surface_and_a_chat_rows_second_parameter_are_refused() {
         let world_ops = registry();
-        assert!(load(
-            r#"{"commands":[{"command":"x","operation":"chat.maps","surfaces":["telnet"]}]}"#,
-            "surface",
-            &world_ops,
-        )
-        .is_err());
+        assert!(
+            load(
+                r#"{"commands":[{"command":"x","operation":"chat.maps","surfaces":["telnet"]}]}"#,
+                "surface",
+                &world_ops,
+            )
+            .is_err()
+        );
         // A row must take what its operation declares: `chat.maps` takes none, so two values are
         // refused by the count before the line-splitting rule could be reached.
         let error = load(
@@ -487,7 +540,12 @@ mod tests {
     /// A missing file is not an error: the world starts, answers no command, and says so.
     #[test]
     fn a_missing_file_leaves_the_table_empty() {
-        let table = Table::load("../data/no-such-command-file.json", &Log::new(), &registry()).unwrap();
+        let table = Table::load(
+            "../data/no-such-command-file.json",
+            &Log::new(),
+            &registry(),
+        )
+        .unwrap();
         assert!(table.is_empty());
     }
 
@@ -504,7 +562,10 @@ mod tests {
             &registry,
         )
         .unwrap();
-        assert_eq!(table.resolve_console("server info").unwrap().0.command, "server info");
+        assert_eq!(
+            table.resolve_console("server info").unwrap().0.command,
+            "server info"
+        );
         assert_eq!(table.resolve_console("server").unwrap().0.command, "server");
     }
 }

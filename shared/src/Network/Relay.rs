@@ -146,7 +146,9 @@ mod tests {
             Box::pin(async move {
                 let mut head = [0u8; 4];
                 let _ = io.read(&mut head).await;
-                let outcome = io.relay_to(self.target, &head, Duration::from_secs(3)).await;
+                let outcome = io
+                    .relay_to(self.target, &head, Duration::from_secs(3))
+                    .await;
                 if let Ok(mut slot) = self.report.lock() {
                     *slot = Some(outcome);
                 }
@@ -185,17 +187,28 @@ mod tests {
         let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
 
         let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-        client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
         client.write_all(b"hello").unwrap();
 
         let mut answer = [0u8; 8];
         client.read_exact(&mut answer).unwrap();
-        assert_eq!(&answer, b"ok:hello", "the head and the rest arrive, and the answer returns");
+        assert_eq!(
+            &answer, b"ok:hello",
+            "the head and the rest arrive, and the answer returns"
+        );
 
         drop(client);
         let relayed = wait_for(&report).expect("the copy ends cleanly");
-        assert_eq!(relayed.to_world, 5, "every byte the client sent reached the world");
-        assert_eq!(relayed.from_world, 8, "every byte the world sent reached the client");
+        assert_eq!(
+            relayed.to_world, 5,
+            "every byte the client sent reached the world"
+        );
+        assert_eq!(
+            relayed.from_world, 8,
+            "every byte the world sent reached the client"
+        );
 
         manager.stop_network();
         let _ = world.join();

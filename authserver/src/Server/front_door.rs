@@ -93,7 +93,9 @@ impl FrontDoor {
         if let Err(error) = read_exactly(io, &mut message[4..]).await {
             self.say(
                 LogLevel::Warn,
-                format!("Gameplay connection from {peer} ended inside its version message: {error}"),
+                format!(
+                    "Gameplay connection from {peer} ended inside its version message: {error}"
+                ),
             );
             let _ = io.close().await;
             return;

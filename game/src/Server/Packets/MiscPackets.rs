@@ -119,7 +119,10 @@ pub fn transfer_game_server_info(
     body.extend_from_slice(&player_token.to_le_bytes());
     body.extend_from_slice(&is_explorable.to_le_bytes());
     body.extend_from_slice(&map_id.to_le_bytes());
-    (TRANSFER_GAME_SERVER_INFO, frame(TRANSFER_GAME_SERVER_INFO, &body))
+    (
+        TRANSFER_GAME_SERVER_INFO,
+        frame(TRANSFER_GAME_SERVER_INFO, &body),
+    )
 }
 
 /// `GAME_SMSG_MAP_UPDATE_CURRENT` in the form that **follows a redirect**: twelve bytes, where the login
@@ -311,6 +314,9 @@ mod tests {
             vec![0x1E, 0x00, 0xF4, 0x01, 0x00, 0x00]
         );
         assert_eq!(hard_mode_unlocked(1), vec![0x70, 0x00, 0x01]);
-        assert_eq!(map_update_current(146, 0), vec![0x99, 0x00, 0x92, 0x00, 0x00]);
+        assert_eq!(
+            map_update_current(146, 0),
+            vec![0x99, 0x00, 0x92, 0x00, 0x00]
+        );
     }
 }

@@ -27,4 +27,4 @@ pub use http::{HttpError, MAX_REQUEST_BYTES, Request, Response, read_request, wr
 pub use network_thread::{NetworkThread, NetworkThreadHandle};
 pub use relay::{RelayError, Relayed};
 pub use socket::{ReadOutcome, Session, SessionFactory, SessionFuture, SessionIo};
-pub use socket_mgr::{select_thread_with_min_connections, SocketMgr};
+pub use socket_mgr::{SocketMgr, select_thread_with_min_connections};

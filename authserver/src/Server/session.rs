@@ -76,6 +76,30 @@ const COMPUTER_HASH: u16 = 0x8002;
 /// `AUTH_CMSG_DELETE_CHARACTER` (`0x8007`): one of this account's characters, by name.
 const DELETE_CHARACTER: u16 = 0x8007;
 
+/// The most bytes a stored settings blob may hold: what one login's `AUTH_SMSG_ACCOUNT_SETTINGS` can
+/// carry (`ASURA/crates/asura-auth/src/lib.rs:83-88`, the message's declared `Array8` of 2048). An upload that
+/// announces more is acknowledged and not stored.
+const ACCOUNT_SETTINGS_CAPACITY: usize = 2048;
+
+/// The largest single `0x8020` chunk the client sends
+/// (`ASURA/crates/asura-protocol/src/client/messages.rs:572`).
+const SETTINGS_CHUNK_CAPACITY: usize = 512;
+
+/// ASURA line numbers in this subject are ASURA at `071735e` (the feature is ASURA `77b0ff8`, newer than
+/// the `ca9f532` AGENTS.md pins); the measurement is `docs/evidence/ui-settings-persistence.md`.
+///
+/// A settings upload in flight: the size message (`0x8021`) opened it, and the content messages
+/// (`0x8020`) that carry its request id fill it (`ASURA/crates/asura-auth/src/lib.rs:125-135`).
+#[derive(Debug)]
+struct SettingsUpload {
+    /// The request id the size message announced; only content carrying it belongs to this upload.
+    request: u32,
+    /// The byte count the size message announced.
+    total: usize,
+    /// The bytes received so far.
+    bytes: Vec<u8>,
+}
+
 /// Where a client that asks for a map is sent: a world's address and the id it is known by.
 ///
 /// Reference: what the reference keeps in its realm list and hands to
@@ -94,7 +118,7 @@ pub struct AuthSession {
     log: Log,
     master: [u8; MASTER_SECRET_LEN],
     file_check: FileCheck,
-    /// The 591-byte block every login is answered with, from the account settings payload.
+    /// The committed 591-byte block a login is answered with when the account has no stored upload.
     account_settings: Vec<u8>,
     /// The account the portal identified, once a login has resolved one. A character choice
     /// (0x800A) is answered from it, and it is the join a travel request uses.
@@ -118,6 +142,8 @@ pub struct AuthSession {
     /// The character this connection chose, by its own id, so a delete knows whether it just took this
     /// connection's character away (`ASURA/crates/asura-auth/src/lib.rs:436-455`).
     character_chosen: Option<[u8; 16]>,
+    /// The account settings upload in flight, if the client is in the middle of one.
+    settings_upload: Option<SettingsUpload>,
     /// The salt this connection's session info carried, so the computer hash is answered with the salt
     /// the client's cipher is already derived from.
     salt: Option<u32>,
@@ -151,6 +177,7 @@ impl AuthSession {
             accounts: None,
             character_map: None,
             character_chosen: None,
+            settings_upload: None,
             salt: None,
             creation_map: 0,
             fallback_outpost: 0,
@@ -169,7 +196,10 @@ impl AuthSession {
     }
 
     /// Give the session an account table to record the EULA version in.
-    pub fn with_accounts(mut self, accounts: std::sync::Arc<game::accounts::DatabaseAccounts>) -> Self {
+    pub fn with_accounts(
+        mut self,
+        accounts: std::sync::Arc<game::accounts::DatabaseAccounts>,
+    ) -> Self {
         self.accounts = Some(accounts);
         self
     }
@@ -201,7 +231,90 @@ impl AuthSession {
                 "no entropy available for the master secret; the exchange will use zeros",
             );
         }
-        Self::new(log, master, file_check, account_settings, front_door, characters)
+        Self::new(
+            log,
+            master,
+            file_check,
+            account_settings,
+            front_door,
+            characters,
+        )
+    }
+
+    /// The settings blob a login is answered with: the account's stored upload when it has a usable
+    /// one, otherwise the committed block every new account starts from
+    /// (`ASURA/crates/asura-auth/src/lib.rs:736-757` and `846-876`).
+    fn settings_for_login(&self, peer: &str, user_id: &[u8; 16]) -> Vec<u8> {
+        let Some(accounts) = self.accounts.as_ref() else {
+            return self.account_settings.clone();
+        };
+        match accounts.settings_for_user(&game::characters::uuid_text(user_id)) {
+            Ok(Some(bytes)) if !bytes.is_empty() && bytes.len() <= ACCOUNT_SETTINGS_CAPACITY => {
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Connection from {peer}: the account's own settings, {} bytes.",
+                        bytes.len()
+                    ),
+                );
+                bytes
+            }
+            Ok(Some(bytes)) => {
+                self.say(
+                    LogLevel::Warn,
+                    format!(
+                        "Connection from {peer}: the stored settings are {} bytes, outside 1..={ACCOUNT_SETTINGS_CAPACITY}; using the committed block.",
+                        bytes.len()
+                    ),
+                );
+                self.account_settings.clone()
+            }
+            Ok(None) => self.account_settings.clone(),
+            // A read that fails is not worth losing a login over: the committed block still logs in.
+            Err(error) => {
+                self.say(
+                    LogLevel::Error,
+                    format!(
+                        "Connection from {peer}: the stored settings could not be read ({error}); using the committed block."
+                    ),
+                );
+                self.account_settings.clone()
+            }
+        }
+    }
+
+    /// Keep a completed settings upload on the account this connection logged in as.
+    fn store_settings(&self, peer: &str, bytes: &[u8]) {
+        let (Some(accounts), Some(account)) = (self.accounts.as_ref(), self.account) else {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Connection from {peer}: a {}-byte settings upload arrived with no account table or no login on this connection; not stored.",
+                    bytes.len()
+                ),
+            );
+            return;
+        };
+        let user_id = game::characters::uuid_text(&account);
+        match accounts.set_settings_for_user(&user_id, bytes) {
+            Ok(true) => self.say(
+                LogLevel::Info,
+                format!(
+                    "Connection from {peer}: stored {} bytes of UI settings for account {user_id}.",
+                    bytes.len()
+                ),
+            ),
+            Ok(false) => self.say(
+                LogLevel::Warn,
+                format!(
+                    "Connection from {peer}: a settings upload for {user_id} matched no account row."
+                ),
+            ),
+            Err(error) => self.say(
+                LogLevel::Error,
+                format!("Connection from {peer}: the settings could not be stored: {error}"),
+            ),
+        }
     }
 
     fn say(&self, level: LogLevel, text: impl Into<String>) {
@@ -300,12 +413,7 @@ impl AuthSession {
     ///
     /// Answers whether the conversation can continue: a question that does not match closes the
     /// socket, because the client is comparing bytes and a wrong answer is worse than none.
-    async fn answer_file_check(
-        &self,
-        io: &mut SessionIo,
-        peer: &str,
-        first_four: [u8; 4],
-    ) -> bool {
+    async fn answer_file_check(&self, io: &mut SessionIo, peer: &str, first_four: [u8; 4]) -> bool {
         let mut question = first_four.to_vec();
         let remaining = self.file_check.request_len().saturating_sub(question.len());
         question.resize(self.file_check.request_len(), 0);
@@ -522,7 +630,9 @@ impl AuthSession {
                 Err(error) => {
                     self.say(
                         LogLevel::Warn,
-                        format!("Connection from {peer} could not be read after the exchange: {error}"),
+                        format!(
+                            "Connection from {peer} could not be read after the exchange: {error}"
+                        ),
                     );
                     return;
                 }
@@ -590,8 +700,10 @@ impl AuthSession {
                 // The reference answers with an ordinary request response, status 0:
                 // `03 00 02 00 00 00 00 00 00 00` in the trace.
                 let request = request_id(body);
-                let answer =
-                    crate::server::login_reply::request_response(request, crate::server::login_reply::GM_ERROR_NONE);
+                let answer = crate::server::login_reply::request_response(
+                    request,
+                    crate::server::login_reply::GM_ERROR_NONE,
+                );
                 self.send(io, peer, crypt, &[answer], "ask server response")
                     .await
             }
@@ -684,12 +796,10 @@ impl AuthSession {
                     .await
             }
 
-            // The settings uploads, which must be acknowledged: an unacknowledged one is a hang, and the
-            // working implementation names exactly that as the reason it does not decode them
-            // (`ASURA/crates/asura-auth/src/lib.rs:369-382`). Answering every request the client makes
-            // keeps that trap shut without having to understand the payload - and the reference stores
-            // nothing of it either.
-            UPDATE_CHARACTER_SETTINGS | SETTING_UPDATE_CONTENT | SETTING_UPDATE_SIZE => {
+            // The character-select settings upload (`0x8009`): acknowledged and nothing more
+            // (`ASURA/crates/asura-auth/src/lib.rs:491-501`). An unacknowledged settings upload is a hang (`docs/evidence/client-protocol.md`
+            // section 6).
+            UPDATE_CHARACTER_SETTINGS => {
                 let request = request_id(body);
                 self.say(
                     LogLevel::Info,
@@ -703,6 +813,103 @@ impl AuthSession {
                     crate::server::login_reply::GM_ERROR_NONE,
                 );
                 self.send(io, peer, crypt, &[answer], "a settings upload")
+                    .await
+            }
+
+            // The account settings upload, first half (`0x8021`): `req_id: u32, size: u32` announces the
+            // whole blob. The blob is the client's UI state - window positions, visibility and the
+            // other interface options - and it is kept verbatim so the next login hands it back
+            // (`ASURA/crates/asura-auth/src/lib.rs:382-424`).
+            SETTING_UPDATE_SIZE => {
+                let request = request_id(body);
+                match decode_settings_size(body) {
+                    Some((announced, total)) if total > 0 && total <= ACCOUNT_SETTINGS_CAPACITY => {
+                        self.say(
+                            LogLevel::Info,
+                            format!(
+                                "Connection from {peer}: settings upload {announced} announces {total} bytes."
+                            ),
+                        );
+                        self.settings_upload = Some(SettingsUpload {
+                            request: announced,
+                            total,
+                            bytes: Vec::with_capacity(total),
+                        });
+                    }
+                    Some((announced, total)) => {
+                        self.say(
+                            LogLevel::Warn,
+                            format!(
+                                "Connection from {peer}: settings upload {announced} announces {total} bytes, outside 1..={ACCOUNT_SETTINGS_CAPACITY}; not stored."
+                            ),
+                        );
+                        self.settings_upload = None;
+                    }
+                    None => {
+                        self.say(
+                            LogLevel::Warn,
+                            format!(
+                                "Connection from {peer}: a settings size of {} bytes is too short; not stored.",
+                                body.len() + 2
+                            ),
+                        );
+                        self.settings_upload = None;
+                    }
+                }
+                let answer = crate::server::login_reply::request_response(
+                    request,
+                    crate::server::login_reply::GM_ERROR_NONE,
+                );
+                self.send(io, peer, crypt, &[answer], "a settings size")
+                    .await
+            }
+
+            // The account settings upload, second half (`0x8020`): `req_id: u32, count: u16` and that
+            // many bytes. When the announced total has arrived the blob replaces the account's stored
+            // one, and the next login is answered with it (`ASURA/crates/asura-auth/src/lib.rs:426-489`).
+            SETTING_UPDATE_CONTENT => {
+                let request = request_id(body);
+                let mut completed = None;
+                match decode_settings_content(body) {
+                    Some((chunk_request, chunk)) => match self.settings_upload.as_mut() {
+                        Some(upload) if upload.request == chunk_request => {
+                            upload.bytes.extend_from_slice(chunk);
+                            if upload.bytes.len() >= upload.total {
+                                completed = self.settings_upload.take().map(|upload| upload.bytes);
+                            }
+                        }
+                        Some(upload) => {
+                            let open = upload.request;
+                            self.say(
+                                LogLevel::Warn,
+                                format!(
+                                    "Connection from {peer}: a settings chunk for request {chunk_request} while request {open} is open; ignored."
+                                ),
+                            );
+                        }
+                        None => self.say(
+                            LogLevel::Warn,
+                            format!(
+                                "Connection from {peer}: a settings chunk for request {chunk_request} without a size announcement; ignored."
+                            ),
+                        ),
+                    },
+                    None => self.say(
+                        LogLevel::Warn,
+                        format!(
+                            "Connection from {peer}: a settings chunk of {} bytes is malformed; ignored.",
+                            body.len() + 2
+                        ),
+                    ),
+                }
+                if let Some(bytes) = completed {
+                    self.store_settings(peer, &bytes);
+                }
+                let answer = crate::server::login_reply::request_response(
+                    request,
+                    crate::server::login_reply::GM_ERROR_NONE,
+                );
+                self.send(io, peer, crypt, &[answer], "a settings chunk")
                     .await
             }
 
@@ -723,8 +930,7 @@ impl AuthSession {
                     request,
                     crate::server::login_reply::GM_ERROR_NONE,
                 );
-                self.send(io, peer, crypt, &[answer], "an access key")
-                    .await
+                self.send(io, peer, crypt, &[answer], "an access key").await
             }
 
             DISCONNECT => {
@@ -742,7 +948,8 @@ impl AuthSession {
             // reference's constant (`ASURA/crates/asura-auth/src/lib.rs:307-312`).
             HEARTBEAT => {
                 let answer = crate::server::login_reply::heartbeat(16);
-                self.send(io, peer, crypt, &[answer], "a client heartbeat").await
+                self.send(io, peer, crypt, &[answer], "a client heartbeat")
+                    .await
             }
 
             // `AUTH_CMSG_SEND_COMPUTER_HASH`: the message the client waits on before it logs in, and
@@ -760,7 +967,8 @@ impl AuthSession {
                         ),
                     );
                     let answer = crate::server::login_reply::session_info(salt, 0);
-                    self.send(io, peer, crypt, &[answer], "the session info").await
+                    self.send(io, peer, crypt, &[answer], "the session info")
+                        .await
                 }
                 None => true,
             },
@@ -858,7 +1066,8 @@ impl AuthSession {
                     _ => crate::server::login_reply::GM_ERROR_NETWORK_ERROR,
                 };
                 let answer = crate::server::login_reply::request_response(request, status);
-                self.send(io, peer, crypt, &[answer], "the character delete").await
+                self.send(io, peer, crypt, &[answer], "the character delete")
+                    .await
             }
 
             other => {
@@ -984,9 +1193,11 @@ impl AuthSession {
         // at character select with a travel it cannot complete.
         self.character_chosen = None;
         self.character_map = None;
-        if let Some(rows) = self.characters.as_ref().map(|source| {
-            source.for_account(&game::characters::uuid_text(&login.user_id))
-        }) {
+        if let Some(rows) = self
+            .characters
+            .as_ref()
+            .map(|source| source.for_account(&game::characters::uuid_text(&login.user_id)))
+        {
             let named = rows
                 .iter()
                 .find(|character| character.name.eq_ignore_ascii_case(&login.character))
@@ -1020,12 +1231,18 @@ impl AuthSession {
             .map(|version| u8::try_from(version.max(0)).unwrap_or(0))
             .unwrap_or(0);
 
+        // The account's own uploaded UI settings, when it has some, are what the login is answered
+        // with; otherwise the committed block. Without this the client's saved layout was
+        // acknowledged, thrown away, and every session started from the same one
+        // (`data/sql/base/db_auth/account_settings.sql`).
+        let account_settings = self.settings_for_login(peer, &login.user_id);
+
         let frames = crate::server::login_reply::reply_frames(
             login.request,
             login.user_id,
             &characters,
             eula_accepted,
-            &self.account_settings,
+            &account_settings,
         );
         self.account = Some(login.user_id);
         self.send(io, peer, crypt, &frames, "the login").await
@@ -1131,9 +1348,7 @@ impl AuthSession {
                 request.request,
                 crate::server::login_reply::GM_ERROR_NETWORK_ERROR,
             );
-            return self
-                .send(io, peer, crypt, &[refusal], "the refusal")
-                .await;
+            return self.send(io, peer, crypt, &[refusal], "the refusal").await;
         };
 
         // A number drawn per travel, so the world can tell one client's connection from another's.
@@ -1256,6 +1471,26 @@ fn request_id(body: &[u8]) -> u32 {
     u32::from_le_bytes([body[0], body[1], body[2], body[3]])
 }
 
+/// `AUTH_CMSG_SETTING_UPDATE_SIZE` (`0x8021`): `req_id: u32, size: u32`
+/// (`ASURA/crates/asura-protocol/src/client/messages.rs:579-582`).
+fn decode_settings_size(body: &[u8]) -> Option<(u32, usize)> {
+    let request = u32::from_le_bytes(body.get(0..4)?.try_into().ok()?);
+    let size = u32::from_le_bytes(body.get(4..8)?.try_into().ok()?);
+    Some((request, size as usize))
+}
+
+/// `AUTH_CMSG_SETTING_UPDATE_CONTENT` (`0x8020`): `req_id: u32, count: u16`, then exactly `count`
+/// bytes. Measured by ASURA: `20 80 | 05 00 00 00 | 00 02 <512 bytes>` then `... | 42 00 <66 bytes>`
+/// (`ASURA/crates/asura-protocol/src/client/messages.rs:584-601`).
+fn decode_settings_content(body: &[u8]) -> Option<(u32, &[u8])> {
+    let request = u32::from_le_bytes(body.get(0..4)?.try_into().ok()?);
+    let count = u16::from_le_bytes(body.get(4..6)?.try_into().ok()?) as usize;
+    if count > SETTINGS_CHUNK_CAPACITY {
+        return None;
+    }
+    Some((request, body.get(6..6 + count)?))
+}
+
 /// What a `0x8029` asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GameInstanceRequest {
@@ -1278,7 +1513,8 @@ pub fn decode_game_instance(body: &[u8]) -> Option<GameInstanceRequest> {
     if body.len() < 24 {
         return None;
     }
-    let dword = |at: usize| u32::from_le_bytes([body[at], body[at + 1], body[at + 2], body[at + 3]]);
+    let dword =
+        |at: usize| u32::from_le_bytes([body[at], body[at + 1], body[at + 2], body[at + 3]]);
     Some(GameInstanceRequest {
         request: dword(0),
         map_type: dword(4),
@@ -1395,8 +1631,29 @@ pub fn uuid_le_text(bytes: &[u8; 16]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::{decode_settings_content, decode_settings_size};
+
+    #[test]
+    fn a_settings_upload_decodes_as_asura_measured_it() {
+        // 0x8021: request 5 announces 578 bytes.
+        let size = [5u8, 0, 0, 0, 0x42, 0x02, 0, 0];
+        assert_eq!(decode_settings_size(&size), Some((5, 578)));
+        assert_eq!(decode_settings_size(&size[..6]), None);
+
+        // 0x8020: request 5, a 66-byte chunk.
+        let mut content = vec![5u8, 0, 0, 0, 0x42, 0x00];
+        content.extend(std::iter::repeat(0xAB).take(66));
+        let (request, chunk) = decode_settings_content(&content).unwrap();
+        assert_eq!((request, chunk.len()), (5, 66));
+
+        // A count past the body, or past one chunk's capacity, is malformed.
+        assert_eq!(decode_settings_content(&content[..20]), None);
+        let too_big = [5u8, 0, 0, 0, 0x01, 0x02];
+        assert_eq!(decode_settings_content(&too_big), None);
+    }
+
     use super::*;
-    use crate::server::handshake::{shared_secret, PUBLIC_LEN};
+    use crate::server::handshake::{PUBLIC_LEN, shared_secret};
     use shared::network::socket::SessionFactory;
     use shared::network::socket_mgr::SocketMgr;
     use std::io::{Read, Write};
@@ -1566,7 +1823,7 @@ mod tests {
     #[test]
     fn a_running_cipher_reads_the_clients_messages_in_order() {
         use crate::authentication::PORTAL_ACCOUNT_LOGIN;
-        use crate::server::handshake::{derive_key, KEY_LEN};
+        use crate::server::handshake::{KEY_LEN, derive_key};
         use common::cryptography::Arc4;
 
         let master = [0x33u8; MASTER_SECRET_LEN];
@@ -1675,7 +1932,9 @@ mod tests {
         let mut manager = SocketMgr::new(factory);
         let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
         let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-        client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
 
         // The preamble, then the seed.
         client.write_all(&preamble(2)).unwrap();
@@ -1690,8 +1949,16 @@ mod tests {
         client.read_exact(&mut greeting).unwrap();
         let mut reading = Arc4::new(&key);
         reading.apply(&mut greeting);
-        assert_eq!(&greeting[..2], &0x0001u16.to_le_bytes(), "session info first");
-        assert_eq!(&greeting[10..12], &0x0000u16.to_le_bytes(), "then a heartbeat");
+        assert_eq!(
+            &greeting[..2],
+            &0x0001u16.to_le_bytes(),
+            "session info first"
+        );
+        assert_eq!(
+            &greeting[10..12],
+            &0x0000u16.to_le_bytes(),
+            "then a heartbeat"
+        );
         assert_eq!(&greeting[12..16], &16u32.to_le_bytes(), "the tick is 16");
 
         // The login, packed as the client packs it and scrambled with the key both sides derive.
@@ -1757,8 +2024,8 @@ mod tests {
         // it writes is what the world claims (`docs/port/06-world-plan.md`, "The three seams").
         use crate::authentication::PORTAL_ACCOUNT_LOGIN;
         use common::cryptography::Arc4;
-        use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
-        use database::updater::{collect_files, UpdateState};
+        use database::database::{DatabaseKind, DatabaseWorkerPool, read_settings};
+        use database::updater::{UpdateState, collect_files};
 
         let log = Log::new();
         let master = [0x6Au8; MASTER_SECRET_LEN];
@@ -1778,7 +2045,8 @@ mod tests {
             UpdateState::Released,
         )
         .expect("the login schema");
-        pool.apply_updates(&schema, &log).expect("the schema applies");
+        pool.apply_updates(&schema, &log)
+            .expect("the schema applies");
         let login = std::sync::Arc::new(std::sync::Mutex::new(pool));
         let travels = std::sync::Arc::new(game::maps::DatabaseTravels::new(
             std::sync::Arc::clone(&login),
@@ -1792,7 +2060,11 @@ mod tests {
         ));
         let eula_user = "eula-test@example.com";
         accounts
-            .create(eula_user, &game::characters::uuid_text(&[0x11u8; 16]), "token")
+            .create(
+                eula_user,
+                &game::characters::uuid_text(&[0x11u8; 16]),
+                "token",
+            )
             .expect("the account is written");
         accounts
             .set_eula(eula_user, 0)
@@ -1821,7 +2093,9 @@ mod tests {
         let mut manager = SocketMgr::new(factory);
         let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
         let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-        client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
 
         // The preamble, the seed, and the greeting.
         client.write_all(&preamble(2)).unwrap();
@@ -1911,7 +2185,10 @@ mod tests {
         };
         assert_eq!(rows.len(), 1, "one travel was recorded");
         let token: i64 = rows[0].get(0);
-        assert!(token >= 0 && token <= u32::MAX as i64, "the token the login drew");
+        assert!(
+            token >= 0 && token <= u32::MAX as i64,
+            "the token the login drew"
+        );
 
         // Claiming it consumes it: exactly once, by the pair it presents.
         assert!(
@@ -1939,12 +2216,15 @@ mod tests {
         log: &Log,
         master: [u8; MASTER_SECRET_LEN],
         front_door: Option<std::sync::Arc<crate::server::FrontDoor>>,
-    ) -> (SocketMgr, std::net::TcpStream, [u8; crate::server::handshake::KEY_LEN]) {
+    ) -> (
+        SocketMgr,
+        std::net::TcpStream,
+        [u8; crate::server::handshake::KEY_LEN],
+    ) {
         let factory: SessionFactory = {
             let log = log.clone();
             let file_check = shipped_file_check();
-            let settings =
-                crate::server::account_settings::block();
+            let settings = crate::server::account_settings::block();
             Arc::new(move || {
                 Box::new(AuthSession::new(
                     log.clone(),
@@ -2036,7 +2316,11 @@ mod tests {
         assert_eq!(&answer[..2], &[0x09, 0x00], "the game server info first");
         assert_eq!(&answer[2..6], &3u32.to_le_bytes(), "echoing request 3");
         assert_eq!(&answer[6..10], &7u32.to_le_bytes(), "the world's token");
-        assert_eq!(&answer[10..14], &146u32.to_le_bytes(), "the map it asked for");
+        assert_eq!(
+            &answer[10..14],
+            &146u32.to_le_bytes(),
+            "the map it asked for"
+        );
         assert_eq!(
             &answer[14..24],
             &[0x02, 0x00, 0x17, 0xE1, 127, 0, 0, 1, 0, 0],
@@ -2061,9 +2345,17 @@ mod tests {
         client.read_exact(&mut counts).unwrap();
         reading.apply(&mut counts);
         assert_eq!(&counts[..2], &[0x1A, 0x00], "the count report");
-        assert_eq!(&counts[2..6], &5u32.to_le_bytes(), "echoing the transaction");
+        assert_eq!(
+            &counts[2..6],
+            &5u32.to_le_bytes(),
+            "echoing the transaction"
+        );
         assert_eq!(counts[6], 11, "eleven pairs");
-        assert_eq!(&counts[7..9], &[0, 1], "language 0 has the one district (R16)");
+        assert_eq!(
+            &counts[7..9],
+            &[0, 1],
+            "language 0 has the one district (R16)"
+        );
         for pair in counts[9..].chunks(2) {
             assert_eq!(pair[1], 0, "the other languages have none");
         }
@@ -2124,7 +2416,10 @@ mod tests {
                 Err(_) => break,
             }
         }
-        assert_eq!(total, 0, "a gameplay connection is not answered on the auth port");
+        assert_eq!(
+            total, 0,
+            "a gameplay connection is not answered on the auth port"
+        );
 
         manager.stop_network();
         log.shutdown();

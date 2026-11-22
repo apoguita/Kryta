@@ -17,12 +17,12 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
 use common::configuration::{Config, Policy};
 use common::logging::Log;
-use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
+use database::database::{DatabaseKind, DatabaseWorkerPool, read_settings};
 use game::server::packets::instance_packets;
 use game::server::protocol::GameVersion;
 use shared::cryptography::handshake::{
@@ -282,7 +282,10 @@ fn remove_travel(account: &[u8; 16]) {
     let mut pool = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log)
         .expect("the login pool opens");
     let account_text = game::characters::uuid_text(account);
-    let _ = pool.query_with("DELETE FROM \"travel\" WHERE \"account\" = $1", &[&account_text]);
+    let _ = pool.query_with(
+        "DELETE FROM \"travel\" WHERE \"account\" = $1",
+        &[&account_text],
+    );
 }
 
 /// A character of this test's own, written for the account and removed afterwards: the login's list
@@ -297,11 +300,8 @@ fn write_character(account: &[u8; 16], name: &str) -> String {
         .expect("the character pool opens");
     let uuid = "00000000-0000-0000-0000-0000000000E2";
     let account_text = game::characters::uuid_text(account);
-    pool.query_with(
-        "DELETE FROM \"characters\" WHERE \"uuid\" = $1",
-        &[&uuid],
-    )
-    .expect("the row is removable");
+    pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid])
+        .expect("the row is removable");
     pool.query_with(
         "INSERT INTO \"characters\" (\"uuid\", \"account_uuid\", \"name\", \"appearance\", \"primary_profession\", \"unlocked_professions\", \"campaign\", \"level\") \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -387,7 +387,8 @@ fn an_end_to_end_login_and_load_against_the_live_programs() {
         .expect("the file check question");
     let answer = read_exact(&mut stream, 32);
     assert_eq!(
-        &answer[..4], &FILE_CHECK_ANSWER_HEADER,
+        &answer[..4],
+        &FILE_CHECK_ANSWER_HEADER,
         "the file check answers its own header and length: {}",
         shared::network::socket::hex(&answer)
     );
@@ -551,7 +552,9 @@ fn an_end_to_end_login_and_load_against_the_live_programs() {
     query[10..14].copy_from_slice(&1u32.to_le_bytes());
     let mut scrambled = query;
     sending.apply(&mut scrambled);
-    stream.write_all(&scrambled).expect("the district list query");
+    stream
+        .write_all(&scrambled)
+        .expect("the district list query");
     let answered = read_quiet(&mut stream, &mut reading);
     assert_eq!(
         answered.len(),
@@ -560,7 +563,11 @@ fn an_end_to_end_login_and_load_against_the_live_programs() {
         shared::network::socket::hex(&answered)
     );
     assert_eq!(&answered[..2], &[0x1A, 0x00], "the counts message");
-    assert_eq!(&answered[2..6], &42u32.to_le_bytes(), "the transaction is echoed");
+    assert_eq!(
+        &answered[2..6],
+        &42u32.to_le_bytes(),
+        "the transaction is echoed"
+    );
     assert_eq!(answered[6], 11, "eleven language pairs");
     assert_eq!(&answered[7..9], &[0, 1], "language 0 has one district");
 
@@ -585,8 +592,16 @@ fn an_end_to_end_login_and_load_against_the_live_programs() {
         shared::network::socket::hex(&answered)
     );
     assert_eq!(&answered[..2], &[0x03, 0x00], "the request response");
-    assert_eq!(&answered[2..6], &9u32.to_le_bytes(), "the request is echoed");
-    assert_eq!(&answered[6..10], &0u32.to_le_bytes(), "the name is on the account");
+    assert_eq!(
+        &answered[2..6],
+        &9u32.to_le_bytes(),
+        "the request is echoed"
+    );
+    assert_eq!(
+        &answered[6..10],
+        &0u32.to_le_bytes(),
+        "the name is on the account"
+    );
 
     // 5d. What this client really sends next: `0x8029` naming the **creation map** as a place to
     // stand - request 6, map 0, type 0, district 0, language -1, measured 2026-11-12 (`Auth.log`). The
@@ -600,7 +615,9 @@ fn an_end_to_end_login_and_load_against_the_live_programs() {
     place[22..26].copy_from_slice(&u32::MAX.to_le_bytes());
     let mut scrambled = place;
     sending.apply(&mut scrambled);
-    stream.write_all(&scrambled).expect("the map request after a character click");
+    stream
+        .write_all(&scrambled)
+        .expect("the map request after a character click");
     let answered = read_quiet(&mut stream, &mut reading);
     assert!(
         answered.len() >= 52,
@@ -609,7 +626,11 @@ fn an_end_to_end_login_and_load_against_the_live_programs() {
     );
     // The info message: header, the request, the map token, then the map id.
     assert_eq!(&answered[..2], &[0x09, 0x00], "the game server info");
-    assert_eq!(&answered[2..6], &6u32.to_le_bytes(), "the request is echoed");
+    assert_eq!(
+        &answered[2..6],
+        &6u32.to_le_bytes(),
+        "the request is echoed"
+    );
     assert_eq!(
         &answered[10..14],
         &148u32.to_le_bytes(),
@@ -658,10 +679,14 @@ fn an_end_to_end_login_and_load_against_the_live_programs() {
     // the bytes the client dials. The port is the world program's `WorldServerPort`.
     let world_port = world_server_port();
     let host = [
-        0x02, 0x00,
+        0x02,
+        0x00,
         (world_port >> 8) as u8,
         (world_port & 0xFF) as u8,
-        0x7F, 0x00, 0x00, 0x01,
+        0x7F,
+        0x00,
+        0x00,
+        0x01,
     ];
     assert!(
         answered

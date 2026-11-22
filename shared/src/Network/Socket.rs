@@ -122,7 +122,8 @@ impl SessionIo {
     }
 
     /// Read into a buffer, answering how many bytes arrived. Zero means the peer closed.
-    pub async fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {        let read = self.stream.read(buffer).await;
+    pub async fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.stream.read(buffer).await;
         if let Ok(count) = &read {
             self.received += count;
             if *count == 0 {
@@ -187,8 +188,6 @@ pub fn hex(bytes: &[u8]) -> String {
     }
     out
 }
-
-
 
 /// What the manager calls to build a session for a new connection.
 pub type SessionFactory = Arc<dyn Fn() -> Box<dyn Session> + Send + Sync>;

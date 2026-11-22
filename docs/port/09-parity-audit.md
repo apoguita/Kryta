@@ -28,7 +28,7 @@ defect of Rule 0) - **missing** (ASURA has it, this tree sends or handles nothin
 | rows here and not in ASURA's table | - | **0** |
 | rows whose `size`, `name` and field list differ | - | **0** of the 742 compared |
 
-The table is copied whole and it agrees: 782 rows, the same headers, the same declared sizes, the
+**Re-synced 2026-11-22 against ASURA `071735e`** (the newer checkout this tree now ports party and cartography from): of its 682 game rows, six had changed since `ca9f532` - `0x0021` and `0x005A` (8 -> 6 bytes), `0x005E` and `0x0061` (10 -> 5), `0x00B0` (12 -> 5) and `0x00B1` (12 -> 6), each a struct-layer reading ASURA corrected against a live client - and those six rows are now ASURA's. Twelve rows gained a name in ASURA and no size or field change; they are not copied yet. The table is copied whole and it agrees: 782 rows, the same headers, the same declared sizes, the
 same names, the same field kinds and lengths. **That sentence was false until round 20**: this tree
 carried 683 game rows against ASURA's 682, and the extra was `0x00B1` read as a client-to-server row
 named `GAME_CMSG_PARTY_TRAVEL` - the very mistake the code comments record ("this tree listened for
@@ -78,8 +78,8 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x800D` | `AUTH_CMSG_DISCONNECT` | `lib.rs` | `session.rs` | ported |
 | `0x800E` | `AUTH_CMSG_SET_PLAYER_STATUS` | `lib.rs` | `session.rs` | ported |
 | `0x801C` | `AUTH_CMSG_ADD_ACCESS_KEY` | `lib.rs:384-406` | `session.rs`: the units counted, status 0, nothing kept | ported |
-| `0x8020` | `AUTH_CMSG_SETTING_UPDATE_CONTENT` (522) | `lib.rs:369-382` | `session.rs`: acknowledged with status 0 | ported |
-| `0x8021` | `AUTH_CMSG_SETTING_UPDATE_SIZE` | `lib.rs:369-382` | `session.rs`: acknowledged with status 0 | ported |
+| `0x8020` | `AUTH_CMSG_SETTING_UPDATE_CONTENT` (522) | `lib.rs:426-489`, `messages.rs:584-601` (ASURA `071735e`; `ca9f532` only acknowledged it) | `session.rs` `SETTING_UPDATE_CONTENT`: chunks of the open upload appended, the completed blob stored on `account.settings`, status 0 | ported |
+| `0x8021` | `AUTH_CMSG_SETTING_UPDATE_SIZE` | `lib.rs:382-424`, `messages.rs:579-582` (ASURA `071735e`; `ca9f532` only acknowledged it) | `session.rs` `SETTING_UPDATE_SIZE`: opens an upload of 1..=2048 bytes, status 0 | ported |
 | `0x8026` | `AUTH_CMSG_ACCEPT_EULA` | `lib.rs:487`, `decode_eula` | `session.rs`, recorded | ported |
 | `0x8029` | `AUTH_CMSG_REQUEST_GAME_INSTANCE` | `lib.rs:507`, `travel::answer` | `session.rs` `answer_game_instance` | ported thin: no lease, no capacity, no world probe, and 2 of `asura-rules`' 3 placement rules - see the stop below |
 | `0x8035` | `AUTH_CMSG_ASK_SERVER_RESPONSE` | `lib.rs` | `session.rs` | ported |
@@ -127,7 +127,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x0009` | `AUTH_SMSG_GAME_SERVER_INFO` (42) | `messages.rs:690`, `host_for` | `login_reply::game_server_info`, `host_blob` | ported |
 | `0x0011` | `AUTH_SMSG_ACCOUNT_INFO` (275) | `messages.rs:593` | `login_reply::account_info` | ported (the EULA byte was ours until 2026-11-12) |
 | `0x0014` | `AUTH_SMSG_FRIEND_STREAM_END` | `messages.rs:524` | `login_reply::friend_stream_end` | ported |
-| `0x0016` | `AUTH_SMSG_ACCOUNT_SETTINGS` (2058) | `messages.rs:572` | `login_reply::account_settings_frame` | ported |
+| `0x0016` | `AUTH_SMSG_ACCOUNT_SETTINGS` (2058) | `messages.rs:572`; the blob chosen at `lib.rs:736-757`, `846-876` (ASURA `071735e`) | `login_reply::account_settings_frame`, carrying the account's stored upload, or the committed 591-byte block when it has none (`docs/evidence/ui-settings-persistence.md`) | ported |
 
 ### 4.2 The game connection (79)
 
@@ -143,7 +143,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x001E` | simulation tick | `world_simulation_tick(delta_ms)` | same | ported (ours until 2026-11-12: a counter) |
 | `0x001F` | load time | `world_update_load_time` | same | ported |
 | `0x0020` | create agent (99) | `world_create_agent`, `CreateAgent` | same | ported |
-| `0x0021` | remove agent | `world_remove_agent` | `agent_packets::world_remove_agent` | ported |
+| `0x0021` | remove agent | `world_remove_agent` (`game/mod.rs:2181-2186`, ASURA `071735e`: six bytes) | `agent_packets::world_remove_agent` | ported (eight bytes, the struct layer, until 2026-11-22) |
 | `0x0022` | controlled agent | `world_update_controlled_agent` | same | ported |
 | `0x0025` | agent update direction (15) | `agent_update_direction` / `_live` | `agent_packets::agent_update_direction`, both forms | ported |
 | `0x0028` | agent stop moving | `agent_stop_moving` | `agent_packets::agent_stop_moving` | ported |
@@ -156,12 +156,12 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x003C` | player flags | `player_update_flags` | same | ported |
 | `0x0048` | display cape | `agent_display_cape` | same | ported |
 | `0x0059` | player create (91) | `player_create` | same | ported |
-| `0x005A` | player destroy | `player_destroy` | `character_packets::player_destroy` | ported |
+| `0x005A` | player destroy | `player_destroy` (`game/mod.rs:2173-2179`, ASURA `071735e`: six bytes) | `character_packets::player_destroy` | ported (eight bytes, the struct layer, until 2026-11-22) |
 | `0x005D` | chat: the body, one fragment | `chat_message_core` | `chat_packets::chat_message_core` over `all_chat_body`, fragmented at 121 | ported: the body is a **coded string** (`0x0108 0x0107 text 0x0001`, `GmText.c:43-57` and `Rurik/studies/chat/FINDINGS.md:263`) and long text is fragmented, not truncated. ASURA's table and this tree before 0012 wrote bare text capped at 122, which is what left `/maps` past one frame |
 | `0x005E` | chat: the server speaking | `chat_message_server` | `chat_packets::chat_message_server(player, channel)` | ported: `[u16 player, u8 channel]`, **5 bytes** (`msgdefs.info` `GAME_SMSG_0094`; bytes `5e00 0100 06`, `FINDINGS.md:264`). ASURA wrote two dwords; **it is sent now** (`answer_line`, `Channel_Global`) as `GmChat.c:116-143` sends it, and the owner's live client read `/maps`'s answer off the screen - the first authored text rendered on this channel in either server |
 | `0x0061` | chat: which player spoke | `chat_message_local` | `chat_packets::chat_message_local(player, channel)` | ported: `[u16 player, u8 channel]`, **5 bytes** (`msgdefs.info` `GAME_SMSG_0097`; bytes `6100 0100 03`). ASURA wrote two dwords |
 | `0x006E` | visual equipment | `update_agent_visual_equipment` | same | ported |
-| `0x0070` | hard mode | `hard_mode_unlocked` | same | ported |
+| `0x0070` | hard mode | `hard_mode_unlocked` | same, and the byte is the character's campaign completion (`prophecies_finished`, `factions_finished`, `nightfall_finished`), not a map or a hardcoded 1 | ported |
 | `0x008A` | cartography data (262) | `cartography_data` | `instance_packets::cartography_data` | ported |
 | `0x008B` | map init start (14) | `map_init_start` | `instance_packets::map_init_start` | ported |
 | `0x0094` | unlocked lists (662) | `map_update_unlocked_list` | same | ported |
@@ -169,8 +169,8 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x009C` | morale | `agent_update_morale` | same | ported |
 | `0x009F` | agent property, int | `agent_property_update_int` | same | ported |
 | `0x00A2` | agent property, float | `agent_property_update_float` | same | ported |
-| `0x00B0` | a player's party size | `player_update_party_size` | `party_packets::player_update_party_size` | ported |
-| `0x00B1` | a player's party | `player_update_party` | `party_packets::player_update_party` | ported |
+| `0x00B0` | a player's party size | `player_update_party_size` (`game/mod.rs:2146-2161`, ASURA `071735e`: five bytes) | `party_packets::player_update_party_size` | ported (twelve bytes until 2026-11-22: a live client read the rest as `0x0000` and dropped with error 7) |
+| `0x00B1` | a player's party | `player_update_party` (`game/mod.rs:2163-2171`, ASURA `071735e`: six bytes) | `party_packets::player_update_party` | ported (twelve bytes until 2026-11-22) |
 | `0x00B6` | unlocked professions | `player_update_unlocked_professions` | same | ported |
 | `0x00B7` | profession | `player_update_profession` | same | ported |
 | `0x00DA` | skillbar (79) | `skillbar_update` | eight empty slots and eight zero masks, as ASURA sends them | ported |
@@ -201,7 +201,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x0196` | the entry position (26) | `instance_load_spawn_point` | same | ported |
 | `0x0198` | manifest done | `instance_manifest_done(phase, map_id)` | the 877 sentinel then the map, as ASURA sends them | ported |
 | `0x0199` | manifest phase | `instance_manifest_phase` | same | ported |
-| `0x019A` | instance load info | `instance_load_info` | same | ported |
+| `0x019A` | instance load info | `instance_load_info` | same, and its agent is the id drawn **before** the load head, so it always matches the `0x0020` the load creates | ported |
 | `0x01A0` | the instance table (102) | `instance_table` | `instance_packets::instance_table` | ported: ASURA's shape, and the content is every row with an `instance_value` - 137 pairs in ten batches |
 | `0x01AC` | ready for a spawn | `ready_for_map_spawn` | same | ported |
 | `0x01B3` | which party the character is in | `character_update_party` | same | ported |
@@ -234,7 +234,7 @@ setting that selects one.
 | title definitions and selection (`0x00F3`, `0x00F6`, `0x8058`, `0x8059`, `0x00F4`) | `asura-protocol/src/packets.rs:422-423,771-774` defines the messages; ASURA has no title handler | The Northlands capture places the title block after progress and flags and before `0x018E` (seq 534-582). Kryta sends current and next ranks before their track and omits deprecated rows 11 and 12. Retail selection returns a single displayed rank (`login-unfiltered-9292.jsonl`, seq 659-775). Hide clears it with rank zero (Preforged `packets-1360-15821281.jsonl:36252`). The loaded district distributes this value to peers. | **ours**, partial. The test states, selection, and clear are sent. Earning and persistence are outside this slice. [Title research](19-title-research.md) |
 | custom title text (`GET /kryta/custom-titles.json`) | ASURA `asura-webgate/src/lib.rs:136-195` has the stock login routes | The patched client fetches public custom text for rows numbered 48 and above from the same world-pack catalog that supplies the gameplay title records. The stock login and title packet layouts stay the same. | **ours**, approved custom-client extension. [Title research](19-title-research.md) |
 | the travel | the redirect `0x01A6`, `0x0099` in its twelve-byte form, `0x00B0`, `0x00B1`, `0x005A`, `0x0021` (`travel.rs:480-518`) | the same eight, in the same order, out of `begin_transfer` | ported: the crossing starts it from a step (`cross_portal`) and hands its landing over; the seat reservation is 7.4's named difference |
-| a player joining a map others are in | `introduction` (`0x0059`, `0x00B0`, `0x00B1`, `0x0020`) and `farewell` (`0x005A`, `0x0021`) (`instance.rs:432-473`, `player.rs:499-532`) | the same, plus the worn items in the unnamed form and the agent's look, out of `game/Districts/Peers.rs` | ported |
+| a player joining a map others are in | `introduction` (`0x0059`, the guild block, `0x00B0`, `0x00B1`, `0x00A6`, `0x009F` property 36, the title/`0x003C`, `0x00F0`, `0x0020`, one `0x015E` per worn item, `0x006E`, `0x0048`) and `farewell` (`0x005A`, `0x0021`) (`instance.rs:1031-1124`, `player.rs:784-851`) | the same, after the newcomer's own load block, out of `game/Districts/Peers.rs`; a guilded peer's `0x0121` and agent property 30 follow its `0x0059` (7e) | ported |
 | chat | `0x005D` body plus `0x0061` who spoke, and every generated answer printed (`chat.rs:193-353`) | `0x005D`* then `0x0061`, broadcast to the map and district, and every generated answer **sent** as `0x005D`* + `0x005E` on `Channel_Global` | ported with one corrected divergence: ASURA prints the answers and its two tags are eight body bytes where the wire has three. The reference sends them (`GmChat.c:116-143`), the client renders the pair (`Rurik/studies/chat/FINDINGS.md:263-268`), and both frames go to the asker rather than the body to everyone plus a tag to one (`0012-chat-text-is-sent.md`) |
 | the exploration grid | `0x008B` then `0x008A`, 0.58-0.73 s into the load, once per instance (`cartography.rs`, `map.rs:22-48`) | the same two, right after the instance's record, with every band empty (`maps::cartography::init_frames`) | ported |
 | the instance table | `0x01A0` batches of fifteen pairs, in the same phase (`instance_table.rs`, `map.rs:49-58`) | the same batches, from every row with a value (`maps::instance_table::table_for`) | ported |
@@ -255,6 +255,9 @@ setting that selects one.
 | sequences ported whole | **11 of 11**, none ported thin and none missing |
 | the packet table | identical, 782 rows (682 game + 100 auth) |
 | `ASURA/crates/asura-world/src` | 36 files | all 36 have a verdict in 9: 29 ported (code or data), 4 this tree's arrangement, 3 ASURA's own harness |
+
+These counts are measured against ASURA `ca9f532`. The party subject (7c) comes from the newer `071735e`
+and is beyond them: it adds six requests handled and eighteen builders, and its verdict is in 7c.
 
 ## 7. The defects, in the order the client feels them
 
@@ -307,14 +310,14 @@ setting that selects one.
 
 **Two client-visible values this reading corrected.**
 
-- `0x019A`'s explorable byte was `0` for an outpost here and is `1` for every load in ASURA: the
-  reference hardcodes 1 with the comment `// what to put here?`
-  (`ASURA/crates/asura-protocol/src/game/mod.rs:530-534`; its only caller passes 1,
-  `ASURA/crates/asura-world/src/map.rs:34-42`). Corrected in round 17.
-- `0x01A6`'s `is_explorable` was the destination's own kind here, which is ASURA's `auto` mode and not
-  its default: ASURA sends **0 for every travel** unless `ASURA_TRAVEL_EXPLORABLE` says otherwise,
-  because at 1 an explorable's load waited 5138 ms against 849 ms at 0 (`travel.rs:21-42`). It is now
-  `World.TravelExplorable` (`0`, `1`, `auto`), defaulting to ASURA's `0`.
+- `0x019A`'s explorable byte is the map's own kind: **0 for a town or outpost and 1 for an
+  explorable** (`ASURA/crates/asura-world/src/map.rs:76-86`, `load_info_explorable`). Round 17 made
+  it 1 for every load from an older ASURA build; that made Ascalon City load as an explorable. It is
+  now 0 for map type 0 and 1 for every other hosted type, so the client keeps party changes in an
+  outpost and closes them in an explorable.
+- `0x01A6`'s `is_explorable` remains `World.TravelExplorable` (`0`, `1`, `auto`), defaulting to
+  ASURA's `0`: at 1 an explorable's load waited 5138 ms against 849 ms at 0 (`travel.rs:146-176`).
+  The destination's own kind is still what `0x019A` reports on arrival.
 
 
 
@@ -477,6 +480,100 @@ road.
 
 Nothing in 1-4 is restructured or improved. The types keep ASURA's names and field order; the search
 keeps its traversal order, its tie-breaking and its quirks; the dump keeps its byte layout.
+
+## 7c. The party subject
+
+**Opened:** `game/Parties/mod.rs` and `game/Parties/Rules.rs`, with the handlers that answer them -
+`Handlers/ChatHandler.rs` for `/resign`, `Handlers/TravelHandler.rs` for the world-map travel, its
+countdown, its cancel and the defeated leader's return, and `Server/Packets/PartyPackets.rs` for every
+frame. **Verdict: ported for the outpost and travel flows**, with the pieces under the table named as
+not here.
+
+| area | what | this tree | verdict |
+|---|---|---|---|
+| sizes | the pack's `party_sizes.json` | `World::load_party_sizes`, `World::max_party_size`; a map the file does not list takes `PartySizeCap` (R15, default 8) | ported |
+| load tail | the party state a load ends with | `parties::load_tail`, `splice_load_tail`, inserted before the finish | ported |
+| table | a party, an absent member, one table per running copy | `Party` (id, leader, members, absent, moving, countdown, resigned, dead, defeated), `Absence`, `Table`, and `Parties` per `(map, district)` | ported |
+| frames | the member stream, the size-and-leader pair, the load section, the in-map notices | `member_stream`, `size_and_leader`, `load_section`, `splice_load_section`, `in_map_notices`; delivery through `Peers::send_to` | ported |
+| requests | invite, withdraw, decline, accept with its merge, leave, kick | `handle_invite`, `handle_cancel`, `handle_refuse`, `handle_accept`, `handle_leave`, `handle_kick`, each answering a plan | ported |
+| departure | what the member, its party and the bystanders are told | `departure`, `left_instance` | ported |
+| resign | `/resign`, the delayed death, the party's defeat, the leader's return | `ChatHandler::answer_resign` marks the member and dies after `World.ResignSecs`; `0x01D9` is sent when every present member resigned; `TravelHandler::answer_return_to_outpost` answers `0x80A7` from the leader's `last_outpost` | ported |
+| travel as one | a doorway crossing or a leader's world-map travel moves the party | `World::queue_travel` asks each present member's session to run the same redirect; `World::hold_party`/`take_held_party` and `Table::adopt`/`arrive_member` carry the roster; the destination district is chosen on arrival | ported |
+| leader countdown | the lock, the timer, the two confirmation questions, the cancel | `TravelHandler::answer_party_travel` sends `0x01E7 {4}`/`{5}` when it must ask, holds the roster, sends `0x01DA {2, 1}` and `0x01BC` with the map's `name_id`, and the timer moves the party after `World.CountdownSecs`; `0x80A3` cancels it and sends `0x01DA {0, 0}` | ported |
+| leave map | a logout, a drop or a travel | `left_instance`: an explorable with company keeps the member as the grey shadow (`0x00B1 {0}`, `0x01CE`); elsewhere the member is removed and its invitations are closed | ported |
+
+What is not here: the database party ledger (a party crosses a map in this world's memory, through
+`World::hold_party`, so a restart or a second world has no roster); the timed expiry of a held place
+(`rules::holds_on_disconnect` is tested, but `left_instance` keeps the shadow until the copy ends); the
+truncation of a party that arrives at a smaller cap (`rules::travelling_count` is tested, but the
+travel handler does not yet drop the tail into parties of one); `present_characters`; heroes and
+henchmen; party search and the difficulty toggle. These are named so the next round starts from them,
+not from a claim that the subject is whole.
+
+Every party batch also reaches the other players through `Peers::introduction`, whose size-and-leader
+pair reads the party table and whose burst is the whole introduction (professions, level, flags word or
+title, effects, the items it wears, visual equipment and cape), sent after the player's own block. The
+guild block arrived with 7e.
+
+## 7e. The guild and experience subjects, from ASURA `071735e`
+
+**Opened:** the guild subject is five ASURA files - `asura-world/src/guild.rs` (819 lines),
+`asura-protocol/src/game/guild.rs` (665), `asura-rules/src/guild.rs` (277), `asura-db/src/guilds.rs`
+(343) and `migrations/0029_guilds.sql`, with `config/Server/guilds.json` - and the experience subject is
+`asura-rules/src/experience.rs` (124), `asura-world/src/experience.rs` (89), `player.rs:341-353` and
+`:460-569`, `chat.rs:288-302` and `:612-648`, `migrations/0036_character_experience.sql`, with
+`config/World/Vanilla/experience.json`. **Carried:** all of them. Neither subject exists at `ca9f532`, so
+the counts in 6 do not include them. What each message is, with its capture, is ASURA's
+`docs/41-guild-system-research.md` and `docs/54-experience.md`.
+
+| ASURA | this tree | verdict |
+|---|---|---|
+| `asura-protocol/src/game/guild.rs` - every builder (`0x0118`, `0x0119`, `0x011C`, `0x011F`, `0x0121`, `0x0127`, `0x0128`, `0x012F`, `0x0131`, `0x0132`, `0x0133`, `0x00CC`), the registration window (`0x00C4`, `0x0084`, `0x00CA`, `0x00C3 {8, 0}`), the four readers, the date encoding, every test | `game/Server/Packets/GuildPackets.rs` | ported |
+| `asura-rules/src/guild.rs` | `game/Guilds/mod.rs`, the rules half | ported |
+| `asura-world/src/guild.rs:35-200` - `Membership`, `Badge`, `LocalIds`, `badge_frames`, `load_frames`, `splice_into_player_block` | `game/Guilds/mod.rs`; the local ids are one table per `(map, district)` in `Peers` | ported |
+| `asura-world/src/guild.rs:202-710` - `/guild create`, `0x8036`, `0x80B5`, `0x80BB`, `0x80BE`, each batch in ASURA's order | `game/Handlers/GuildHandler.rs`, dispatched as `dispatch.rs:116-129` dispatches them | ported |
+| `instance.rs:1047-1051` - a guilded peer's badge in its introduction; `connection.rs:405-449` - the guild read at load; `player.rs:740-756` - the guild block before `PARTY_CREATE` | `Peers::introduction`, `WorldSession::load_guild`, `splice_guild_block` | ported |
+| `asura-db/src/guilds.rs`, `0029_guilds.sql` | `game/Guilds/Repository.rs`, `data/sql/base/db_characters/0009-guilds.sql` | ported, three differences of arrangement: ids are the `uuid` text every character table here uses, numbers are `BIGINT`, and the two character columns carry no foreign key (the file sorts before `characters.sql`), so `DatabaseCharacters::remove` deletes them as ASURA's cascade does. `create` is one statement instead of a two-statement transaction |
+| `asura-config/src/lib.rs:916-966`, `Guilds` | `guilds::Settings`, `config/Server/guilds.json` (`GuildsFile`) | ported; a missing file stops the program (rule 7) where ASURA refuses each request |
+| `asura-rules/src/experience.rs`, `asura-world/src/experience.rs` | `game/Characters/Experience.rs`, `config/World/Vanilla/experience.json` | ported |
+| `player.rs:341-353` - the progress record carries the row's experience and skill points | `Agents/Player.rs`, `progress_record` | ported |
+| `player.rs:462-569` - `set_experience`: the row first, then `0x00EE {0, delta}` for a rise of one level or less, the whole `0x00E9` otherwise, nothing else | `Handlers/CharacterHandler.rs`, `answer_experience`; `0x00EE` is `character_packets::agent_kill_reward` | ported |
+| `chat.rs` - `/guild`, `/.exp <total>`, `/xp`, `/xp <total>` | `config/Server/commands.json` rows `guild`, `.exp`, `xp` | **ported thin**: one name is one row here (`Chat/Commands.rs`), so `/xp` only reads and `/xp <total>` answers "Unknown command"; `/.exp <total>` sets |
+| `0036_character_experience.sql` | `data/sql/base/db_characters/0008-character-progress.sql` (`experience` was already a column) | **ported thin**: ASURA's backfill of existing rows is an `UPDATE`, which a schema file may not run here (rule 7), so a character created before this file keeps experience 0 until its next `/.exp` |
+
+What ASURA itself does not do is not done here either, and is listed so it is not mistaken for a gap of
+the port: gold for creation and invitations (the prices are placeholders, read and logged), the creation
+batch's server chat line, the invitee's `0x0123` and the accept, kicks, promotions, guild chat, guild halls,
+capes, the roster and history a load carries beyond the founder's row, telling other members of an
+announcement, and experience from kills or quests.
+
+## 7d. The cartography subject, surveyed for the next round
+
+**Opened:** `ASURA/crates/asura-world/src/cartography.rs`, 1,968 lines at ASURA `071735e`, against the
+219 lines of `ca9f532` that `game/Maps/Cartography.rs` ports (the announcement and empty bands only).
+**Carried:** none yet. Why the world map neither fills in nor follows the player here: this tree sends
+an all-fogged grid on every load and never sends `0x008C`, the mark that reveals a block as a character
+walks, and nothing keeps a character's explored blocks.
+
+| `cartography.rs` lines | what | needs |
+|---|---|---|
+| 1-165 | the format's reading (bands of 16 rows, byte-sum runs, revealed first, full-dword flush), `TYRIA` dims, `RETAIL_STREAM`, `FULL_STREAM`, `grid_for`, `continent_for` | nothing new |
+| 166-320 | `Grid`: a byte per block, `explore`, `explore_span`, `explore_disc`, `packed`/`from_packed` (LSB-first, row-major) | nothing new |
+| 322-440 | `encode_grid`, `decode_grid`: the two halves of the stream; round-trip ArenaNet's own 38 bytes | nothing new |
+| 443-600 | `startup_blob`, `override_blob`, `stream_for`, `init_carries_stored`, the in-memory refused-init set, `left_out_of_init`, `init_safe` (each band's last 32 blocks cleared), `init_frames_for`, `frames_for` | ASURA's `ASURA_CARTOGRAPHY*` switches would be settings here (`docs/port/04-configuration.md`), not environment variables |
+| 610-640 | `mark_frames`: `0x008C {x, y, 1}` windows of 3 x 3 | the `0x008C` builder (`game/mod.rs:1204-1211`, `map_exploration_mark`, 11 bytes) |
+| 641-760 | `map_rect` (the client's world-map rectangles, upper bounds exclusive; a mark outside one is an immediate `007`), `PRE_SEARING_MAPS`, `pre_searing_union`, `reveal_centres`, `pre_searing_footprint`, `map_shift` (keyed by map), the 96 and 32 unit constants, `LAKESIDE_ANCHOR` | only the pre-Searing rectangles are known; every other map reveals nothing, in ASURA too |
+| 761-822 | `block_at` (WorldCompletion's transform, y flipped, `ceil - 1`), `mark_centre` (clamped to the proven-safe envelope) | nothing new |
+| 824-1090 | `mark_interval`, `replay_start_delay` (ASURA's `intervals.json`), `Walker` (`replay`, `advance`, `queue`, `halt`), `Marker`, `replay_centres`, `spawn_marker` (a paced task, one mark per interval), `footprint_marks` | two settings, a per-session marker task fed from the movement handler, and halting it on travel |
+| 1092-1968 | 45 tests, ArenaNet's stream and the client's two proven blocks among them | ported with the code |
+
+Beside it: `asura-db/src/cartography.rs` (145 lines) and migration `0027_character_cartography.sql` - one
+row per character and continent, `dims_x`, `dims_y` and the packed bits, read when a connection is built
+and written beside the position when it ends (`connection.rs:357-371`, `player.rs:630-648`); the load's
+call (`map.rs:36-60`, `init_frames_for`); the replay after `INSTANCE_LOAD_FINISH` (`player.rs:890-905`);
+the spawn that clears a refused init (`dispatch.rs:32`); and the titles' exploration sync, which reads the
+same grid. The order for the round: the grid and its stream (1-600, with the tests), then the schema and
+its read and write, then `0x008C` and the walker wired into the movement handler and the travel halt.
 
 ## 8. The order this audit imposes
 

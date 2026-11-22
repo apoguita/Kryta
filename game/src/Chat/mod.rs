@@ -52,9 +52,7 @@ pub fn travel_target(argument: &str) -> Option<&'static TravelTarget> {
     if wanted.is_empty() {
         return None;
     }
-    TRAVEL_TARGETS
-        .iter()
-        .find(|target| target.alias == wanted)
+    TRAVEL_TARGETS.iter().find(|target| target.alias == wanted)
 }
 
 /// The reference's `/maps`, line for line (`GmCommand_ListTargets`), as the working implementation
@@ -132,10 +130,7 @@ pub fn maps_answer(maps: &[MapEntry]) -> MappedMaps {
         table.push(format!("  /tp {alias:<15} -> map {map_id:>3}  {label}"));
     }
 
-    MappedMaps {
-        chat: lines,
-        table,
-    }
+    MappedMaps { chat: lines, table }
 }
 
 #[cfg(test)]
@@ -150,6 +145,7 @@ mod tests {
             file_id: 0,
             name: name.to_string(),
             instance_value: None,
+            name_id: None,
         }
     }
 
@@ -166,7 +162,10 @@ mod tests {
     fn a_target_is_found_by_the_alias_the_reference_lists() {
         // Two spellings, one map: the reference's `s_teleport_targets` lists both.
         assert_eq!(travel_target("lakeside").map(|t| t.map_id), Some(146));
-        assert_eq!(travel_target("Lakeside County").map(|t| t.map_id), Some(146));
+        assert_eq!(
+            travel_target("Lakeside County").map(|t| t.map_id),
+            Some(146)
+        );
         assert_eq!(travel_target("kamadan").map(|t| t.map_id), Some(449));
         // The table is exact, and an empty argument names nothing.
         assert!(travel_target("lakesidecounty").is_none());
@@ -199,10 +198,7 @@ mod tests {
         assert_eq!(answer.table.len(), 3);
         // The chat half names one alias per map - the first - and ends with the reference's sentence.
         assert_eq!(answer.chat[0], "Maps: ascalon,");
-        assert_eq!(
-            answer.chat[1],
-            "Use: /tp <name>, e.g. /tp lakeside county"
-        );
+        assert_eq!(answer.chat[1], "Use: /tp <name>, e.g. /tp lakeside county");
     }
 
     /// A hosted map the table does not name gets one row of its own, with the alias made from its name,

@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -29,9 +29,9 @@ use chrono::Local;
 
 use super::appender_console::AppenderConsole;
 use super::appender_file::AppenderFile;
-use super::log_common::{AppenderFlags, AppenderType, LogLevel, LOGGER_ROOT};
-use super::logger::{Logger, SharedAppender};
+use super::log_common::{AppenderFlags, AppenderType, LOGGER_ROOT, LogLevel};
 use super::log_message::LogMessage;
+use super::logger::{Logger, SharedAppender};
 use crate::configuration::{Config, ConfigError};
 
 /// The format a file-name timestamp uses.
@@ -127,7 +127,10 @@ impl Log {
 
             next_id = next_id.saturating_add(1);
 
-            let tokens: Vec<String> = options.split(',').map(|part| part.trim().to_string()).collect();
+            let tokens: Vec<String> = options
+                .split(',')
+                .map(|part| part.trim().to_string())
+                .collect();
             if tokens.len() < 3 {
                 notes.push(format!(
                     "Log::CreateAppenderFromConfig: Wrong configuration for appender {name}. Config line: {options}"
@@ -198,7 +201,11 @@ impl Log {
     }
 
     fn create_loggers(&self, config: &Config, notes: &mut Vec<String>) -> Result<(), String> {
-        let appenders = self.inner.appenders.lock().map_err(|_| "appenders poisoned")?;
+        let appenders = self
+            .inner
+            .appenders
+            .lock()
+            .map_err(|_| "appenders poisoned")?;
         let mut loggers = self.inner.loggers.lock().map_err(|_| "loggers poisoned")?;
 
         for key in config.keys().map(str::to_string).collect::<Vec<_>>() {
@@ -432,7 +439,10 @@ mod tests {
     #[test]
     fn a_kind_falls_back_to_its_parent_and_then_to_root() {
         let dir = temp_dir("fallback");
-        let config = config_in(&dir, "Appender.Auth = 2,5,0,Auth.log,w\nLogger.root = 4,Auth\n");
+        let config = config_in(
+            &dir,
+            "Appender.Auth = 2,5,0,Auth.log,w\nLogger.root = 4,Auth\n",
+        );
 
         let log = Log::new();
         log.initialize(&config).unwrap();
@@ -490,18 +500,28 @@ mod tests {
     #[test]
     fn a_wrong_appender_line_is_reported() {
         let dir = temp_dir("wrong-line");
-        let config = config_in(&dir, "Appender.Broken = not,enough\nLogger.root = 4,Broken\n");
+        let config = config_in(
+            &dir,
+            "Appender.Broken = not,enough\nLogger.root = 4,Broken\n",
+        );
 
         let log = Log::new();
         let notes = log.initialize(&config).unwrap();
-        assert!(notes.iter().any(|note| note.contains("Wrong configuration for appender Broken")));
+        assert!(
+            notes
+                .iter()
+                .any(|note| note.contains("Wrong configuration for appender Broken"))
+        );
         log.shutdown();
     }
 
     #[test]
     fn a_disabled_level_lets_nothing_through() {
         let dir = temp_dir("disabled");
-        let config = config_in(&dir, "Appender.Auth = 2,5,0,Auth.log,w\nLogger.root = 0,Auth\n");
+        let config = config_in(
+            &dir,
+            "Appender.Auth = 2,5,0,Auth.log,w\nLogger.root = 0,Auth\n",
+        );
 
         let log = Log::new();
         log.initialize(&config).unwrap();
@@ -509,8 +529,10 @@ mod tests {
         log.out(LogLevel::Fatal, "root", "silent");
         log.shutdown();
 
-        assert!(std::fs::read_to_string(dir.join("Auth.log"))
-            .map(|text| text.is_empty())
-            .unwrap_or(true));
+        assert!(
+            std::fs::read_to_string(dir.join("Auth.log"))
+                .map(|text| text.is_empty())
+                .unwrap_or(true)
+        );
     }
 }

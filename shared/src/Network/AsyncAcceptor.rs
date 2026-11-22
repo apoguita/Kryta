@@ -8,8 +8,8 @@
 
 use std::io::ErrorKind;
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -132,7 +132,10 @@ mod tests {
         let arrived = receiver.recv_timeout(Duration::from_secs(5));
         acceptor.close();
 
-        assert!(arrived.is_ok(), "the acceptor never handed the connection on");
+        assert!(
+            arrived.is_ok(),
+            "the acceptor never handed the connection on"
+        );
     }
 
     #[test]

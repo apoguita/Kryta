@@ -5,7 +5,11 @@ The faithful base pack: the client's own vocabulary and the values a faithful wo
 ```text
 Vanilla/
   titles.json         vanilla title IDs and editable custom titles
+  party_sizes.json    how many players a party may hold, per map (ASURA's own file; every other map
+                      takes the world's PartySizeCap)
   vanilla-title-wire.json   captured vanilla title packet records
+  experience.json     the experience curve and the skill points a level grants (ASURA's own file;
+                      game/Characters/Experience.rs)
   maps/               one folder per map, by campaign, area, kind and id:
                         <campaign>/<area>/<kind>/<map id>/basic.json    the map's own record
                         <campaign>/<area>/<kind>/<map id>/spawns.json   where a character may stand

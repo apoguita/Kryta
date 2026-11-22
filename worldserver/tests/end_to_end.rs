@@ -20,13 +20,13 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use common::configuration::{Config, Policy};
 use common::logging::Log;
-use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
+use database::database::{DatabaseKind, DatabaseWorkerPool, read_settings};
 use game::server::packets::instance_packets;
 use game::server::protocol::GameVersion;
 use shared::cryptography::handshake::{
@@ -439,7 +439,10 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
                     .expect("the character row is readable");
                 rows[0].get(0)
             };
-            assert_eq!(start_map, 148, "it starts in the outpost it was created for");
+            assert_eq!(
+                start_map, 148,
+                "it starts in the outpost it was created for"
+            );
         }
 
         // The load of map 148, in the measured order, against the program. The version message
@@ -466,7 +469,10 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             .expect("the maps are readable")
             .0;
         let (table, notes) = game::maps::instance_table::table_for(&hosted);
-        assert!(notes.is_empty(), "no map id fails the wire's width: {notes:?}");
+        assert!(
+            notes.is_empty(),
+            "no map id fails the wire's width: {notes:?}"
+        );
         let table_frames = table.frames();
         assert!(
             table.pairs.contains(&(148, 0xBB14_F539)),
@@ -503,7 +509,11 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         // And the grid: the announcement, then one slice of the compressed bands - every band empty,
         // which is what a character that has explored nothing has.
         let grid_at = name_at + name_size + 16;
-        assert_eq!(&block[grid_at..grid_at + 2], &[0x8B, 0x00], "the grid's dims");
+        assert_eq!(
+            &block[grid_at..grid_at + 2],
+            &[0x8B, 0x00],
+            "the grid's dims"
+        );
         assert_eq!(
             &block[grid_at..grid_at + 14],
             grid[0].as_slice(),
@@ -536,22 +546,18 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         let tables = game::creation::Tables::load(
             "../config/World/Vanilla/creation/inventory.json",
             "../config/World/Vanilla/creation/equipment.json",
-            Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
+            Some(std::path::Path::new(
+                "../config/World/Vanilla/creation/worn_slots.json",
+            )),
             &Log::new(),
         )
         .expect("the creation data");
-        let templates = game::data_stores::DatabaseItems::new(
-            Arc::clone(&world_pool),
-            Log::new(),
-        )
-        .list()
-        .expect("the item templates are readable");
-        let held = game::characters::DatabaseCharacters::new(
-            Arc::clone(&characters),
-            Log::new(),
-        )
-        .items_of(&uuid_text)
-        .expect("the character's items are readable");
+        let templates = game::data_stores::DatabaseItems::new(Arc::clone(&world_pool), Log::new())
+            .list()
+            .expect("the item templates are readable");
+        let held = game::characters::DatabaseCharacters::new(Arc::clone(&characters), Log::new())
+            .items_of(&uuid_text)
+            .expect("the character's items are readable");
         assert!(!held.is_empty(), "the load had items to draw");
         let inventory = game::creation::inventory_from_held(
             game::creation::bags(&tables),
@@ -562,7 +568,9 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         let mut expected_items = game::creation::load_item_stream(&inventory, 0);
         expected_items.push(game::server::packets::misc_packets::hard_mode_unlocked(1));
         expected_items.push(game::server::packets::character_packets::character_update_info(""));
-        expected_items.push(game::server::packets::misc_packets::map_update_current(148, 0));
+        expected_items.push(game::server::packets::misc_packets::map_update_current(
+            148, 0,
+        ));
         expected_items.push(instance_packets::ready_for_map_spawn(0));
         expected_items.push(instance_packets::instance_manifest_phase(0));
         expected_items.push(instance_packets::instance_manifest_phase(1));
@@ -637,7 +645,6 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             "the point is scattered within the world's spawn scatter of one of the map's own spawns ({x}, {y})"
         );
 
-
         // The players ask: the PvP halves, the character's body and the end of the load. The ask's
         // own wire is nineteen bytes: a sixteen-byte blob and one byte (docs/port/02-wire.md row 14).
         let mut ask = vec![0u8; 19];
@@ -648,7 +655,10 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         let players = read_frames(&mut stream, &mut reading, 0x018E, 1);
         assert_eq!(&players[0].1[..2], &[0x1D, 0x00], "no unlocked PvP skills");
         // The heroes half is the one a load sends: eight dwords, every bit set.
-        assert_eq!(players[1].0, 0x0018, "the unlocked-hero bitmap: {players:?}");
+        assert_eq!(
+            players[1].0, 0x0018,
+            "the unlocked-hero bitmap: {players:?}"
+        );
         assert_eq!(
             players[1].1.len(),
             36,
@@ -670,7 +680,9 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         let party_at = headers
             .iter()
             .position(|header| *header == 0x01D3)
-            .unwrap_or_else(|| panic!("the party is created in the players answer: {headers:04X?}"));
+            .unwrap_or_else(|| {
+                panic!("the party is created in the players answer: {headers:04X?}")
+            });
         assert_eq!(
             &headers[party_at..party_at + 4],
             &[0x01D3, 0x01CC, 0x01D4, 0x01B3],
@@ -729,22 +741,18 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         let tables = game::creation::Tables::load(
             "../config/World/Vanilla/creation/inventory.json",
             "../config/World/Vanilla/creation/equipment.json",
-            Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
+            Some(std::path::Path::new(
+                "../config/World/Vanilla/creation/worn_slots.json",
+            )),
             &Log::new(),
         )
         .expect("the creation data");
-        let templates = game::data_stores::DatabaseItems::new(
-            Arc::clone(&world_pool),
-            Log::new(),
-        )
-        .list()
-        .expect("the item templates are readable");
-        let held = game::characters::DatabaseCharacters::new(
-            Arc::clone(&characters),
-            Log::new(),
-        )
-        .items_of(&uuid_text)
-        .expect("the character's items are readable");
+        let templates = game::data_stores::DatabaseItems::new(Arc::clone(&world_pool), Log::new())
+            .list()
+            .expect("the item templates are readable");
+        let held = game::characters::DatabaseCharacters::new(Arc::clone(&characters), Log::new())
+            .items_of(&uuid_text)
+            .expect("the character's items are readable");
         assert!(!held.is_empty(), "the load had items to operate on");
 
         // 9. A drag: the row moves when the placement is one the character may have, and the client is
@@ -773,26 +781,36 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         stream.write_all(&ask).expect("the drag");
         let mut placed = read_exact(&mut stream, 11);
         reading.apply(&mut placed);
-        assert_eq!(&placed[..2], &[0x3E, 0x01], "the placement: {}", shared::network::socket::hex(&placed));
+        assert_eq!(
+            &placed[..2],
+            &[0x3E, 0x01],
+            "the placement: {}",
+            shared::network::socket::hex(&placed)
+        );
         assert_eq!(&placed[4..8], &dragged.item_id.to_le_bytes(), "the item");
         assert_eq!(&placed[8..10], &backpack.id.to_le_bytes(), "the bag");
         assert_eq!(placed[10], free, "the slot");
         {
-            let after = game::characters::DatabaseCharacters::new(Arc::clone(&characters), Log::new())
-                .items_of(&uuid_text)
-                .expect("the character's items are readable");
+            let after =
+                game::characters::DatabaseCharacters::new(Arc::clone(&characters), Log::new())
+                    .items_of(&uuid_text)
+                    .expect("the character's items are readable");
             let row = after
                 .iter()
                 .find(|row| row.item_id == dragged.item_id)
                 .expect("the dragged item is still the character's");
-            assert_eq!((row.bag_id, row.slot), (backpack.id, free), "the row is the state");
+            assert_eq!(
+                (row.bag_id, row.slot),
+                (backpack.id, free),
+                "the row is the state"
+            );
         }
 
         // A move into an occupied slot is refused with where the item really is: the client has already
         // moved it in its own model, so the answer puts it back where it sits.
-        let occupied = held
-            .iter()
-            .find(|row| row.bag_id == backpack.id && row.slot == 0 && row.item_id != dragged.item_id);
+        let occupied = held.iter().find(|row| {
+            row.bag_id == backpack.id && row.slot == 0 && row.item_id != dragged.item_id
+        });
         if let Some(blocker) = occupied {
             let mut ask = vec![0u8; 9];
             ask[0..2].copy_from_slice(&0x8072u16.to_le_bytes());
@@ -805,7 +823,11 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             reading.apply(&mut back);
             assert_eq!(&back[..2], &[0x3E, 0x01], "the refusal is a placement");
             assert_eq!(&back[4..8], &dragged.item_id.to_le_bytes(), "the item");
-            assert_eq!(&back[8..10], &backpack.id.to_le_bytes(), "where it really is");
+            assert_eq!(
+                &back[8..10],
+                &backpack.id.to_le_bytes(),
+                "where it really is"
+            );
             assert_eq!(back[10], free, "its own slot, not the occupied one");
             assert_eq!(blocker.slot, 0, "the blocker still sits in slot 0");
         }
@@ -834,7 +856,8 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             Some((row.item_id, template.item_type))
         });
         if let Some((item_id, item_type)) = wearable {
-            let worn_slot = game::creation::worn_slot(worn_table, item_type).expect("the kind is worn");
+            let worn_slot =
+                game::creation::worn_slot(worn_table, item_type).expect("the kind is worn");
             // Whatever is worn there now is taken off first, and the client is told that placement
             // before the item's own: the eviction comes first, exactly as ASURA sends it.
             let occupant = held
@@ -858,7 +881,11 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             reading.apply(&mut placed);
             assert_eq!(&placed[..2], &[0x3E, 0x01], "the placement");
             assert_eq!(&placed[4..8], &item_id.to_le_bytes(), "the item");
-            assert_eq!(placed[8..10], equipped_bag.id.to_le_bytes(), "the equipped bag");
+            assert_eq!(
+                placed[8..10],
+                equipped_bag.id.to_le_bytes(),
+                "the equipped bag"
+            );
             assert_eq!(placed[10], worn_slot, "the slot its kind is worn in");
             // And what the agent is drawn wearing is sent again, because that is the one thing the
             // client cannot work out for itself.
@@ -893,12 +920,10 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         reading.apply(&mut next);
         assert_eq!(&next[..2], &[0x1E, 0x00], "a drop is answered with nothing");
         {
-            let held = game::characters::DatabaseCharacters::new(
-                Arc::clone(&characters),
-                Log::new(),
-            )
-            .items_of(&uuid_text)
-            .expect("the character's items are readable");
+            let held =
+                game::characters::DatabaseCharacters::new(Arc::clone(&characters), Log::new())
+                    .items_of(&uuid_text)
+                    .expect("the character's items are readable");
             let after = held
                 .iter()
                 .find(|row| row.item_id == dropped.0)
@@ -924,7 +949,11 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             if answered[..2] == [0x0D, 0x00] {
                 break;
             }
-            assert_eq!(&answered[..2], &[0x1E, 0x00], "only a tick comes before the reply");
+            assert_eq!(
+                &answered[..2],
+                &[0x1E, 0x00],
+                "only a tick comes before the reply"
+            );
         }
         assert_eq!(
             &answered[2..6],
@@ -962,9 +991,17 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             8,
             "eight units: two wrapper units, the five of \"hello\", and the terminator (0012)"
         );
-        assert_eq!(&said[4..6], &0x0108u16.to_le_bytes(), "the All-chat body wrapper");
+        assert_eq!(
+            &said[4..6],
+            &0x0108u16.to_le_bytes(),
+            "the All-chat body wrapper"
+        );
         assert_eq!(&said[6..8], &0x0107u16.to_le_bytes(), "the literal mark");
-        assert_eq!(&said[8..18], b"h\0e\0l\0l\0o\0", "the line itself, as UTF-16");
+        assert_eq!(
+            &said[8..18],
+            b"h\0e\0l\0l\0o\0",
+            "the line itself, as UTF-16"
+        );
         assert_eq!(&said[18..20], &0x0001u16.to_le_bytes(), "the terminator");
         assert_eq!(&said[20..22], &[0x61, 0x00], "who spoke it");
         assert_eq!(u16::from_le_bytes([said[22], said[23]]), 1, "the speaker");
@@ -1051,7 +1088,9 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         }
         assert_eq!(
             headers,
-            vec![0x00F1, 0x0028, 0x01A6, 0x0099, 0x00B0, 0x00B1, 0x005A, 0x0021],
+            vec![
+                0x00F1, 0x0028, 0x01A6, 0x0099, 0x00B0, 0x00B1, 0x005A, 0x0021
+            ],
             "the redirect's eight frames, in the working implementation's order"
         );
         // The twelve-byte map update names the map the client is being sent to: the effect, the stop
@@ -1077,8 +1116,7 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
                     )
                     .expect("the instance table is readable");
                 // The column is `timestamptz`: a null is an empty copy that is still held.
-                let empty: Option<std::time::SystemTime> =
-                    rows.first().and_then(|row| row.get(0));
+                let empty: Option<std::time::SystemTime> = rows.first().and_then(|row| row.get(0));
                 if rows.is_empty() || empty.is_none() {
                     released = true;
                 }
@@ -1098,7 +1136,9 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
     let _ = child.kill();
     let _ = child.wait();
     while let Ok(line) = _lines.try_recv() {
-        if line.contains("Gameplay connection") || line.contains("panicked") || line.contains("WARN")
+        if line.contains("Gameplay connection")
+            || line.contains("panicked")
+            || line.contains("WARN")
         {
             println!("world> {line}");
         }
@@ -1181,9 +1221,12 @@ fn a_second_outpost_loads_with_its_own_file_id_and_a_point_of_its_own_list() {
 
         // R12: a character starts with one unlock. The unlock a scripted travel grants at arrival is
         // written here, because a second outpost is not reachable any other way yet.
-        let repository = game::characters::DatabaseCharacters::new(Arc::clone(&characters), Log::new());
+        let repository =
+            game::characters::DatabaseCharacters::new(Arc::clone(&characters), Log::new());
         assert!(
-            repository.unlock_map(&uuid_text, MAP).expect("the unlock writes"),
+            repository
+                .unlock_map(&uuid_text, MAP)
+                .expect("the unlock writes"),
             "the unlock row is written"
         );
 
@@ -1314,7 +1357,11 @@ fn a_second_outpost_loads_with_its_own_file_id_and_a_point_of_its_own_list() {
         let mut ping = read_exact(&mut stream, 8);
         reading.apply(&mut ping);
         assert_eq!(&ping[..2], &[0x0C, 0x00], "the ping request");
-        assert_eq!(&ping[2..4], &[0x0D, 0x00], "and the reply the measured load pairs it with");
+        assert_eq!(
+            &ping[2..4],
+            &[0x0D, 0x00],
+            "and the reply the measured load pairs it with"
+        );
         assert_eq!(
             u32::from_le_bytes([ping[4], ping[5], ping[6], ping[7]]),
             20,
@@ -1397,7 +1444,11 @@ fn a_reconnect_to_an_explorable_resumes_where_the_character_left() {
 
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // R12: the destination has to be unlocked, as a scripted travel would.
-        assert!(repository.unlock_map(&uuid_text, MAP).expect("the unlock writes"));
+        assert!(
+            repository
+                .unlock_map(&uuid_text, MAP)
+                .expect("the unlock writes")
+        );
 
         // The map's own first spawn point: what the entry rule answers with no saved position.
         let own_point: (f64, f64) = {
@@ -1499,7 +1550,10 @@ fn a_reconnect_to_an_explorable_resumes_where_the_character_left() {
         }
         let saved = saved.unwrap_or_else(|| panic!("the leaving connection saved a position"));
         println!("saved: {saved:?}");
-        assert_eq!(saved.map_id, MAP, "the position belongs to the map it was taken in");
+        assert_eq!(
+            saved.map_id, MAP,
+            "the position belongs to the map it was taken in"
+        );
         assert!(
             (f64::from(saved.x) - f64::from(reported.0)).abs() <= 1.0
                 && (f64::from(saved.y) - f64::from(reported.1)).abs() <= 1.0,
@@ -1562,7 +1616,10 @@ fn a_reconnect_to_an_explorable_resumes_where_the_character_left() {
             (resumed.0 - own_point.0).abs() > 1.0 || (resumed.1 - own_point.1).abs() > 1.0,
             "and not on the map's own first spawn point: {own_point:?}"
         );
-        println!("resumed at ({}, {}), the point the client reported", resumed.0, resumed.1);
+        println!(
+            "resumed at ({}, {}), the point the client reported",
+            resumed.0, resumed.1
+        );
     }));
 
     {
@@ -1826,7 +1883,11 @@ fn a_step_through_ascalon_citys_arch_crosses_to_lakeside_county() {
             .expect("the redirect is in the crossing's answer");
         let transfer = &plain[at..at + 46];
         let update = &plain[at + 46..at + 58];
-        assert_eq!(&update[0..2], &[0x99, 0x00], "the map update follows the redirect");
+        assert_eq!(
+            &update[0..2],
+            &[0x99, 0x00],
+            "the map update follows the redirect"
+        );
         assert_eq!(update.len(), 12, "the redirect form is twelve bytes");
         // The four frames after the pair are in the stream whether or not the table's walker can split
         // them: the party size, the party, the player withdrawn and its agent removed
@@ -1843,7 +1904,11 @@ fn a_step_through_ascalon_citys_arch_crosses_to_lakeside_county() {
         let player_token = dword(34, transfer);
         assert_ne!(player_token, 0, "a token to reconnect with");
         assert_eq!(dword(38, transfer), 0, "is_explorable: ASURA's default 0");
-        assert_eq!(dword(42, transfer), TO, "the redirect names the map the arch leads to");
+        assert_eq!(
+            dword(42, transfer),
+            TO,
+            "the redirect names the map the arch leads to"
+        );
         assert_eq!(dword(4, update), TO, "and the map update agrees");
         println!("the redirect carries map {TO} and token 0x{player_token:08X}");
 

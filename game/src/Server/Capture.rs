@@ -61,25 +61,33 @@ pub fn install(path: &str) -> Result<(), String> {
     if path.is_empty() {
         return Ok(());
     }
-    let file = std::fs::File::create(path).map_err(|error| format!("cannot create {path}: {error}"))?;
+    let file =
+        std::fs::File::create(path).map_err(|error| format!("cannot create {path}: {error}"))?;
     let capture = Capture {
         writer: Mutex::new(BufWriter::new(file)),
         start: Instant::now(),
         seq: AtomicU64::new(0),
         last_flush: Mutex::new(Instant::now()),
     };
-    let mut writer = capture.writer.lock().unwrap_or_else(|error| error.into_inner());
+    let mut writer = capture
+        .writer
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     writeln!(
         writer,
         "{{\"record\":\"capture\",\"tool\":\"{TOOL}\",\"layer\":\"wire\",\"header_len\":2,\"started_at\":\"{}\"}}",
         timestamp()
     )
     .map_err(|error| format!("cannot write the capture header: {error}"))?;
-    writer.flush().map_err(|error| format!("cannot flush the capture: {error}"))?;
+    writer
+        .flush()
+        .map_err(|error| format!("cannot flush the capture: {error}"))?;
     drop(writer);
     let mut slot = slot().lock().unwrap_or_else(|error| error.into_inner());
     if slot.is_some() {
-        return Err(format!("a capture is already running; {path} is not recorded"));
+        return Err(format!(
+            "a capture is already running; {path} is not recorded"
+        ));
     }
     *slot = Some(capture);
     // A flusher of its own. `record` flushes only when another record arrives, so a session that ends
@@ -114,9 +122,15 @@ pub fn flush() {
     let Some(capture) = slot.as_ref() else {
         return;
     };
-    let mut writer = capture.writer.lock().unwrap_or_else(|error| error.into_inner());
+    let mut writer = capture
+        .writer
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let _ = writer.flush();
-    let mut last_flush = capture.last_flush.lock().unwrap_or_else(|error| error.into_inner());
+    let mut last_flush = capture
+        .last_flush
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     *last_flush = Instant::now();
 }
 
@@ -135,7 +149,10 @@ pub fn record(direction: &str, header: u16, bytes: &[u8]) {
     };
     let seq = capture.seq.fetch_add(1, Ordering::Relaxed) + 1;
     let t = capture.start.elapsed().as_secs_f64();
-    let mut writer = capture.writer.lock().unwrap_or_else(|error| error.into_inner());
+    let mut writer = capture
+        .writer
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let _ = writeln!(
         writer,
         "{{\"seq\":{seq},\"t\":{t:.3},\"direction\":\"{direction}\",\"header\":{header},\"size\":{},\"data\":\"{}\"}}",
@@ -144,7 +161,10 @@ pub fn record(direction: &str, header: u16, bytes: &[u8]) {
     );
     // Flushed on a time bound, not per record: see `FLUSH_EVERY`. The buffer flushes itself when it
     // fills, so a burst is still one write per 8 KB rather than one per message.
-    let mut last_flush = capture.last_flush.lock().unwrap_or_else(|error| error.into_inner());
+    let mut last_flush = capture
+        .last_flush
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     if last_flush.elapsed() >= FLUSH_EVERY {
         let _ = writer.flush();
         *last_flush = Instant::now();
@@ -173,7 +193,8 @@ mod tests {
 
     /// The file a test writes into.
     fn path(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!("kryta-capture-{name}-{}.jsonl", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("kryta-capture-{name}-{}.jsonl", std::process::id()));
         let _ = std::fs::remove_file(&path);
         path
     }
@@ -186,7 +207,11 @@ mod tests {
         let path = path("records");
         install(path.to_str().expect("a path")).expect("the capture installs");
         assert!(recording());
-        record("StoC", 0x0099, &[0x99, 0x00, 0x00, 0x00, 0x94, 0x00, 0x00, 0x00]);
+        record(
+            "StoC",
+            0x0099,
+            &[0x99, 0x00, 0x00, 0x00, 0x94, 0x00, 0x00, 0x00],
+        );
         record("CToS", 0x803D, &[0x3d, 0x80, 0x00, 0x00]);
         flush();
         let text = std::fs::read_to_string(&path).expect("the capture reads");
@@ -198,12 +223,24 @@ mod tests {
         assert!(lines[0].contains("\"record\":\"capture\""), "{}", lines[0]);
         assert!(lines[0].contains("\"layer\":\"wire\""), "{}", lines[0]);
         assert!(lines[0].contains("\"header_len\":2"), "{}", lines[0]);
-        assert!(lines[0].contains("\"tool\":\"worldserver\""), "{}", lines[0]);
+        assert!(
+            lines[0].contains("\"tool\":\"worldserver\""),
+            "{}",
+            lines[0]
+        );
         assert!(lines[1].contains("\"seq\":1"), "{}", lines[1]);
         assert!(lines[1].contains("\"direction\":\"StoC\""), "{}", lines[1]);
-        assert!(lines[1].contains("\"header\":153"), "the header is the frame's own u16: {}", lines[1]);
+        assert!(
+            lines[1].contains("\"header\":153"),
+            "the header is the frame's own u16: {}",
+            lines[1]
+        );
         assert!(lines[1].contains("\"size\":8"), "{}", lines[1]);
-        assert!(lines[1].contains("\"data\":\"9900000094000000\""), "{}", lines[1]);
+        assert!(
+            lines[1].contains("\"data\":\"9900000094000000\""),
+            "{}",
+            lines[1]
+        );
         assert!(lines[2].contains("\"seq\":2"), "{}", lines[2]);
         assert!(lines[2].contains("\"direction\":\"CToS\""), "{}", lines[2]);
         assert!(lines[2].contains("\"header\":32829"), "{}", lines[2]);

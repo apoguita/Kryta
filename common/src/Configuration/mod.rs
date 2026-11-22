@@ -700,7 +700,11 @@ mod tests {
     fn a_duplicate_key_is_reported_and_the_first_wins() {
         let config = config("BindIP = one\nBindIP = two\n");
         assert_eq!(config.raw("BindIP"), Some("one"));
-        assert!(config.complaints()[0].message.contains("Duplicate key name"));
+        assert!(
+            config.complaints()[0]
+                .message
+                .contains("Duplicate key name")
+        );
     }
 
     #[test]
@@ -725,7 +729,11 @@ mod tests {
             config.value("RealmServerPort", 3724);
         let error = answer.unwrap_err();
         assert!(matches!(error, ConfigError::Fatal(_)));
-        assert!(error.to_string().contains("cannot start without this option"));
+        assert!(
+            error
+                .to_string()
+                .contains("cannot start without this option")
+        );
     }
 
     #[test]
@@ -767,7 +775,11 @@ mod tests {
                 .apply(&mut policy)
         );
         assert_eq!(policy.critical_option, Severity::Skip);
-        assert!(!PolicyOverride::parse("nonsense=skip").unwrap().apply(&mut policy));
+        assert!(
+            !PolicyOverride::parse("nonsense=skip")
+                .unwrap()
+                .apply(&mut policy)
+        );
         assert!(PolicyOverride::parse("default=shout").is_err());
     }
 
@@ -816,8 +828,16 @@ mod tests {
         );
         let described = config.describe();
         assert_eq!(described.len(), 2);
-        assert!(described.iter().any(|(key, value)| key == "RealmServerPort" && value == "6112"));
-        assert!(described.iter().any(|(key, value)| key == "LoginDatabaseInfo" && value.contains("********")));
+        assert!(
+            described
+                .iter()
+                .any(|(key, value)| key == "RealmServerPort" && value == "6112")
+        );
+        assert!(
+            described
+                .iter()
+                .any(|(key, value)| key == "LoginDatabaseInfo" && value.contains("********"))
+        );
         assert!(!described.iter().any(|(_, value)| value.contains("secret")));
     }
 
@@ -845,7 +865,10 @@ mod tests {
         );
         let config = Config::load_json(&path, false, Policy::default()).unwrap();
 
-        assert_eq!(config.value::<u16>("RealmServerPort", 3724).unwrap().0, 6112);
+        assert_eq!(
+            config.value::<u16>("RealmServerPort", 3724).unwrap().0,
+            6112
+        );
         assert_eq!(
             config.value_string("BindIP", "0.0.0.0").unwrap().0,
             "0.0.0.0"
@@ -896,12 +919,7 @@ mod tests {
 
     #[test]
     fn an_optional_json_file_that_is_absent_is_an_empty_configuration() {
-        let config = Config::load_json(
-            "does-not-exist.json",
-            true,
-            Policy::default(),
-        )
-        .unwrap();
+        let config = Config::load_json("does-not-exist.json", true, Policy::default()).unwrap();
         assert_eq!(config.keys().count(), 0);
     }
 

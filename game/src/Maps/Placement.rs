@@ -102,7 +102,8 @@ pub fn place(
     kinds: MapKinds,
 ) -> (u16, Option<Substituted>) {
     // 1. A creation visit is its own destination: the screen has to be reachable.
-    if requested.map_id == creation_map && requested.map_type == u32::from(kinds.character_creation) {
+    if requested.map_id == creation_map && requested.map_type == u32::from(kinds.character_creation)
+    {
         return (requested.map_id, None);
     }
 
@@ -166,7 +167,14 @@ mod tests {
             map_type: u32::from(map_kind::CREATION),
         };
         assert_eq!(
-            place(requested, fresh(), Some(map_kind::CREATION), CREATION, FALLBACK, MAP_KINDS),
+            place(
+                requested,
+                fresh(),
+                Some(map_kind::CREATION),
+                CREATION,
+                FALLBACK,
+                MAP_KINDS
+            ),
             (CREATION, None)
         );
     }
@@ -184,7 +192,14 @@ mod tests {
             last_outpost: 148,
         };
         assert_eq!(
-            place(requested, played, Some(map_kind::CREATION), CREATION, FALLBACK, MAP_KINDS),
+            place(
+                requested,
+                played,
+                Some(map_kind::CREATION),
+                CREATION,
+                FALLBACK,
+                MAP_KINDS
+            ),
             (
                 148,
                 Some(Substituted::CreationNamedAsPlace("the character's row"))
@@ -203,7 +218,14 @@ mod tests {
             last_outpost: 148,
         };
         assert_eq!(
-            place(requested, somewhere, Some(map_kind::CREATION), CREATION, FALLBACK, MAP_KINDS),
+            place(
+                requested,
+                somewhere,
+                Some(map_kind::CREATION),
+                CREATION,
+                FALLBACK,
+                MAP_KINDS
+            ),
             (
                 148,
                 Some(Substituted::CreationNamedAsPlace("its last outpost"))
@@ -218,7 +240,14 @@ mod tests {
             map_type: map_kind::OUTPOST.into(),
         };
         assert_eq!(
-            place(requested, fresh(), Some(map_kind::CREATION), CREATION, FALLBACK, MAP_KINDS),
+            place(
+                requested,
+                fresh(),
+                Some(map_kind::CREATION),
+                CREATION,
+                FALLBACK,
+                MAP_KINDS
+            ),
             (FALLBACK, Some(Substituted::NothingToPlace))
         );
     }
@@ -235,7 +264,14 @@ mod tests {
             last_outpost: 163,
         };
         assert_eq!(
-            place(requested, played, Some(map_kind::OUTPOST), CREATION, FALLBACK, MAP_KINDS),
+            place(
+                requested,
+                played,
+                Some(map_kind::OUTPOST),
+                CREATION,
+                FALLBACK,
+                MAP_KINDS
+            ),
             (163, None)
         );
     }
@@ -252,7 +288,14 @@ mod tests {
             last_outpost: 148,
         };
         assert_eq!(
-            place(requested, played, Some(map_kind::EXPLORABLE), CREATION, FALLBACK, MAP_KINDS),
+            place(
+                requested,
+                played,
+                Some(map_kind::EXPLORABLE),
+                CREATION,
+                FALLBACK,
+                MAP_KINDS
+            ),
             (148, Some(Substituted::NotAnOutpost))
         );
     }
@@ -265,7 +308,14 @@ mod tests {
             map_type: u32::from(map_kind::EXPLORABLE),
         };
         assert_eq!(
-            place(requested, fresh(), Some(map_kind::EXPLORABLE), CREATION, FALLBACK, MAP_KINDS),
+            place(
+                requested,
+                fresh(),
+                Some(map_kind::EXPLORABLE),
+                CREATION,
+                FALLBACK,
+                MAP_KINDS
+            ),
             (FALLBACK, Some(Substituted::NothingToPlace))
         );
     }

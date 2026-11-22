@@ -82,7 +82,9 @@ fn answer(line: &str, state: &State, send: &mpsc::Sender<Request>) -> String {
         },
         (Some("stop"), None, None) => ask(send, Action::StopAll, "stopping every service"),
         (Some("stop"), Some(name), None) => ask(send, Action::Stop(name.to_string()), "stopping"),
-        (Some("restart"), Some(name), None) => ask(send, Action::Restart(name.to_string()), "restarting"),
+        (Some("restart"), Some(name), None) => {
+            ask(send, Action::Restart(name.to_string()), "restarting")
+        }
         (Some("quit"), None, None) => ask(send, Action::Quit, "the stack is stopping"),
         _ => "err: expected: status | stop [service] | restart service | quit".into(),
     }
@@ -117,8 +119,11 @@ fn table(state: &BTreeMap<String, String>) -> String {
 /// The answer is read to the end of the connection, not one line of it: `status` answers one line per
 /// service and only the first of them would be printed otherwise.
 pub fn request(port: u16, line: &str) -> Result<String, String> {
-    let mut stream = TcpStream::connect_timeout(&SocketAddrV4::new(Ipv4Addr::LOCALHOST, port).into(), Duration::from_secs(5))
-        .map_err(|error| format!("no supervisor is listening on 127.0.0.1:{port}: {error}"))?;
+    let mut stream = TcpStream::connect_timeout(
+        &SocketAddrV4::new(Ipv4Addr::LOCALHOST, port).into(),
+        Duration::from_secs(5),
+    )
+    .map_err(|error| format!("no supervisor is listening on 127.0.0.1:{port}: {error}"))?;
     stream
         .set_read_timeout(Some(REPLY_TIMEOUT))
         .map_err(|error| error.to_string())?;
@@ -151,7 +156,10 @@ mod tests {
         let (send, requests) = mpsc::channel();
         let answer = answer("status", &state(), &send);
         assert_eq!(answer, "auth: up on 6112\nworld: up on 6113");
-        assert!(requests.try_recv().is_err(), "status does not act on a process");
+        assert!(
+            requests.try_recv().is_err(),
+            "status does not act on a process"
+        );
     }
 
     #[test]
@@ -192,17 +200,26 @@ mod tests {
         let supervisor = std::thread::spawn(move || {
             let request = requests.recv().expect("an action arrives");
             assert_eq!(request.action, Action::Stop("world".into()));
-            request.reply.send("stopped world".into()).expect("the answer is delivered");
+            request
+                .reply
+                .send("stopped world".into())
+                .expect("the answer is delivered");
         });
 
-        assert_eq!(request(port, "stop world").expect("the action answers"), "stopped world");
+        assert_eq!(
+            request(port, "stop world").expect("the action answers"),
+            "stopped world"
+        );
         supervisor.join().expect("the supervisor's loop finished");
         assert_eq!(
             request(port, "status").expect("status answers"),
             "auth: up on 6112\nworld: up on 6113",
             "one line per service, and the client reads all of them"
         );
-        assert!(request(port, "nonsense").is_err(), "a line that is not a verb is an error");
+        assert!(
+            request(port, "nonsense").is_err(),
+            "a line that is not a verb is an error"
+        );
     }
 
     #[test]

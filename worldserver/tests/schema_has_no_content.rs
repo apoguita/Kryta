@@ -54,7 +54,12 @@ fn allowed(statement: &str) -> bool {
 fn no_schema_file_seeds_content() {
     let mut seeding = Vec::new();
     for file in sql_files(Path::new("../data/sql")) {
-        if HISTORY.contains(&file.file_name().and_then(|name| name.to_str()).unwrap_or("")) {
+        if HISTORY.contains(
+            &file
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(""),
+        ) {
             continue;
         }
         let text = std::fs::read_to_string(&file).expect("a schema file reads");

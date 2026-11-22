@@ -19,7 +19,6 @@
 //! * `Bounds` - the `worldDims` an agent's position is checked against.
 #![allow(dead_code)] // the importer container arrives ahead of the plane readers; see docs/port/09-parity-audit.md 7b item 4
 
-
 /// `PATH_DATA_SIGNATURE` / `PATH_DATA_VERSION`: the first eight bytes of the path section.
 pub const PATH_DATA_SIGNATURE: u32 = 0xEEFE_704C;
 
@@ -250,7 +249,7 @@ impl PathStaticData {
                     }
                 }
                 NodeRef::Sink(index) => {
-                    return Some((plane, plane_state.sink_nodes.get(index)?.trap))
+                    return Some((plane, plane_state.sink_nodes.get(index)?.trap));
                 }
             };
         }
@@ -327,7 +326,11 @@ mod tests {
         // The cross product's sign says which side of a direction the other vector is on.
         let right = Vec2f { x: 1.0, y: 0.0 };
         let up = Vec2f { x: 0.0, y: 1.0 };
-        assert_eq!(right.cross(up), 1.0, "up is to the left of right in this order");
+        assert_eq!(
+            right.cross(up),
+            1.0,
+            "up is to the left of right in this order"
+        );
         assert_eq!(up.cross(right), -1.0, "and the other way round is negative");
     }
 
@@ -366,11 +369,27 @@ mod tests {
                 ..Plane::default()
             }],
         };
-        assert_eq!(data.trapezoid_at(Vec2f { x: 1.0, y: 0.0 }, 0), Some((0, 0)), "left of the split");
-        assert_eq!(data.trapezoid_at(Vec2f { x: 9.0, y: 0.0 }, 0), Some((0, 1)), "right of it");
-        assert_eq!(data.trapezoid_at(Vec2f { x: 1.0, y: 0.0 }, 3), None, "no such plane");
+        assert_eq!(
+            data.trapezoid_at(Vec2f { x: 1.0, y: 0.0 }, 0),
+            Some((0, 0)),
+            "left of the split"
+        );
+        assert_eq!(
+            data.trapezoid_at(Vec2f { x: 9.0, y: 0.0 }, 0),
+            Some((0, 1)),
+            "right of it"
+        );
+        assert_eq!(
+            data.trapezoid_at(Vec2f { x: 1.0, y: 0.0 }, 3),
+            None,
+            "no such plane"
+        );
         let rootless = PathStaticData::default();
-        assert_eq!(rootless.trapezoid_at(Vec2f::default(), 0), None, "a plane with no root");
+        assert_eq!(
+            rootless.trapezoid_at(Vec2f::default(), 0),
+            None,
+            "a plane with no root"
+        );
     }
 
     /// The plane's box is the union of its trapezoids' corners, edges included.
@@ -414,7 +433,11 @@ mod tests {
         assert!(!bounds.contains(-4.5, 0.0), "and past them is not");
         assert_eq!(data.plane_bounds(7), None, "a plane the map does not have");
         let empty = PathStaticData::default();
-        assert_eq!(empty.plane_bounds(0), None, "a plane with no trapezoids has no box");
+        assert_eq!(
+            empty.plane_bounds(0),
+            None,
+            "a plane with no trapezoids has no box"
+        );
     }
 
     /// The constants are the reference's, and the node index bases do not overlap.
@@ -490,7 +513,9 @@ impl std::fmt::Display for ImportError {
                 write!(f, "not a map blob: the header is not \"ffna\" and a type")
             }
             ImportError::NotAMap { found } => write!(f, "container type {found} is not a map"),
-            ImportError::ChunkPastTheEnd => write!(f, "a record claims more bytes than the blob holds"),
+            ImportError::ChunkPastTheEnd => {
+                write!(f, "a record claims more bytes than the blob holds")
+            }
             ImportError::NoPathChunk => write!(f, "the container has no path chunk"),
             ImportError::Tag {
                 expected,
@@ -562,7 +587,7 @@ impl<'a> Reader<'a> {
                 return Err(ImportError::Tag {
                     expected: tag,
                     found: None,
-                })
+                });
             }
         };
         if header[0] != tag {
@@ -806,7 +831,7 @@ impl PathStaticData {
             _ => {
                 return Err(ImportError::Shape(
                     "the root node is not one of the three node kinds",
-                ))
+                ));
             }
         };
         self.planes[index].root_node = root;
@@ -1089,7 +1114,8 @@ impl PathStaticData {
 
         // The reference keeps this hash for the whole import: a portal pairs with one on a plane that may
         // be finished (`PathImport_ReadPortals`).
-        let mut pairs: std::collections::HashMap<u32, (u16, usize)> = std::collections::HashMap::new();
+        let mut pairs: std::collections::HashMap<u32, (u16, usize)> =
+            std::collections::HashMap::new();
         self.planes.reserve(count);
         for _ in 0..count {
             self.read_plane(reader, &mut pairs)?;
@@ -1133,7 +1159,10 @@ mod importer_tests {
     #[test]
     fn a_blob_that_is_not_a_container_is_refused_by_its_first_five_bytes() {
         assert!(riff_type(b"ffna\x01").is_some());
-        assert!(riff_type(b"ffna\x09").is_none(), "type 9 is past RIFF_TYPES");
+        assert!(
+            riff_type(b"ffna\x09").is_none(),
+            "type 9 is past RIFF_TYPES"
+        );
         assert!(riff_type(b"ffna").is_none(), "five bytes are needed");
         assert!(riff_type(b"nope\x01").is_none());
 
@@ -1188,10 +1217,20 @@ mod importer_tests {
         };
         assert_eq!(node_ref(FIRST_X_NODE_INDEX, &plane), Some(NodeRef::X(0)));
         assert_eq!(node_ref(1, &plane), Some(NodeRef::X(1)));
-        assert_eq!(node_ref(2, &plane), None, "one x node too many is a dead end");
+        assert_eq!(
+            node_ref(2, &plane),
+            None,
+            "one x node too many is a dead end"
+        );
         assert_eq!(node_ref(FIRST_Y_NODE_INDEX, &plane), Some(NodeRef::Y(0)));
-        assert_eq!(node_ref(FIRST_Y_NODE_INDEX + 2, &plane), Some(NodeRef::Y(2)));
-        assert_eq!(node_ref(FIRST_SINK_NODE_INDEX, &plane), Some(NodeRef::Sink(0)));
+        assert_eq!(
+            node_ref(FIRST_Y_NODE_INDEX + 2, &plane),
+            Some(NodeRef::Y(2))
+        );
+        assert_eq!(
+            node_ref(FIRST_SINK_NODE_INDEX, &plane),
+            Some(NodeRef::Sink(0))
+        );
         assert_eq!(node_ref(FIRST_SINK_NODE_INDEX + 1, &plane), None);
     }
 
@@ -1201,19 +1240,35 @@ mod importer_tests {
     fn the_real_archive_imports_map_148_and_its_spawn_lands_in_a_trapezoid() {
         let Some(path) = std::env::var("KRYTA_GW_DAT").ok().or_else(|| {
             let candidate = std::path::PathBuf::from("Gw.dat");
-            candidate.exists().then(|| candidate.to_string_lossy().into_owned())
+            candidate
+                .exists()
+                .then(|| candidate.to_string_lossy().into_owned())
         }) else {
             eprintln!("skipped: no local Gw.dat");
             return;
         };
         let mut archive = crate::pack::GwDat::open(&path).expect("open the archive");
-        let blob = archive.file(0x1B97D).expect("read").expect("the blob is there");
+        let blob = archive
+            .file(0x1B97D)
+            .expect("read")
+            .expect("the blob is there");
         let data = PathStaticData::import(&blob).expect("the blob imports");
         assert!(!data.planes.is_empty(), "the map has planes");
         assert!(data.traps_count > 0, "and trapezoids");
         let spawn = (9541.87f32, 4796.46f32);
-        let plane = (0..u16::try_from(data.planes.len()).unwrap())
-            .find(|plane| data.trapezoid_at(Vec2f { x: spawn.0, y: spawn.1 }, *plane).is_some());
-        assert!(plane.is_some(), "map 148s own spawn point lands in a trapezoid");
+        let plane = (0..u16::try_from(data.planes.len()).unwrap()).find(|plane| {
+            data.trapezoid_at(
+                Vec2f {
+                    x: spawn.0,
+                    y: spawn.1,
+                },
+                *plane,
+            )
+            .is_some()
+        });
+        assert!(
+            plane.is_some(),
+            "map 148s own spawn point lands in a trapezoid"
+        );
     }
 }

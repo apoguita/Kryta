@@ -157,14 +157,29 @@ impl WorldSession {
                             self.answer_line(io, peer, crypt, line).await;
                         }
                         for line in &log {
-                            self.say(LogLevel::Debug, format!("Gameplay connection from {peer}: {line}"));
+                            self.say(
+                                LogLevel::Debug,
+                                format!("Gameplay connection from {peer}: {line}"),
+                            );
                         }
                     }
                     crate::chat::operations::Outcome::Frames(frames) => {
-                        self.send(io, peer, crypt, &frames, "an operation's frames").await;
+                        self.send(io, peer, crypt, &frames, "an operation's frames")
+                            .await;
                     }
                     crate::chat::operations::Outcome::Transfer { argument } => {
                         self.answer_teleport_command(io, peer, crypt, sheet, &argument)
+                            .await;
+                    }
+                    crate::chat::operations::Outcome::Resign => {
+                        self.answer_resign(io, peer, crypt).await;
+                    }
+                    crate::chat::operations::Outcome::Guild { argument } => {
+                        self.answer_guild_command(io, peer, crypt, sheet, &argument)
+                            .await;
+                    }
+                    crate::chat::operations::Outcome::Experience { argument } => {
+                        self.answer_experience(io, peer, crypt, sheet, argument.as_deref())
                             .await;
                     }
                 }
@@ -214,7 +229,107 @@ impl WorldSession {
             chat_packets::CHANNEL_GLOBAL,
         ));
         self.send(io, peer, crypt, &frames, "an answer").await;
-        self.say(LogLevel::Debug, format!("Gameplay connection from {peer}: {text}"));
+        self.say(
+            LogLevel::Debug,
+            format!("Gameplay connection from {peer}: {text}"),
+        );
+    }
+
+    /// `/resign`: mark this member, then die after the pack's delay. When every present member has
+    /// resigned, the party is defeated (`0x01D9`) and its leader's `0x80A7` becomes live.
+    pub(crate) async fn answer_resign(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        crypt: &mut AuthCrypt,
+    ) {
+        // `/resign` belongs to an explorable, not an outpost. A town has nothing to resign from, and
+        // the live client does not put a member into the resign flow there.
+        if self.world.map(self.map_id()).and_then(|map| map.kind)
+            != Some(crate::world::map_kind::EXPLORABLE)
+        {
+            self.say(
+                LogLevel::Debug,
+                format!(
+                    "Gameplay connection from {peer}: /resign is ignored outside an explorable area"
+                ),
+            );
+            return;
+        }
+        let me = self.player_id();
+        let map_id = self.map_id();
+        let district = self.district();
+        let party_id = match self.world.parties().lock() {
+            Ok(mut parties) => {
+                let table = parties.table(map_id, district);
+                let Some(party) = table.party_of(me) else {
+                    return;
+                };
+                if party.moving || party.resigned.contains(&me) {
+                    return;
+                }
+                let party_id = party.party_id;
+                if let Some(party) = table.parties.get_mut(&party_id) {
+                    party.resigned.insert(me);
+                }
+                party_id
+            }
+            Err(_) => return,
+        };
+        let seconds = u64::from(self.settings.resign_secs);
+        let world = std::sync::Arc::clone(&self.world);
+        let peers = std::sync::Arc::clone(&self.peers);
+        let agent = me;
+        self.say(
+            LogLevel::Debug,
+            format!(
+                "Gameplay connection from {peer}: player {me} resigned; its death is due in {seconds} s"
+            ),
+        );
+        // The live client gets a server chat line after the `/resign` request; the captured pair is
+        // `0x005D` then `0x005E` (`multiplay-live-20261106-200638.jsonl` seq 16-17).
+        self.answer_line(io, peer, crypt, "You have resigned.")
+            .await;
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(seconds));
+            let (present, all, first_defeat) = {
+                let parties_arc = world.parties();
+                let Ok(mut parties) = parties_arc.lock() else {
+                    return;
+                };
+                let Some(party) = parties.table(map_id, district).parties.get_mut(&party_id) else {
+                    return;
+                };
+                if !party.members.contains(&me) || !party.dead.insert(me) {
+                    return;
+                }
+                let present = party.present();
+                let all = !present.is_empty()
+                    && present.iter().all(|member| party.resigned.contains(member));
+                let first_defeat = all && !party.defeated;
+                if first_defeat {
+                    party.defeated = true;
+                }
+                (present, all, first_defeat)
+            };
+            let death = [
+                crate::server::packets::agent_packets::agent_player_die(agent),
+                crate::server::packets::agent_packets::agent_update_flags(agent, 4),
+            ];
+            if let Ok(peers) = peers.lock() {
+                for member in &present {
+                    peers.send_to(*member, &death);
+                }
+                if all && first_defeat {
+                    for member in &present {
+                        peers.send_to(
+                            *member,
+                            &[crate::server::packets::party_packets::party_defeated()],
+                        );
+                    }
+                }
+            }
+        });
     }
 
     /// This connection's player id as the chat tag carries it: `0x0061` and `0x005E` hold a `u16`

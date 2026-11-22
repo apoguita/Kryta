@@ -168,9 +168,14 @@ mod tests {
 
     #[test]
     fn a_list_of_the_wrong_length_is_refused() {
-        let error =
-            AppenderConsole::new(1, "Console", LogLevel::Debug, AppenderFlags::NONE, &args("1 9 3"))
-                .unwrap_err();
+        let error = AppenderConsole::new(
+            1,
+            "Console",
+            LogLevel::Debug,
+            AppenderFlags::NONE,
+            &args("1 9 3"),
+        )
+        .unwrap_err();
         assert!(error.contains("expected 6 entries, got 3"), "{error}");
     }
 

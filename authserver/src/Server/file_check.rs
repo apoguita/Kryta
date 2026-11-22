@@ -26,8 +26,7 @@ const REQUEST_HEX: &str = "01 00 00 00 00 f1 00 10 00 01 00 00 00 00 00 00 00 00
 /// Header `0x02F1`, length `0x0020`, then six `Gw.dat` file ids in tight consecutive order with a zero
 /// among them. The order is what a capture shows, not a rule; the ids are a client-build fact,
 /// refreshed by capturing the reply a live client accepts and never by arithmetic on these numbers.
-const ANSWER_HEX: &str =
-    "f1 02 20 00 ab f7 05 00 b4 f7 05 00 9c 43 05 00 b6 f7 05 00 b7 f7 05 00 00 00 00 00 b5 f7 05 00";
+const ANSWER_HEX: &str = "f1 02 20 00 ab f7 05 00 b4 f7 05 00 9c 43 05 00 b6 f7 05 00 b7 f7 05 00 00 00 00 00 b5 f7 05 00";
 
 /// Why the file check could not be built.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,8 +140,19 @@ mod tests {
         assert!(check.could_be_request(&[]));
         assert!(check.could_be_request(&check.request()[..4]));
         assert!(check.could_be_request(&check.request()[..20]));
-        assert!(!check.could_be_request(&[0x00, 0x04, 0x0C, 0x00]), "the auth header is not the file check");
-        assert!(!check.could_be_request(&check.request()[..4].iter().copied().chain([0x99]).collect::<Vec<_>>()));
+        assert!(
+            !check.could_be_request(&[0x00, 0x04, 0x0C, 0x00]),
+            "the auth header is not the file check"
+        );
+        assert!(
+            !check.could_be_request(
+                &check.request()[..4]
+                    .iter()
+                    .copied()
+                    .chain([0x99])
+                    .collect::<Vec<_>>()
+            )
+        );
     }
 
     #[test]

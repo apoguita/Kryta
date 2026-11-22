@@ -138,7 +138,10 @@ pub fn shared_secret(client_public: &[u8]) -> Result<[u8; PUBLIC_LEN], ExchangeE
 ///
 /// The client recovers the master by doing the same thing, which is why this is an XOR of two equal
 /// lengths and not an encryption.
-pub fn server_seed(master: &[u8; MASTER_SECRET_LEN], shared: &[u8; PUBLIC_LEN]) -> [u8; SERVER_SEED_LEN] {
+pub fn server_seed(
+    master: &[u8; MASTER_SECRET_LEN],
+    shared: &[u8; PUBLIC_LEN],
+) -> [u8; SERVER_SEED_LEN] {
     let mut out = [0u8; SERVER_SEED_LEN];
     out[..2].copy_from_slice(&SERVER_SEED_HEADER.to_le_bytes());
     for index in 0..MASTER_SECRET_LEN {
@@ -329,7 +332,10 @@ mod tests {
 
     #[test]
     fn a_zero_value_is_refused_because_it_would_share_nothing() {
-        assert_eq!(shared_secret(&[0u8; PUBLIC_LEN]), Err(ExchangeError::Degenerate));
+        assert_eq!(
+            shared_secret(&[0u8; PUBLIC_LEN]),
+            Err(ExchangeError::Degenerate)
+        );
     }
 
     #[test]

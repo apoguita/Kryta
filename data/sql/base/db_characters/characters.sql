@@ -29,6 +29,11 @@ CREATE TABLE IF NOT EXISTS "characters" (
   "unlocked_professions"  BIGINT           NOT NULL DEFAULT 0,
   -- 0 none (a PvP character), 1 Prophecies, 2 Factions, 3 Nightfall, 4 Eye of the North.
   "campaign"              BIGINT          NOT NULL DEFAULT 0,
+  -- The campaigns this character has finished. Hard mode is unlocked by a completed campaign, not by
+  -- the outpost: the client's normal/hard toggle follows `0x0070`, which this row decides.
+  "prophecies_finished"   BOOLEAN      NOT NULL DEFAULT FALSE,
+  "factions_finished"     BOOLEAN      NOT NULL DEFAULT FALSE,
+  "nightfall_finished"    BOOLEAN      NOT NULL DEFAULT FALSE,
   "level"                 BIGINT          NOT NULL DEFAULT 1,
   "is_pvp"                BOOLEAN      NOT NULL DEFAULT FALSE,
   -- 0 none, 1 show, 2 hide - the two bits the character-list blob carries.

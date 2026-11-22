@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use super::appender::{Appender, AppenderBase};
 use super::log_common::{AppenderFlags, AppenderType, LogLevel};
-use super::log_message::{backup_suffix, LogMessage};
+use super::log_message::{LogMessage, backup_suffix};
 
 /// Text to a file under the log directory.
 #[derive(Debug)]
@@ -101,7 +101,8 @@ impl AppenderFile {
         };
 
         if !appender.dynamic_name {
-            appender.file = appender.open_file(&appender.file_name.clone(), &mode, mode == "w" && backup);
+            appender.file =
+                appender.open_file(&appender.file_name.clone(), &mode, mode == "w" && backup);
         }
 
         Ok(appender)
@@ -207,7 +208,8 @@ mod tests {
     use super::*;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("kryta-log-test-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("kryta-log-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -220,9 +222,20 @@ mod tests {
     #[test]
     fn a_file_name_is_required() {
         let dir = temp_dir("missing");
-        let error = AppenderFile::new(1, "Auth", LogLevel::Debug, AppenderFlags::NONE, &[], &dir, "")
-            .unwrap_err();
-        assert!(error.contains("Missing file name for appender Auth"), "{error}");
+        let error = AppenderFile::new(
+            1,
+            "Auth",
+            LogLevel::Debug,
+            AppenderFlags::NONE,
+            &[],
+            &dir,
+            "",
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("Missing file name for appender Auth"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -308,9 +321,25 @@ mod tests {
         )
         .unwrap();
 
-        appender.write(&LogMessage::with_param1(LogLevel::Info, "root", "one", "alpha"));
-        appender.write(&LogMessage::with_param1(LogLevel::Info, "root", "two", "beta"));
-        assert_eq!(std::fs::read_to_string(dir.join("alpha.log")).unwrap(), "one\n");
-        assert_eq!(std::fs::read_to_string(dir.join("beta.log")).unwrap(), "two\n");
+        appender.write(&LogMessage::with_param1(
+            LogLevel::Info,
+            "root",
+            "one",
+            "alpha",
+        ));
+        appender.write(&LogMessage::with_param1(
+            LogLevel::Info,
+            "root",
+            "two",
+            "beta",
+        ));
+        assert_eq!(
+            std::fs::read_to_string(dir.join("alpha.log")).unwrap(),
+            "one\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("beta.log")).unwrap(),
+            "two\n"
+        );
     }
 }

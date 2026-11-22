@@ -26,6 +26,19 @@ pub(crate) const UNLOCKED_MAP_ZEROS: &[u32] = &[0u32; 31];
 /// Full morale, which a fresh agent has (`ASURA/crates/asura-world/src/player.rs`, `MORALE_FULL`).
 const MORALE_FULL: u32 = 100;
 
+/// `0x00E9`, the progress record, for a character's progress at full morale: the load's own statement,
+/// and the whole block a change of experience restates when an award cannot say it
+/// (`ASURA/crates/asura-world/src/player.rs:346-353` and `:547-558`).
+pub(crate) fn progress_record(progress: &crate::characters::experience::Progress) -> Vec<u8> {
+    let mut record = [0u32; character_packets::FACTIONS_DWORDS];
+    record[0] = progress.experience;
+    record[9] = u32::from(progress.level);
+    record[10] = MORALE_FULL;
+    record[13] = progress.skill_points;
+    record[14] = progress.skill_points_total;
+    character_packets::character_update_factions(&record)
+}
+
 /// The character a load is told as: the two ids it is named by, where it stands, what it
 /// wears, the instances it has reached, and what its progress record says about it.
 pub(crate) struct Player {
@@ -42,7 +55,14 @@ pub(crate) struct Player {
     pub gold: u32,
     pub profession: u8,
     pub unlocked_professions: u32,
+    /// Bit 0 Prophecies, bit 1 Factions, bit 2 Nightfall: a finished campaign unlocks hard mode.
+    pub campaigns_finished: u8,
     pub level: u8,
+    /// Total experience and the skill points held and earned: the progress record's first, fourteenth
+    /// and fifteenth dwords (`ASURA/crates/asura-world/src/player.rs:346-353`).
+    pub experience: u32,
+    pub skill_points: u32,
+    pub skill_points_total: u32,
     pub name: String,
 }
 
@@ -57,7 +77,13 @@ impl Player {
         map: &crate::world::MapEntry,
     ) -> Vec<Vec<u8>> {
         let mut frames = crate::creation::load_item_stream(inventory, self.gold);
-        frames.push(misc_packets::hard_mode_unlocked(1));
+        // `0x0070`: hard mode is a campaign completion reward. A character that has finished any of
+        // Prophecies, Factions or Nightfall has the normal/hard toggle; one that has finished none
+        // does not. Pre-Searing is not a special case in the protocol - a character who has finished
+        // Prophecies cannot enter it.
+        frames.push(misc_packets::hard_mode_unlocked(u8::from(
+            self.campaigns_finished != 0,
+        )));
         frames.push(character_packets::character_update_info(""));
         frames.push(misc_packets::map_update_current(map.id as u16, 0));
         frames.push(instance_packets::ready_for_map_spawn(0));
@@ -95,10 +121,11 @@ impl Player {
     /// and the agent it is drawn as, the agent's own properties and look, the party, and the
     /// message that ends the load.
     ///
-    /// The players already in this copy of the map are introduced ahead of it, and that is the
-    /// session's to do: it is the district that knows who else is there. So is the bitmap of
-    /// reached instances - it is the character's rows, read with the arrival's own R12 write, and
-    /// handed here as the list the block names.
+    /// The players already in this copy of the map are introduced after it, and that is the session's
+    /// to do: it is the district that knows who else is there, and the client must read its own team
+    /// token (`0x00F2`) before it creates anyone else. So is the bitmap of reached instances - it is
+    /// the character's rows, read with the arrival's own R12 write, and handed here as the list the
+    /// block names.
     pub(crate) fn load_block(
         &self,
         settings: &crate::world::world_config::WorldConfig,
@@ -115,11 +142,16 @@ impl Player {
         let direction = self.direction;
         let appearance = self.appearance;
         let equipped = self.equipped;
-        let mut progress = [0u32; character_packets::FACTIONS_DWORDS];
-        // Experience has no column yet; level and morale do, and the client shows 0 for a level
-        // it is not told (`ASURA/crates/asura-world/src/player.rs`).
-        progress[9] = u32::from(self.level);
-        progress[10] = MORALE_FULL;
+        // The character record's own numbers, in the reference's order: experience first, level tenth,
+        // morale eleventh, the skill points held and earned last (`ASURA/crates/asura-world/src/
+        // player.rs:341-353`; `docs/54-experience.md` section 1 there). The client shows 0 for a number
+        // it is not told.
+        let progress = progress_record(&crate::characters::experience::Progress {
+            experience: self.experience,
+            level: self.level,
+            skill_points: self.skill_points,
+            skill_points_total: self.skill_points_total,
+        });
         let mut frames = Vec::with_capacity(40);
         frames.push(misc_packets::pvp_update_unlocked_skills(&[]));
         frames.push(misc_packets::pvp_update_unlocked_heroes(&[0xFFFF_FFFF; 8]));
@@ -163,7 +195,7 @@ impl Player {
             agent, &[0u32; 8], &[0u32; 8], 1,
         ));
         frames.push(character_packets::update_unlocked_skills(&[]));
-        frames.push(character_packets::character_update_factions(&progress));
+        frames.push(progress);
         frames.push(misc_packets::char_visibility_flags(
             0xFFFF_FFFF,
             0xFFFF_FFFF,
@@ -205,10 +237,31 @@ impl Player {
             agent,
             settings.agent_energy,
         ));
+        // Maximum health is the pack's `health_base + health_per_level * level` (`combat.json`,
+        // `ASURA/crates/asura-world/src/skill/character.rs:191-198`, `vitals`), not the reference
+        // creation path's fixed 400: a level 1 character is 100, and the client's own bar is drawn
+        // against that maximum.
+        let health = settings.agent_health_base.saturating_add(
+            settings
+                .agent_health_per_level
+                .saturating_mul(u32::from(self.level)),
+        );
         frames.push(agent_packets::agent_property_update_int(
             agent_packets::AGENT_PROPERTY_HEALTH,
             agent,
-            settings.agent_health,
+            health,
+        ));
+        // The maxima are the capacity; the two fractions are the current pool. Preforged's tested
+        // order is capacity first, then fraction (`src/runtime/gw_vitals.h:64-78`, `packets_2022`).
+        frames.push(agent_packets::agent_property_update_float(
+            agent_packets::AGENT_PROPERTY_ENERGY_FRACTION,
+            agent,
+            1.0,
+        ));
+        frames.push(agent_packets::agent_property_update_float(
+            agent_packets::AGENT_PROPERTY_HEALTH_FRACTION,
+            agent,
+            1.0,
         ));
         frames.push(agent_packets::agent_property_update_float(
             agent_packets::AGENT_PROPERTY_ENERGY_REGEN,

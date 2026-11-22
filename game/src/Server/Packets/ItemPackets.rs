@@ -20,6 +20,8 @@ pub const INVENTORY_CREATE_BAG: u16 = 0x013F;
 pub const CREATE_NAMED_ITEM: u16 = 0x0161;
 /// `GAME_SMSG_CREATE_UNNAMED_ITEM`: the same item without its name - a bag slot's, or one worn.
 pub const CREATE_UNNAMED_ITEM: u16 = 0x015F;
+/// `GAME_SMSG_ITEM_LOW_DETAIL`: another player's item, as an introduction carries what they wear.
+pub const ITEM_LOW_DETAIL: u16 = 0x015E;
 /// `GAME_SMSG_ITEM_MOVED_TO_LOCATION`: where an item sits.
 pub const ITEM_MOVE_TO_LOCATION: u16 = 0x013E;
 /// `GAME_SMSG_ITEM_SET_PROFESSION`: the profession an item was made for.
@@ -226,6 +228,20 @@ pub fn item_remove(stream: u16, item_id: u32) -> Vec<u8> {
 /// sitting in a bag slot is drawn from its model, so the client is not told a name it can already
 /// resolve (`ASURA/crates/asura-protocol/src/game/mod.rs:670-688`, `create_unnamed_item`).
 pub fn create_unnamed_item(item: &NamedItem) -> Vec<u8> {
+    unnamed_item(CREATE_UNNAMED_ITEM, item)
+}
+
+/// `0x015E`: another player's item, as retail introduces what that player wears.
+///
+/// Reference: `ASURA/crates/asura-world/src/instance.rs`, `introduction`, whose `item_low_detail`
+/// call is `create_unnamed_item`'s field layout under this header. `pre-searing-load-3.jsonl`
+/// seq 222-226 carries one per worn piece between the agent and its visual equipment.
+pub fn item_low_detail(item: &NamedItem) -> Vec<u8> {
+    unnamed_item(ITEM_LOW_DETAIL, item)
+}
+
+/// The unnamed item record both `0x015F` and `0x015E` carry: nine fields, 23 bytes after the header.
+fn unnamed_item(header: u16, item: &NamedItem) -> Vec<u8> {
     let mut body = Vec::with_capacity(23);
     u32s(&mut body, item.id);
     u32s(&mut body, item.file_id);
@@ -236,7 +252,7 @@ pub fn create_unnamed_item(item: &NamedItem) -> Vec<u8> {
     u8s(&mut body, item.unk1);
     u32s(&mut body, item.flags);
     u32s(&mut body, item.value);
-    frame(CREATE_UNNAMED_ITEM, body)
+    frame(header, body)
 }
 
 #[cfg(test)]
@@ -265,6 +281,13 @@ mod tests {
         let unnamed = create_unnamed_item(&item);
         assert_eq!(&unnamed[..2], &[0x5F, 0x01]);
         assert_eq!(unnamed.len(), 25, "the table's declared size");
+        let low = item_low_detail(&item);
+        assert_eq!(&low[..2], &[0x5E, 0x01], "the low-detail form");
+        assert_eq!(
+            &low[2..],
+            &unnamed[2..],
+            "the same fields under its own header"
+        );
         assert_eq!(&unnamed[2..6], &3u32.to_le_bytes(), "the item");
         assert_eq!(&unnamed[6..10], &0x0004_7C34u32.to_le_bytes(), "the file");
         assert_eq!(unnamed[10], 15, "its kind");
@@ -272,7 +295,11 @@ mod tests {
         assert_eq!(&unnamed[21..25], &25u32.to_le_bytes(), "its value");
         // The named form is the same bytes with the two counted fields after it.
         let named = create_named_item(&item);
-        assert_eq!(&named[2..25], &unnamed[2..25], "the same fields, then the name");
+        assert_eq!(
+            &named[2..25],
+            &unnamed[2..25],
+            "the same fields, then the name"
+        );
         // `33 + 2n + 1 + 4m` after the header: an empty name and no modifiers is 36 bytes.
         assert_eq!(named.len(), 36, "and an empty name, and no modifiers");
     }
@@ -297,7 +324,10 @@ mod tests {
 
     #[test]
     fn the_stream_opens_in_five_bytes() {
-        assert_eq!(item_stream_create(ITEM_STREAM, 0), vec![0x44, 0x01, 1, 0, 0]);
+        assert_eq!(
+            item_stream_create(ITEM_STREAM, 0),
+            vec![0x44, 0x01, 1, 0, 0]
+        );
     }
 
     #[test]

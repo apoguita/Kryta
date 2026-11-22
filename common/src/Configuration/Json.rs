@@ -64,8 +64,8 @@
 //! either being squeezed into the other's shape.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
@@ -163,11 +163,7 @@ impl Document {
             &self.root
         } else {
             follow(&self.root, path).ok_or_else(|| {
-                format!(
-                    "> Config: {} holds no '{}'",
-                    self.filename.display(),
-                    path
-                )
+                format!("> Config: {} holds no '{}'", self.filename.display(), path)
             })?
         };
 
@@ -209,11 +205,7 @@ impl Document {
             &self.root
         } else {
             follow(&self.root, path).ok_or_else(|| {
-                format!(
-                    "> Config: {} holds no '{}'",
-                    self.filename.display(),
-                    path
-                )
+                format!("> Config: {} holds no '{}'", self.filename.display(), path)
             })?
         };
         if !node.is_object() {
@@ -434,7 +426,8 @@ impl Record<'_> {
     }
 
     /// A field's bytes, from `<field>: {"hex": "..."}`.
-    pub fn bytes(&self, field: &str) -> Result<Option<Vec<u8>>, String> {        if METADATA.contains(&field) {
+    pub fn bytes(&self, field: &str) -> Result<Option<Vec<u8>>, String> {
+        if METADATA.contains(&field) {
             return Ok(None);
         }
         let Some(value) = self.value.get(field) else {
@@ -683,7 +676,10 @@ mod tests {
         assert!(complaints.is_empty(), "{complaints:?}");
         assert_eq!(settings["RealmServerPort"], "6112");
         assert_eq!(settings["BindIP"], "0.0.0.0");
-        assert_eq!(settings["Log.EffectiveConfig"], "1", "a flag is the reference's 1");
+        assert_eq!(
+            settings["Log.EffectiveConfig"], "1",
+            "a flag is the reference's 1"
+        );
         assert_eq!(settings["Log.root"], "4,Console Auth");
         assert_eq!(settings["Network.Trace"], "0");
     }
@@ -691,7 +687,8 @@ mod tests {
     #[test]
     fn a_key_may_hold_dots_without_becoming_a_section() {
         // The loggers are named this way: `Logger.network.trace`, where the name carries dots.
-        let (settings, _) = document(r#"{"Logger": {"network.trace": "6,Console Auth"}}"#).settings();
+        let (settings, _) =
+            document(r#"{"Logger": {"network.trace": "6,Console Auth"}}"#).settings();
         assert_eq!(settings["Logger.network.trace"], "6,Console Auth");
     }
 
@@ -703,21 +700,35 @@ mod tests {
         .settings();
         assert!(complaints.is_empty(), "{complaints:?}");
         assert_eq!(settings["data"], "08 00 66 21");
-        assert_eq!(hex_bytes(&settings["data"]).unwrap(), vec![0x08, 0x00, 0x66, 0x21]);
+        assert_eq!(
+            hex_bytes(&settings["data"]).unwrap(),
+            vec![0x08, 0x00, 0x66, 0x21]
+        );
     }
 
     #[test]
     fn hex_text_may_be_written_the_way_a_capture_prints_it_and_without_separators() {
-        assert_eq!(hex_bytes("f1 02 20 00").unwrap(), vec![0xF1, 0x02, 0x20, 0x00]);
-        assert_eq!(hex_bytes("F102 2000").unwrap(), vec![0xF1, 0x02, 0x20, 0x00]);
+        assert_eq!(
+            hex_bytes("f1 02 20 00").unwrap(),
+            vec![0xF1, 0x02, 0x20, 0x00]
+        );
+        assert_eq!(
+            hex_bytes("F102 2000").unwrap(),
+            vec![0xF1, 0x02, 0x20, 0x00]
+        );
         assert_eq!(hex_bytes("0xf1,0x02").unwrap(), vec![0xF1, 0x02]);
         assert!(hex_bytes("f1 0").unwrap_err().contains("odd number"));
-        assert!(hex_bytes("zz").unwrap_err().contains("not a hexadecimal byte"));
+        assert!(
+            hex_bytes("zz")
+                .unwrap_err()
+                .contains("not a hexadecimal byte")
+        );
     }
 
     #[test]
     fn a_null_is_the_file_saying_not_set() {
-        let (settings, complaints) = document(r#"{"PidFile": null, "BindIP": "0.0.0.0"}"#).settings();
+        let (settings, complaints) =
+            document(r#"{"PidFile": null, "BindIP": "0.0.0.0"}"#).settings();
         assert!(complaints.is_empty(), "{complaints:?}");
         assert!(!settings.contains_key("PidFile"));
         assert_eq!(settings.len(), 1);
@@ -742,17 +753,21 @@ mod tests {
 
     #[test]
     fn an_immutable_number_without_a_reason_is_a_complaint() {
-        let (_, complaints) = document(r#"{"creation_map": {"value": 0, "immutable": true}}"#).settings();
+        let (_, complaints) =
+            document(r#"{"creation_map": {"value": 0, "immutable": true}}"#).settings();
         assert_eq!(complaints.len(), 1);
-        assert!(complaints[0].message.contains("carries no 'doc'"), "{:?}", complaints[0]);
+        assert!(
+            complaints[0].message.contains("carries no 'doc'"),
+            "{:?}",
+            complaints[0]
+        );
     }
 
     #[test]
     fn a_note_describes_the_file_and_is_not_a_key() {
-        let (settings, _) = document(
-            r#"{"note": "the intervals this server runs at", "tick_interval_ms": 100}"#,
-        )
-        .settings();
+        let (settings, _) =
+            document(r#"{"note": "the intervals this server runs at", "tick_interval_ms": 100}"#)
+                .settings();
         assert_eq!(settings.len(), 1);
         assert_eq!(settings["tick_interval_ms"], "100");
     }
@@ -819,7 +834,11 @@ mod tests {
         let (settings, complaints) = document(r#"{"A": {"B": 1}, "A.B": 2}"#).settings();
         assert_eq!(settings["A.B"], "1");
         assert_eq!(complaints.len(), 1);
-        assert!(complaints[0].message.contains("stated twice"), "{:?}", complaints[0]);
+        assert!(
+            complaints[0].message.contains("stated twice"),
+            "{:?}",
+            complaints[0]
+        );
     }
 
     #[test]
@@ -877,7 +896,12 @@ mod tests {
         let document = document(r#"{"accounts": {"user": "one"}}"#);
         let error = document.records("accounts").unwrap_err();
         assert!(error.contains("is a object"), "{error}");
-        assert!(document.records("nothing").unwrap_err().contains("holds no"));
+        assert!(
+            document
+                .records("nothing")
+                .unwrap_err()
+                .contains("holds no")
+        );
     }
 }
 
@@ -904,7 +928,10 @@ mod store_tests {
         let path = std::env::temp_dir().join("kryta-store-broken.json");
         std::fs::write(&path, "{ this is not json").expect("the file");
         let store = Store::new();
-        assert!(store.document(&path).is_err(), "a broken file is an error now");
+        assert!(
+            store.document(&path).is_err(),
+            "a broken file is an error now"
+        );
         assert_eq!(store.held(), 0, "and nothing half-parsed is remembered");
         std::fs::remove_file(&path).ok();
     }

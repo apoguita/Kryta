@@ -22,10 +22,11 @@ use shared::packets::{Frame, FrameError, HEADER_LEN};
 /// The walk is the shared mechanism and the rows are `tables` beside this file, because the login
 /// connection is what this program serves.
 pub fn decode_login_message(bytes: &[u8], from_client: bool) -> Result<(Frame, usize), FrameError> {
-    let Some(header) = bytes.first_chunk::<2>().map(|pair| u16::from_le_bytes(*pair)) else {
-        return Err(FrameError::Incomplete {
-            needed: HEADER_LEN,
-        });
+    let Some(header) = bytes
+        .first_chunk::<2>()
+        .map(|pair| u16::from_le_bytes(*pair))
+    else {
+        return Err(FrameError::Incomplete { needed: HEADER_LEN });
     };
     let Some(row) = tables::lookup(header, from_client) else {
         return Err(FrameError::UnknownHeader { header });

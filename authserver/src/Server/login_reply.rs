@@ -87,7 +87,12 @@ pub fn reply_frames(
     }
     frames.push(account_settings_frame(request, account_settings));
     frames.push(friend_stream_end(request));
-    frames.push(account_info(request, account, characters.first(), eula_accepted));
+    frames.push(account_info(
+        request,
+        account,
+        characters.first(),
+        eula_accepted,
+    ));
     frames.push(request_response(request, GM_ERROR_NONE));
 
     frames
@@ -116,7 +121,7 @@ fn character_info(request: u32, character: &ReplyCharacter) -> Vec<u8> {
     frame(0x0007, body)
 }
 
-/// `AUTH_SMSG_ACCOUNT_SETTINGS` (`0x0016`): the 591-byte block, counted in bytes.
+/// `AUTH_SMSG_ACCOUNT_SETTINGS` (`0x0016`): the settings blob (stored or committed), counted in bytes.
 fn account_settings_frame(request: u32, data: &[u8]) -> Vec<u8> {
     let mut body = Vec::with_capacity(6 + data.len());
     body.extend_from_slice(&request.to_le_bytes());
@@ -381,7 +386,11 @@ mod tests {
 
         let mut long = Vec::new();
         write_counted_utf16(&mut long, &"x".repeat(40), 20);
-        assert_eq!(long.len(), 2 + 40, "a name over the field is cut to the field");
+        assert_eq!(
+            long.len(),
+            2 + 40,
+            "a name over the field is cut to the field"
+        );
     }
     /// The reference's own bytes, from the send trace of one login.
     ///
@@ -509,7 +518,10 @@ mod tests {
                 "02 00 17 E0 7F 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
             );
             // An address family this client reads, whatever platform wrote it: 23, not 10.
-            assert_eq!(&host_blob("[::1]:6113".parse().unwrap())[..2], &[0x17, 0x00]);
+            assert_eq!(
+                &host_blob("[::1]:6113".parse().unwrap())[..2],
+                &[0x17, 0x00]
+            );
             assert_eq!(&host_blob("[::1]:6113".parse().unwrap())[4..20], &{
                 let mut v6 = [0u8; 16];
                 v6[15] = 1;

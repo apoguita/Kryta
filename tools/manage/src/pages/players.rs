@@ -8,9 +8,9 @@
 
 use shared::network::http::{Request, Response};
 
+use crate::Manage;
 use crate::view;
 use crate::web::{components, http, layout};
-use crate::Manage;
 
 /// The creation screen's own list of campaigns: the three a role-playing character may choose.
 /// A PvP character (campaign 0) is refused because the world pack names no PvP starting map.
@@ -108,7 +108,15 @@ pub fn list(manage: &Manage, request: &Request) -> Response {
         components::note("No player exists yet. Create one below.")
     } else {
         components::table(
-            &["player", "account", "level", "campaign", "professions", "last outpost", "PvP"],
+            &[
+                "player",
+                "account",
+                "level",
+                "campaign",
+                "professions",
+                "last outpost",
+                "PvP",
+            ],
             &rows,
         )
     };
@@ -218,7 +226,10 @@ pub fn detail(manage: &Manage, uuid: &str) -> Response {
                     ])
                 })
                 .collect::<Vec<_>>();
-            components::table(&["item", "bag", "slot", "quantity", "file id", "model"], &rows)
+            components::table(
+                &["item", "bag", "slot", "quantity", "file id", "model"],
+                &rows,
+            )
         }
         Err(error) => components::note(&format!(
             "The inventory could not be read: {}",
@@ -275,16 +286,27 @@ pub fn detail(manage: &Manage, uuid: &str) -> Response {
         })
         .collect();
     let title_rows: String = match manage.world_pack_path().and_then(|pack| {
-        game::characters::titles::VanillaTitles::load(std::path::Path::new(&pack).join("titles.json"))
+        game::characters::titles::VanillaTitles::load(
+            std::path::Path::new(&pack).join("titles.json"),
+        )
     }) {
-        Ok(titles) => titles.sheet().map(|title| {
-            format!(
-                "<tr><td>{}</td><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>",
-                components::escape(title.name), components::escape(title.metric),
-                title.points, title.current_rank, title.next_minimum
-            )
-        }).collect(),
-        Err(error) => format!("<tr><td colspan=\"5\">{}</td></tr>", components::escape(&error)),
+        Ok(titles) => titles
+            .sheet()
+            .map(|title| {
+                format!(
+                    "<tr><td>{}</td><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                    components::escape(title.name),
+                    components::escape(title.metric),
+                    title.points,
+                    title.current_rank,
+                    title.next_minimum
+                )
+            })
+            .collect(),
+        Err(error) => format!(
+            "<tr><td colspan=\"5\">{}</td></tr>",
+            components::escape(&error)
+        ),
     };
     let uuid_escaped = components::escape(uuid);
     let body = format!(
@@ -355,10 +377,7 @@ pub fn detail(manage: &Manage, uuid: &str) -> Response {
             )
         },
         unlocked_professions = unlocked_professions,
-        rename_field = components::field(
-            "Name",
-            &components::text_input("name", &character.name)
-        ),
+        rename_field = components::field("Name", &components::text_input("name", &character.name)),
         rename_button = components::submit("Rename"),
         level_field = components::field(
             "Level (1 to 20, R48)",
@@ -387,7 +406,9 @@ pub fn create(manage: &Manage, request: &Request) -> Response {
         }
     };
     let account = match manage.list_accounts() {
-        Ok(accounts) => accounts.into_iter().find(|account| account.id == account_id),
+        Ok(accounts) => accounts
+            .into_iter()
+            .find(|account| account.id == account_id),
         Err(error) => {
             return crate::pages::error(
                 500,
@@ -419,7 +440,9 @@ pub fn create(manage: &Manage, request: &Request) -> Response {
         };
         let campaign = number("campaign", 3)? as u8;
         if campaign == 0 {
-            return Err("PvP creation is unavailable: the world pack names no PvP starting map.".into());
+            return Err(
+                "PvP creation is unavailable: the world pack names no PvP starting map.".into(),
+            );
         }
         let profession = number("profession", 10)? as u8;
         let valid = (1..=6).contains(&profession)
@@ -447,10 +470,18 @@ pub fn create(manage: &Manage, request: &Request) -> Response {
             common::configuration::Policy::default(),
         )
         .map_err(|error| error.to_string())?;
-        let (inventory_path, _) = config.value_string("InventoryFile", "").map_err(|e| e.to_string())?;
-        let (equipment_path, _) = config.value_string("EquipmentFile", "").map_err(|e| e.to_string())?;
-        let (worn_path, _) = config.value_string("EquippedSlotsFile", "").map_err(|e| e.to_string())?;
-        let (pack_path, _) = config.value_string("WorldPack", "").map_err(|e| e.to_string())?;
+        let (inventory_path, _) = config
+            .value_string("InventoryFile", "")
+            .map_err(|e| e.to_string())?;
+        let (equipment_path, _) = config
+            .value_string("EquipmentFile", "")
+            .map_err(|e| e.to_string())?;
+        let (worn_path, _) = config
+            .value_string("EquippedSlotsFile", "")
+            .map_err(|e| e.to_string())?;
+        let (pack_path, _) = config
+            .value_string("WorldPack", "")
+            .map_err(|e| e.to_string())?;
         let log = manage.log();
         let tables = game::creation::Tables::load(
             &inventory_path,
@@ -464,7 +495,8 @@ pub fn create(manage: &Manage, request: &Request) -> Response {
 
         let spawn_path = std::path::Path::new(&pack_path).join("character_spawn.json");
         let spawn_data: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(&spawn_path).map_err(|error| format!("{}: {error}", spawn_path.display()))?,
+            &std::fs::read(&spawn_path)
+                .map_err(|error| format!("{}: {error}", spawn_path.display()))?,
         )
         .map_err(|error| error.to_string())?;
         let map = spawn_data["spawns"]
@@ -490,7 +522,8 @@ pub fn create(manage: &Manage, request: &Request) -> Response {
             .ok_or("The world database is not configured, so item templates are not available.")?
             .list()?;
         let mut id = [0u8; 16];
-        getrandom::getrandom(&mut id).map_err(|error| format!("Cannot create a player id: {error}"))?;
+        getrandom::getrandom(&mut id)
+            .map_err(|error| format!("Cannot create a player id: {error}"))?;
         let uuid = game::characters::uuid_text(&id);
         if !characters.insert_creation(
             &uuid,
@@ -528,7 +561,11 @@ pub fn rename(manage: &Manage, request: &Request, uuid: &str) -> Response {
     let form = http::form_fields(&request.body_text());
     let name = http::value(&form, "name").trim();
     if !valid_character_name(name) {
-        return crate::pages::error(400, "players", "Name must be 3 to 19 English letters, a first name and a surname.");
+        return crate::pages::error(
+            400,
+            "players",
+            "Name must be 3 to 19 English letters, a first name and a surname.",
+        );
     }
     let Some(characters) = manage.characters() else {
         return crate::pages::error(503, "players", "No character database is configured.");
@@ -546,7 +583,11 @@ pub fn rename(manage: &Manage, request: &Request, uuid: &str) -> Response {
             http::redirect(&format!("/players/{uuid}"))
         }
         Ok(false) => crate::pages::error(404, "players", "The player is already gone."),
-        Err(error) => crate::pages::error(500, "players", &format!("The character database said: {error}")),
+        Err(error) => crate::pages::error(
+            500,
+            "players",
+            &format!("The character database said: {error}"),
+        ),
     }
 }
 
@@ -579,7 +620,11 @@ pub fn set_level(manage: &Manage, request: &Request, uuid: &str) -> Response {
             http::redirect(&format!("/players/{uuid}"))
         }
         Ok(false) => crate::pages::error(404, "players", "The player is already gone."),
-        Err(error) => crate::pages::error(500, "players", &format!("The character database said: {error}")),
+        Err(error) => crate::pages::error(
+            500,
+            "players",
+            &format!("The character database said: {error}"),
+        ),
     }
 }
 
@@ -598,16 +643,25 @@ pub fn delete(manage: &Manage, request: &Request, uuid: &str) -> Response {
     }
     match characters.remove(uuid) {
         Ok(true) => {
-            manage.say(format!("player {uuid}: removed, with its items and unlocks"));
+            manage.say(format!(
+                "player {uuid}: removed, with its items and unlocks"
+            ));
             http::redirect("/players")
         }
         Ok(false) => crate::pages::error(404, "players", "The player is already gone."),
-        Err(error) => crate::pages::error(500, "players", &format!("The character database said: {error}")),
+        Err(error) => crate::pages::error(
+            500,
+            "players",
+            &format!("The character database said: {error}"),
+        ),
     }
 }
 
 /// The creation form, drawn from the creation record's own choices.
-fn create_form(accounts: &[game::accounts::Account], selected: Option<&game::accounts::Account>) -> String {
+fn create_form(
+    accounts: &[game::accounts::Account],
+    selected: Option<&game::accounts::Account>,
+) -> String {
     if accounts.is_empty() {
         return components::note(
             "A player is created for one account. Create an account first, on the Accounts page.",
@@ -665,17 +719,29 @@ fn create_form(accounts: &[game::accounts::Account], selected: Option<&game::acc
         ),
         profession = components::field(
             "Profession",
-            &format!("<select name=\"profession\">{}</select>", view::profession_options(1))
+            &format!(
+                "<select name=\"profession\">{}</select>",
+                view::profession_options(1)
+            )
         ),
         sex = components::field(
             "Sex",
             "<select name=\"sex\"><option value=\"0\">Male</option><option value=\"1\">Female</option></select>"
         ),
-        height = components::field("Height (0-15)", &components::number_input("height", 0, 0, 15)),
+        height = components::field(
+            "Height (0-15)",
+            &components::number_input("height", 0, 0, 15)
+        ),
         skin = components::field("Skin (0-31)", &components::number_input("skin", 0, 0, 31)),
-        hair_color = components::field("Hair colour (0-31)", &components::number_input("hair_color", 0, 0, 31)),
+        hair_color = components::field(
+            "Hair colour (0-31)",
+            &components::number_input("hair_color", 0, 0, 31)
+        ),
         face = components::field("Face (0-31)", &components::number_input("face", 0, 0, 31)),
-        hair_style = components::field("Hair style (0-63)", &components::number_input("hair_style", 3, 0, 63)),
+        hair_style = components::field(
+            "Hair style (0-63)",
+            &components::number_input("hair_style", 3, 0, 63)
+        ),
         button = components::submit("Create player"),
     )
 }

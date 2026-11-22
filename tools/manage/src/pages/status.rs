@@ -5,8 +5,8 @@
 
 use shared::network::http::Response;
 
-use crate::web::{components, layout};
 use crate::Manage;
+use crate::web::{components, layout};
 
 /// The world status page.
 pub fn page(_manage: &Manage) -> Response {
@@ -26,9 +26,9 @@ pub fn page(_manage: &Manage) -> Response {
 /// or it answered (and an empty answer is a valid result that says so).
 pub fn fragment(manage: &Manage) -> Response {
     let html = match manage.world_status() {
-        Ok(answer) if answer.trim().is_empty() => components::note(
-            "The world answered the status operation, and its result is empty.",
-        ),
+        Ok(answer) if answer.trim().is_empty() => {
+            components::note("The world answered the status operation, and its result is empty.")
+        }
         Ok(answer) => format!(
             "<p>The running world answered:</p><pre>{}</pre>",
             components::escape(&answer)

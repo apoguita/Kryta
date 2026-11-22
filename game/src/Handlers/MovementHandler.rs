@@ -56,15 +56,16 @@ impl WorldSession {
             y: destination.1,
             plane,
         };
-        let Some((agent_id, from, planes)) = self.with_agent(|agent| {
-            (agent.agent_id, agent.here(), agent.plane)
-        }) else {
+        let Some((agent_id, from, planes)) =
+            self.with_agent(|agent| (agent.agent_id, agent.here(), agent.plane))
+        else {
             return;
         };
         let walked = self.graphs.walk(self.map_id() as i32, from, to);
         match walked {
             crate::terrain::Walk::Found(waypoints) => {
-                let waypoints = crate::agents::densify(waypoints, from, crate::agents::LIVE_CADENCE_STEP);
+                let waypoints =
+                    crate::agents::densify(waypoints, from, crate::agents::LIVE_CADENCE_STEP);
                 let begun = self.with_agent(|agent| {
                     let speed = (agent.move_type != 1 || agent.move_speed != 1.0)
                         .then(|| agent_packets::agent_update_speed(agent_id, 1.0, 1));
@@ -219,7 +220,10 @@ impl WorldSession {
         let Some((stop, was_walking)) = self.with_agent(|agent| {
             let was_walking = 0.0 < agent.motion.speed;
             agent.cancel_movement();
-            (agent_packets::agent_stop_moving(agent.agent_id), was_walking)
+            (
+                agent_packets::agent_stop_moving(agent.agent_id),
+                was_walking,
+            )
         }) else {
             return;
         };
@@ -244,7 +248,8 @@ impl WorldSession {
                 std::slice::from_ref(&stop.1),
             );
         }
-        self.send_quiet(io, peer, crypt, &[stop.1], "the stop").await;
+        self.send_quiet(io, peer, crypt, &[stop.1], "the stop")
+            .await;
     }
 
     /// `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` (`0x8047`): the stopping point a cancel carries.
@@ -317,7 +322,8 @@ impl WorldSession {
             if let Ok(peers) = self.peers.lock() {
                 peers.broadcast(self.player_id(), self.map_id(), self.district(), &reply);
             }
-            self.send_quiet(io, peer, crypt, &reply, "the stopping point").await;
+            self.send_quiet(io, peer, crypt, &reply, "the stopping point")
+                .await;
         }
     }
 }

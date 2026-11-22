@@ -239,10 +239,14 @@ mod tests {
 
     #[test]
     fn zero_or_too_many_worker_threads_are_refused() {
-        let zero = config("LoginDatabaseInfo = \"127.0.0.1;5432;kryta;kryta;kryta_login\"\nLoginDatabase.WorkerThreads = 0\n");
+        let zero = config(
+            "LoginDatabaseInfo = \"127.0.0.1;5432;kryta;kryta;kryta_login\"\nLoginDatabase.WorkerThreads = 0\n",
+        );
         assert!(read_settings(&zero, DatabaseKind::Login).is_err());
 
-        let many = config("LoginDatabaseInfo = \"127.0.0.1;5432;kryta;kryta;kryta_login\"\nLoginDatabase.WorkerThreads = 33\n");
+        let many = config(
+            "LoginDatabaseInfo = \"127.0.0.1;5432;kryta;kryta;kryta_login\"\nLoginDatabase.WorkerThreads = 33\n",
+        );
         assert!(read_settings(&many, DatabaseKind::Login).is_err());
     }
 }

@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 
 use shared::network::http::{Request, Response};
 
-use crate::web::{components, http, layout};
 use crate::Manage;
+use crate::web::{components, http, layout};
 
 /// The console page; `run` is a just-run operation and its answer or refusal.
 pub fn page(

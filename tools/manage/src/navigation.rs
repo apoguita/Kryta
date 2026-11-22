@@ -6,7 +6,7 @@
 //! `ASURA/crates/asura-worldserver/src/main.rs:571-665`.
 
 use game::pack::GwDat;
-use game::terrain::graph_dump::{decode, encode, DumpedGraph};
+use game::terrain::graph_dump::{DumpedGraph, decode, encode};
 use game::terrain::map_data::PathStaticData;
 use game::terrain::pathfind::find_path_blob;
 use game::world::MapEntry;

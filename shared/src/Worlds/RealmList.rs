@@ -65,7 +65,9 @@ impl WorldList {
                 log.out(
                     LogLevel::Error,
                     "server.authserver",
-                    format!("Could not resolve address {address_text} for world \"{name}\" id {id}"),
+                    format!(
+                        "Could not resolve address {address_text} for world \"{name}\" id {id}"
+                    ),
                 );
                 continue;
             };
@@ -74,7 +76,9 @@ impl WorldList {
                 log.out(
                     LogLevel::Error,
                     "server.authserver",
-                    format!("Could not resolve localAddress {local_text} for world \"{name}\" id {id}"),
+                    format!(
+                        "Could not resolve localAddress {local_text} for world \"{name}\" id {id}"
+                    ),
                 );
                 continue;
             };
@@ -123,14 +127,18 @@ impl WorldList {
     /// Reference: there is no file in the reference - its world list is the table alone. This is the
     /// settings rule applied to it (`docs/port/04-configuration.md`): the table is the reference's
     /// home for the list, and the file is where an operator writes the same settings down.
-    pub fn merge_file(&mut self, path: impl AsRef<std::path::Path>, log: &Log) -> Result<usize, String> {
+    pub fn merge_file(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        log: &Log,
+    ) -> Result<usize, String> {
         let path = path.as_ref();
         if !path.exists() {
             return Ok(0);
         }
 
-        let document = common::configuration::json::Document::read(path)
-            .map_err(|error| error.to_string())?;
+        let document =
+            common::configuration::json::Document::read(path).map_err(|error| error.to_string())?;
         let records = document.records("realms")?;
 
         let mut merged = 0usize;
@@ -167,8 +175,9 @@ impl WorldList {
                 realm.address_text = text;
             }
             if let Some(text) = record.text("localAddress")? {
-                realm.local_address = resolve(&text)
-                    .map_err(|_| format!("{}: 'localAddress' {text} does not resolve", record.at()))?;
+                realm.local_address = resolve(&text).map_err(|_| {
+                    format!("{}: 'localAddress' {text} does not resolve", record.at())
+                })?;
             }
             if let Some(text) = record.text("localSubnetMask")? {
                 realm.local_subnet_mask = text;
@@ -186,7 +195,8 @@ impl WorldList {
                 realm.timezone = number(&text, record.at(), "timezone")? as u8;
             }
             if let Some(text) = record.text("allowedSecurityLevel")? {
-                realm.allowed_security_level = number(&text, record.at(), "allowedSecurityLevel")? as u8;
+                realm.allowed_security_level =
+                    number(&text, record.at(), "allowedSecurityLevel")? as u8;
             }
             if let Some(text) = record.text("population")? {
                 realm.population = text

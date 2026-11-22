@@ -139,6 +139,7 @@ impl DatabaseMaps {
                         .try_get::<_, Option<i64>>("instance_value")
                         .map_err(|error| format!("column instance_value: {error}"))?
                         .map(|value| value as u32),
+                    name_id: None,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -301,7 +302,10 @@ impl DatabaseMaps {
         let rows = self.query_with(
             "DELETE FROM \"map_spawn\" WHERE \"map_id\" = $1::bigint::int AND \
              \"idx\" = $2::bigint::int RETURNING 1",
-            vec![Param::Integer(i64::from(map_id)), Param::Integer(i64::from(index))],
+            vec![
+                Param::Integer(i64::from(map_id)),
+                Param::Integer(i64::from(index)),
+            ],
         )?;
         Ok(!rows.is_empty())
     }
@@ -396,7 +400,7 @@ fn read_text(row: &postgres::Row, column: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use common::configuration::{Config, Policy};
-    use database::database::{read_settings, DatabaseKind};
+    use database::database::{DatabaseKind, read_settings};
 
     fn repository() -> Option<DatabaseMaps> {
         let log = Log::new();
@@ -434,7 +438,10 @@ mod tests {
             None,
             "the seed states no cap, so the world's own applies (R15)"
         );
-        assert!(maps.party_cap(999_999).is_err(), "a map that is not there is not read");
+        assert!(
+            maps.party_cap(999_999).is_err(),
+            "a map that is not there is not read"
+        );
     }
 
     #[test]
@@ -455,7 +462,10 @@ mod tests {
             .expect("the point is the table's");
         assert!((added.x - 9600.5).abs() < 0.01 && (added.y - 4800.25).abs() < 0.01);
 
-        assert!(maps.remove_spawn(148, index).expect("the spawn point is removed"));
+        assert!(
+            maps.remove_spawn(148, index)
+                .expect("the spawn point is removed")
+        );
         let (_, after) = maps.load().expect("the map tables read");
         assert_eq!(after.len(), before.len(), "the point is gone again");
     }

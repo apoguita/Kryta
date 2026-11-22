@@ -15,23 +15,23 @@
 //!
 //! `AppenderDB` lives in `database/Logging/`, as it does in the reference.
 
-#[path = "LogCommon.rs"]
-pub mod log_common;
-#[path = "LogMessage.rs"]
-pub mod log_message;
 #[path = "Appender.rs"]
 pub mod appender;
 #[path = "AppenderConsole.rs"]
 pub mod appender_console;
 #[path = "AppenderFile.rs"]
 pub mod appender_file;
-#[path = "Logger.rs"]
-pub mod logger;
 #[path = "Log.rs"]
 pub mod log;
+#[path = "LogCommon.rs"]
+pub mod log_common;
+#[path = "LogMessage.rs"]
+pub mod log_message;
+#[path = "Logger.rs"]
+pub mod logger;
 
 pub use appender::Appender;
 pub use log::Log;
-pub use log_common::{AppenderFlags, AppenderType, LogLevel, LOGGER_ROOT};
+pub use log_common::{AppenderFlags, AppenderType, LOGGER_ROOT, LogLevel};
 pub use log_message::LogMessage;
 pub use logger::Logger;

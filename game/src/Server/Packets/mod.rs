@@ -10,6 +10,8 @@ pub mod agent_packets;
 pub mod character_packets;
 #[path = "ChatPackets.rs"]
 pub mod chat_packets;
+#[path = "GuildPackets.rs"]
+pub mod guild_packets;
 #[path = "InstancePackets.rs"]
 pub mod instance_packets;
 #[path = "ItemPackets.rs"]

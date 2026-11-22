@@ -190,8 +190,7 @@ mod tests {
         assert_eq!(TRAVEL_TARGETS[19].map_id, 449);
         // The reference's own two spellings of one map, and its three kinds.
         assert_eq!(
-            TRAVEL_TARGETS[2].map_id,
-            TRAVEL_TARGETS[3].map_id,
+            TRAVEL_TARGETS[2].map_id, TRAVEL_TARGETS[3].map_id,
             "lakeside and lakeside county name the same map"
         );
         assert!(TRAVEL_TARGETS.iter().all(|target| target.map_type <= 11));

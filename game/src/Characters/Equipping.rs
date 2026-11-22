@@ -152,12 +152,18 @@ mod tests {
         let templates = [template(10, 100, 4), template(11, 200, 4)];
         assert_eq!(
             equip_place(&rows, &templates, Some(&bag()), &worn(), 1),
-            Ok((7, crate::creation::worn_slot(&worn(), 4).expect("a worn kind"))),
+            Ok((
+                7,
+                crate::creation::worn_slot(&worn(), 4).expect("a worn kind")
+            )),
             "the template its row id names"
         );
         assert_eq!(
             equip_place(&rows, &templates, Some(&bag()), &worn(), 2),
-            Ok((7, crate::creation::worn_slot(&worn(), 4).expect("a worn kind"))),
+            Ok((
+                7,
+                crate::creation::worn_slot(&worn(), 4).expect("a worn kind")
+            )),
             "and the one its file id names, for a row written from a file alone"
         );
     }

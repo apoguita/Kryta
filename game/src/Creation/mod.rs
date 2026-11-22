@@ -52,16 +52,14 @@ pub struct WornSlot {
 
 /// The cell inside the equipped bag an item kind is worn in, from the loaded table.
 pub fn worn_slot(worn: &[WornSlot], item_type: u8) -> Option<u8> {
-    worn
-        .iter()
+    worn.iter()
         .find(|row| row.kinds.contains(&item_type))
         .map(|row| row.bag_slot)
 }
 
 /// The position in the agent's nine-dword visual list that kind occupies, from the same table.
 pub fn wire_slot(worn: &[WornSlot], item_type: u8) -> Option<u8> {
-    worn
-        .iter()
+    worn.iter()
         .find(|row| row.kinds.contains(&item_type))
         .map(|row| row.wire_slot)
 }
@@ -413,16 +411,12 @@ pub fn player_data_block(tables: &Tables, campaign: u8, profession: u8) -> Vec<V
         character_packets::CREATION_UNLOCKED_PROFESSIONS,
     ));
     frames.push(character_packets::skillbar_update(
-        agent,
-        &[0u32; 8],
-        &[0u32; 8],
-        1,
+        agent, &[0u32; 8], &[0u32; 8], 1,
     ));
     frames.push(character_packets::update_unlocked_skills(&[]));
-    frames.push(character_packets::character_update_factions(&[
-        0u32;
-        character_packets::FACTIONS_DWORDS
-    ]));
+    frames.push(character_packets::character_update_factions(
+        &[0u32; character_packets::FACTIONS_DWORDS],
+    ));
     frames.push(agent_packets::agent_update_attributes(agent, &[0u32; 42]));
 
     // The creation path's own numbers: `GameSrv_SendPlayerHealthEnergy` sends energy 20, health 100
@@ -449,7 +443,8 @@ pub fn player_data_block(tables: &Tables, campaign: u8, profession: u8) -> Vec<V
 
 /// The inventory stream: per bag its own item, the bag, and then every item in it with its slot.
 pub fn inventory_block(inventory: &Inventory) -> Vec<Vec<u8>> {
-    let mut frames = Vec::with_capacity(inventory.bags.len() * 2 + inventory.items.len() * 3);    for bag in &inventory.bags {
+    let mut frames = Vec::with_capacity(inventory.bags.len() * 2 + inventory.items.len() * 3);
+    for bag in &inventory.bags {
         // A bag that is also an item is created before the bag, because the bag names it.
         if bag.assoc_item != 0
             && let Some(item) = inventory
@@ -506,7 +501,10 @@ pub fn load_item_stream(inventory: &Inventory, gold: u32) -> Vec<Vec<u8>> {
             0,
         ));
     }
-    frames.push(item_packets::update_gold_storage(item_packets::ITEM_STREAM, gold));
+    frames.push(item_packets::update_gold_storage(
+        item_packets::ITEM_STREAM,
+        gold,
+    ));
     for header in [
         character_packets::FACTION_MAX_KURZICK,
         character_packets::FACTION_MAX_LUXON,
@@ -695,7 +693,9 @@ mod tests {
         let error = Tables::load(
             "../config/World/Vanilla/creation/does-not-exist.json",
             "../config/World/Vanilla/creation/equipment.json",
-            Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
+            Some(std::path::Path::new(
+                "../config/World/Vanilla/creation/worn_slots.json",
+            )),
             &log,
         )
         .expect_err("a world with no creation inventory does not start");
@@ -739,7 +739,9 @@ mod tests {
         Tables::load(
             "../config/World/Vanilla/creation/inventory.json",
             "../config/World/Vanilla/creation/equipment.json",
-            Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
+            Some(std::path::Path::new(
+                "../config/World/Vanilla/creation/worn_slots.json",
+            )),
             &log,
         )
         .expect("the creation data reads")
@@ -753,7 +755,10 @@ mod tests {
         assert_eq!(items, 9, "and nine items before a profession is chosen");
         assert_eq!(sets, 32, "thirty-two (campaign, profession) sets");
         let total: usize = tables.sets.iter().map(|set| set.items.len()).sum();
-        assert_eq!(total, 179, "and a hundred and seventy-nine items between them");
+        assert_eq!(
+            total, 179,
+            "and a hundred and seventy-nine items between them"
+        );
     }
 
     /// An item's name and modifiers are **lists**, and the wire carries every element of them: the
@@ -835,7 +840,11 @@ mod tests {
         let mut ids: Vec<u32> = inventory.items.iter().map(|item| item.id).collect();
         ids.sort_unstable();
         ids.dedup();
-        assert_eq!(ids.len(), inventory.items.len(), "no id is handed out twice");
+        assert_eq!(
+            ids.len(),
+            inventory.items.len(),
+            "no id is handed out twice"
+        );
     }
 
     #[test]

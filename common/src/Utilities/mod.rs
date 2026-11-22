@@ -98,11 +98,21 @@ mod tests {
 
     #[test]
     fn hex_text_is_read_the_way_a_capture_prints_it() {
-        assert_eq!(hex_bytes("f1 02 20 00").unwrap(), vec![0xF1, 0x02, 0x20, 0x00]);
-        assert_eq!(hex_bytes("F102 2000").unwrap(), vec![0xF1, 0x02, 0x20, 0x00]);
+        assert_eq!(
+            hex_bytes("f1 02 20 00").unwrap(),
+            vec![0xF1, 0x02, 0x20, 0x00]
+        );
+        assert_eq!(
+            hex_bytes("F102 2000").unwrap(),
+            vec![0xF1, 0x02, 0x20, 0x00]
+        );
         assert_eq!(hex_bytes("0xf1,0x02").unwrap(), vec![0xF1, 0x02]);
         assert!(hex_bytes("").unwrap().is_empty());
         assert!(hex_bytes("f1 0").unwrap_err().contains("odd number"));
-        assert!(hex_bytes("zz").unwrap_err().contains("not a hexadecimal byte"));
+        assert!(
+            hex_bytes("zz")
+                .unwrap_err()
+                .contains("not a hexadecimal byte")
+        );
     }
 }

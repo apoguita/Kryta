@@ -68,7 +68,10 @@ fn every_use_of_the_game_library_in_auth_is_one_the_record_names() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     source_files(&root, &mut files);
-    assert!(!files.is_empty(), "the auth program's sources are where they are expected");
+    assert!(
+        !files.is_empty(),
+        "the auth program's sources are where they are expected"
+    );
 
     let mut named = BTreeSet::new();
     for file in &files {

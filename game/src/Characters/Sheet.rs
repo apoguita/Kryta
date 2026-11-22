@@ -20,16 +20,30 @@ pub struct CharacterSheet {
     pub campaign: u8,
     /// Its primary profession.
     pub profession: u8,
+    /// Its secondary profession, or zero when it has chosen none.
+    pub secondary_profession: u8,
     /// The id its own rows are keyed by.
     pub uuid: [u8; 16],
     /// The gold it carries (R45).
     pub gold: u32,
     /// The packed look the client builds the model from, or 0 when the row records none.
     pub appearance: u32,
+    /// The campaigns this character has finished, as bit 0 Prophecies, bit 1 Factions, bit 2
+    /// Nightfall. Hard mode is unlocked by a completed campaign, not by the outpost.
+    pub campaigns_finished: u8,
+    /// The last outpost the character stood in: where a defeated party's return button sends it.
+    pub last_outpost: u16,
     /// The character's level, which the progress record and the agent's own property carry.
     pub level: u8,
     /// The professions the character has unlocked, as a bitmap.
     pub unlocked_professions: u32,
+    /// Total experience: the first dword of the progress record (`0x00E9`).
+    pub experience: u32,
+    /// Skill points held now: the progress record's fourteenth dword
+    /// (`ASURA/crates/asura-db/src/game.rs:144-145`).
+    pub skill_points: u32,
+    /// Skill points earned in total: its fifteenth (`ASURA/crates/asura-db/src/game.rs:146-147`).
+    pub skill_points_total: u32,
 }
 
 impl CharacterSheet {
@@ -44,11 +58,27 @@ impl CharacterSheet {
             name: "Player".to_string(),
             campaign: 0,
             profession: character_packets::DEFAULT_PROFESSION,
+            secondary_profession: 0,
             uuid,
             gold: 0,
             appearance: 0,
+            campaigns_finished: 0,
+            last_outpost: 148,
             level: 1,
             unlocked_professions: character_packets::CREATION_UNLOCKED_PROFESSIONS,
+            experience: 0,
+            skill_points: 0,
+            skill_points_total: 0,
+        }
+    }
+
+    /// The progress this sheet states, as `Characters/Experience.rs` reasons about it.
+    pub fn progress(&self) -> crate::characters::experience::Progress {
+        crate::characters::experience::Progress {
+            experience: self.experience,
+            level: self.level,
+            skill_points: self.skill_points,
+            skill_points_total: self.skill_points_total,
         }
     }
 }
@@ -78,5 +108,14 @@ mod tests {
             "and the profession the creation screen starts with"
         );
         assert_eq!(sheet.uuid, uuid, "the id its items would be recorded under");
+        assert_eq!(
+            (
+                sheet.experience,
+                sheet.skill_points,
+                sheet.skill_points_total
+            ),
+            (0, 0, 0),
+            "a fresh character has no progress"
+        );
     }
 }

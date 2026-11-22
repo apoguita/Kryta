@@ -17,8 +17,8 @@ mod remote_access;
 use common::configuration::{Complaint, Config, Policy, PolicyOverride, Severity};
 use common::logging::{Log, LogLevel};
 use common::utilities::create_pid_file;
-use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
-use database::updater::{collect_files, UpdateState};
+use database::database::{DatabaseKind, DatabaseWorkerPool, read_settings};
+use database::updater::{UpdateState, collect_files};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -193,7 +193,11 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     for (kind, label, schema) in [
         (DatabaseKind::Login, "Login", "data/sql/base/db_auth"),
         (DatabaseKind::World, "World", "data/sql/base/db_world"),
-        (DatabaseKind::Character, "Character", "data/sql/base/db_characters"),
+        (
+            DatabaseKind::Character,
+            "Character",
+            "data/sql/base/db_characters",
+        ),
     ] {
         let settings = read_settings(&config, kind)?;
         let mut pool = DatabaseWorkerPool::open_with_trace(kind, &settings, &log, sql_trace)?;
@@ -235,14 +239,17 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
                     "UPDATE \"updates\" SET \"hash\" = $1 WHERE \"name\" = $2",
                     &[&hash, &name],
                 )
-                .map_err(|error| format!("the {label} update record cannot be re-taken: {error}"))?;
+                .map_err(|error| {
+                    format!("the {label} update record cannot be re-taken: {error}")
+                })?;
                 log.out(
                     LogLevel::Info,
                     "server.worldserver",
                     format!("{label} schema: re-recorded {name} as {hash}."),
                 );
             }
-        }        let summary = pool.apply_updates(&files, &log)?;
+        }
+        let summary = pool.apply_updates(&files, &log)?;
         pool.ping()
             .map_err(|error| format!("the {label} database does not answer: {error}"))?;
 
@@ -299,6 +306,18 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     let pack = game::maps::pack::Pack::load(&world_pack, &log)?;
     let maps = world.load_maps(&pack, &format!("the map pack at {world_pack}"), &log)?;
     world.load_titles(std::path::Path::new(&world_pack).join("titles.json"), &log)?;
+    // The experience curve: the pack's own file, read the way the titles are
+    // (`game/Characters/Experience.rs`, ported from ASURA's `experience.json`).
+    world.load_experience(
+        std::path::Path::new(&world_pack).join(game::characters::experience::EXPERIENCE_FILE),
+        &log,
+    )?;
+    // How many players a party may hold, per map: the pack's own file, read the way the titles are
+    // (`game/Parties/mod.rs`, ported from ASURA's `party_sizes.json`).
+    world.load_party_sizes(
+        std::path::Path::new(&world_pack).join("party_sizes.json"),
+        &log,
+    )?;
     // The maps this world can put a client in: a record the pack states no type or no blob for is a
     // destination the client can resolve and this world cannot load, so it is not asked for a graph
     // (`ASURA/crates/asura-world/src/catalogue.rs:54-63`).
@@ -341,13 +360,19 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     // character wears per campaign and profession. Reference: the same `SetInitialWorldSettings`
     // pass that loads a world's maps; a creation screen's equipment is content like any other.
     let (inventory_file, notes) = config
-        .value_string("InventoryFile", "config/World/Vanilla/creation/inventory.json")
+        .value_string(
+            "InventoryFile",
+            "config/World/Vanilla/creation/inventory.json",
+        )
         .map_err(|error| error.to_string())?;
     for note in notes {
         report(&note);
     }
     let (equipment_file, notes) = config
-        .value_string("EquipmentFile", "config/World/Vanilla/creation/equipment.json")
+        .value_string(
+            "EquipmentFile",
+            "config/World/Vanilla/creation/equipment.json",
+        )
         .map_err(|error| error.to_string())?;
     for note in notes {
         report(&note);
@@ -355,11 +380,24 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     // Which slot each kind of item is worn in. Content, like the two above: the number is the
     // client's own, and a wrong one draws a character without the piece it holds.
     let (worn_slots_file, notes) = config
-        .value_string("EquippedSlotsFile", "config/World/Vanilla/creation/worn_slots.json")
+        .value_string(
+            "EquippedSlotsFile",
+            "config/World/Vanilla/creation/worn_slots.json",
+        )
         .map_err(|error| error.to_string())?;
     for note in notes {
         report(&note);
     }
+    // The guild settings: what a new guild starts with, the `0x0133` counter's start and step, and the
+    // two placeholder prices (`game/Guilds/mod.rs`, ported from ASURA's `config/Server/guilds.json`).
+    // `GuildsFile` says where the file is, as `CommandsFile` does for the command surface.
+    let (guilds_file, notes) = config
+        .value_string("GuildsFile", "config/Server/guilds.json")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    world.load_guilds(&guilds_file, &log)?;
     // The chat command surface: the names a player may type and the operation each one runs. Content,
     // not a setting - the file is where the surface lives, and `CommandsFile` says where that file is
     // (`docs/decisions/0011-the-command-surface-is-content.md`).
@@ -464,13 +502,12 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     let graphs = load_path_graphs(&graph_dump, &hostable, &log)?;
     world.set_graphs(graphs);
 
-    let (bags, items, sets) =
-        world.load_creation(
-            &inventory_file,
-            &equipment_file,
-            Some(std::path::Path::new(&worn_slots_file)),
-            &log,
-        )?;
+    let (bags, items, sets) = world.load_creation(
+        &inventory_file,
+        &equipment_file,
+        Some(std::path::Path::new(&worn_slots_file)),
+        &log,
+    )?;
     log.out(
         LogLevel::Info,
         "server.worldserver",
@@ -603,18 +640,17 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     }
     let min_update = std::time::Duration::from_millis(min_update_ms.max(1));
 
-    let sockets =
-        game::server::WorldSocketMgr::start(
-            std::sync::Arc::clone(&world),
-            character_pool.clone(),
-            login_pool.clone(),
-            log.clone(),
-            &bind,
-            port,
-            network_threads,
-            trace,
-        )
-            .map_err(|error| format!("the world listener could not start: {error}"))?;
+    let sockets = game::server::WorldSocketMgr::start(
+        std::sync::Arc::clone(&world),
+        character_pool.clone(),
+        login_pool.clone(),
+        log.clone(),
+        &bind,
+        port,
+        network_threads,
+        trace,
+    )
+    .map_err(|error| format!("the world listener could not start: {error}"))?;
     let bound = sockets.port().unwrap_or(port);
 
     // The stack's handshake: printed only when a supervisor asked for it (`KRYTA_STACK`), because
@@ -633,13 +669,21 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     world.on_startup();
 
     // Reference: Main.cpp:400-408 and CliRunnable.cpp:231: submit to the world update.
-    let (console_enabled, notes) = config.value_bool("Console.Enable", true)
+    let (console_enabled, notes) = config
+        .value_bool("Console.Enable", true)
         .map_err(|error| error.to_string())?;
-    for note in notes { report(&note); }
-    let (queue_capacity, notes) = config.value::<usize>("Console.QueueCapacity", 64)
+    for note in notes {
+        report(&note);
+    }
+    let (queue_capacity, notes) = config
+        .value::<usize>("Console.QueueCapacity", 64)
         .map_err(|error| error.to_string())?;
-    for note in notes { report(&note); }
-    if queue_capacity == 0 { return Err("Console.QueueCapacity must be greater than zero".into()); }
+    for note in notes {
+        report(&note);
+    }
+    if queue_capacity == 0 {
+        return Err("Console.QueueCapacity must be greater than zero".into());
+    }
     let (command_sender, command_receiver) = std::sync::mpsc::sync_channel(queue_capacity);
     let console_table = std::sync::Arc::new(world.commands().clone());
     let console = console_enabled
@@ -648,22 +692,48 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
             std::sync::Arc::clone(&console_table),
             std::sync::Arc::clone(&operations),
         );
-    let (control_enabled, _) = config.value_bool("Control.Enable", false).map_err(|error| error.to_string())?;
+    let (control_enabled, _) = config
+        .value_bool("Control.Enable", false)
+        .map_err(|error| error.to_string())?;
     let control = if control_enabled {
-        let (port, _) = config.value::<u16>("Control.Port", 7878).map_err(|error| error.to_string())?;
-        let (path, _) = config.value_string("Control.CredentialFile", "").map_err(|error| error.to_string())?;
-        let (timeout, _) = config.value::<u64>("Control.TimeoutSeconds", 5).map_err(|error| error.to_string())?;
-        if path.is_empty() || timeout == 0 { return Err("Control requires a credential file and positive timeout".into()); }
-        let server = remote_access::Server::start(port, std::path::Path::new(&path), std::time::Duration::from_secs(timeout), command_sender.clone(), std::sync::Arc::clone(&operations))?;
-        log.out(LogLevel::Info, "server.worldserver", format!("Local world control listening on 127.0.0.1:{port}."));
+        let (port, _) = config
+            .value::<u16>("Control.Port", 7878)
+            .map_err(|error| error.to_string())?;
+        let (path, _) = config
+            .value_string("Control.CredentialFile", "")
+            .map_err(|error| error.to_string())?;
+        let (timeout, _) = config
+            .value::<u64>("Control.TimeoutSeconds", 5)
+            .map_err(|error| error.to_string())?;
+        if path.is_empty() || timeout == 0 {
+            return Err("Control requires a credential file and positive timeout".into());
+        }
+        let server = remote_access::Server::start(
+            port,
+            std::path::Path::new(&path),
+            std::time::Duration::from_secs(timeout),
+            command_sender.clone(),
+            std::sync::Arc::clone(&operations),
+        )?;
+        log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!("Local world control listening on 127.0.0.1:{port}."),
+        );
         Some(server)
-    } else { None };
-    drop(command_sender);
-    log.out(LogLevel::Info, "server.worldserver", if console {
-        "World console enabled."
     } else {
-        "World console unavailable or disabled."
-    });
+        None
+    };
+    drop(command_sender);
+    log.out(
+        LogLevel::Info,
+        "server.worldserver",
+        if console {
+            "World console enabled."
+        } else {
+            "World console unavailable or disabled."
+        },
+    );
 
     // ACSoapThread, the reference's remote endpoint, is not yet ported.
     // On shutdown, in the reference's order: `sWorldSessionMgr->KickAll` and the `UpdateSessions(1)`
@@ -756,7 +826,9 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
 
     wait_for_shutdown(&world);
     let exit = world.exit_code();
-    if let Some(control) = control { control.stop(); }
+    if let Some(control) = control {
+        control.stop();
+    }
     stop_update.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = world_loop.join();
     log.out(
@@ -874,9 +946,7 @@ impl Options {
                 "-v" | "--version" => options.version = true,
                 "-d" | "--dry-run" => options.dry_run = true,
                 "-c" | "--config" => {
-                    options.config = PathBuf::from(
-                        rest.next().ok_or("--config needs a path")?,
-                    );
+                    options.config = PathBuf::from(rest.next().ok_or("--config needs a path")?);
                 }
                 "--config-policy" => {
                     options.config_policy =
@@ -927,7 +997,9 @@ fn print_usage() {
     println!("  -h [ --help ]             print usage message");
     println!("  -v [ --version ]          print version build info");
     println!("  -d [ --dry-run ]          Dry run");
-    println!("  -c [ --config ] arg       use <arg> as configuration file (default: {DEFAULT_CONFIG})");
+    println!(
+        "  -c [ --config ] arg       use <arg> as configuration file (default: {DEFAULT_CONFIG})"
+    );
     println!("  --config-policy policy    override config severity policy");
 }
 
