@@ -11,6 +11,12 @@ Two rules govern every line here, and both come from `AGENTS.md`:
 - The **contents** are this client's, measured, and each fact names the document or capture that
   recorded it. None of it is Azeroth's protocol.
 
+**One word, two servers.** In `AGENTS.md` "the reference" is AzerothCore, and that is what it means
+above, for the arrangement. Everywhere below, where this file says the reference sent, logged,
+removed, refused or answered something on the wire, it means **GWPS** - the C server ASURA was measured
+against (`C:\Users\Apo\Documents\GitHub\PreSearing`, `docs/research-sources.md`), whose send trace is
+`recordings/gwps/` and whose functions are the `AuthSrv_*`, `GameSrv_*` and `Connection_*` names cited.
+
 ## The frame
 
 After the handshake every message is a `u16` header and then its fields, with **no length field**:
@@ -29,13 +35,17 @@ a header whose bit 15 is set came from the client, and the header selects the fi
 
 `recordings/` holds three different things, made by three different tools, and **only two of them are
 the wire**. A size or a header taken from the wrong one is the wrong number, so a citation says which
-file it came from and every capture says its own layer in its header (`layer`, `header_len`).
+file it came from. A capture written by this tree's `worldserver` (`CaptureFile`,
+`game/Server/Capture.rs`) or by the current sniffer states its layer in its header (`layer`,
+`header_len`); most committed files predate that field - every file under `recordings/asura/` and
+most of `recordings/client/feature/` - and `tools/capture/read.py` refuses them unless it is given
+`--assume-layer`.
 
 | directory | who made it | what a record holds | the header |
 |---|---|---|---|
-| `recordings/gwps/` | the reference server's own send trace | the packed frame it wrote | two bytes |
-| `recordings/asura/` | a working server, recording its own socket | the packed frame, both directions | two bytes |
-| `recordings/client/` | the client sniffer (`tools/client/sniff-capture.py`), hooking the client's handler table | the client's message **struct**: every field widened to four bytes, zero padding out to the struct's size | four bytes |
+| `recordings/gwps/` | GWPS's own send trace (the C server ASURA was measured against, not AzerothCore) | the packed frame it wrote | two bytes |
+| `recordings/asura/` | ASURA's world server (`"tool":"asura-world"`), recording its own socket - not this tree's server, none of whose captures is committed | the packed frame, both directions | two bytes |
+| `recordings/client/` | the client sniffer (`tools/client/sniff-capture.py`, and ASURA's copy of it for the older files), hooking the client's handler table; `client/raw/` holds unfiltered sessions of the same layer | the client's message **struct**: every field widened to four bytes, zero padding out to the struct's size | four bytes |
 
 - The packet table declares a size or upper bound. Counted fields give variable-length frames;
   the descriptor and captured wire determine the actual length. Fixed examples in the send trace
@@ -108,17 +118,18 @@ The frames, with the reference's own wire sizes:
 | 10 | server -> client | `0x0188` | 102 for a name of eight units | written: the header, the id, the name, a **map id**, the settings block. The u16 is a map id, not the `0x2211` OpenTyria fills it with: the creation capture carries `416`, the creation instance, there |
 | 11 | server -> client | `0x0099` | 5 | and where the character now is: the map it starts in. Without it the client dials the creation instance back and waits there |
 | 12 | server -> client | `0x018B` | 6 | refused: the header and the error code, which the client turns into text - 25 "you already have a character with the name", 29 "already in use by another player", 31 "not permitted", anything else its generic network error |
-| 13 | client -> server | `0x0084` | 4 per piece | the colour of one armour slot: `u8 equipSlot, u8 colour`. Seven follow **every** `0x8060`, in the fixed slot order **4, 2, 3, 6, 5, 0, 1**, carrying the five armour-piece colours and the two hand slots' - the creation screen's dye choice, not a field of `0x008B` |
+| 13 | client -> server | `0x8084` | 4 per piece | the colour of one armour slot: `u8 equipSlot, u8 colour`. Seven follow **every** `0x8060`, in the fixed slot order **4, 2, 3, 6, 5, 0, 1**, carrying the five armour-piece colours and the two hand slots' - the creation screen's dye choice, not a field of `0x808B` |
 
-- The live client struct capture `ASURA/recordings/client/feature/character_creation/
+- The live client struct capture `recordings/client/feature/character_creation/
   character_creation-live-necro_factions.jsonl` records five `0x014D` followed by `0x00B7`, `0x00DB`
   at records 314-320. Its next change also has `0x00B7`, `0x00DB` at records 364-365. This capture
   establishes observed message order, not wire sizes.
-- What this tree sends on `0x8060` follows ASURA's order: the skill list comes before the profession
-  and each item is created and placed only. The live capture includes additional item messages:
-  `ASURA/crates/asura-world/src/creation.rs`, `handle_change_profession`. It omits the reference's
-  `0x015A` and `0x014B`, and a client that has drawn the creation screen from it does not mind.
-  Adopting those two is open, not done.
+- What this tree sends on `0x8060` follows ASURA's order
+  (`ASURA/crates/asura-world/src/creation.rs`, `handle_change_profession`): the skill list comes before
+  the profession, and each item is created and placed only. Rows 7 and 8 above are GWPS's: this tree
+  sends `0x00DB` before `0x00B7` as ASURA does, and on this answer it omits GWPS's `0x015A` and
+  `0x014B`. A client that has drawn the creation screen from it does not mind. Adopting those two is
+  open, not done.
 
 - The two answers whose length follows a counted field (`0x0188`'s name and settings) are sized from
   what they carry; the rest are fixed by the reference's table.
@@ -132,7 +143,7 @@ The frames, with the reference's own wire sizes:
   profession and campaign, then 8 bytes of which only the first 4 are read, then the three flags
   (Reforged `0x1`, Dhuum `0x2`, Melandru `0x4`). The owner's description of the screen order is
   `docs/game-rules.md` R59-R67, and what the client's own code says about each screen is E221-E229.
-- **A colour is not a field of the confirm.** The five armour-piece colours leave as seven `0x0084`
+- **A colour is not a field of the confirm.** The five armour-piece colours leave as seven `0x8084`
   after every `0x8060`, in the fixed slot order `4, 2, 3, 6, 5, 0, 1`; this tree answers the preview but
   never reads those, so a created character's armour keeps the colours in `config/World/Vanilla/creation/equipment.json`
   (`docs/game-rules.md` E226-E227).
@@ -159,7 +170,7 @@ working server's own trace of one login into map 146 (build 39112/39167), messag
 | 10 | server -> client | `0x0199` 0, `0x0199` 1, `0x0198` (2, 877, 0), `0x0199` 0, `0x0199` 1, `0x0198` (0, map, 0) | 3, 3, 9, 3, 3, 9 | the map manifest: two phases and its end, twice. What the second word names is not measured |
 | 11 | client -> server | `0x8088` | 2 | it asks where it stands |
 | 12 | server -> client | `0x0196` | 26 | the answer: the map's file id, x, y, plane, and 8 inert bytes |
-| 13 | server -> client | `0x001E` | 6 | the first simulation tick: the reference's dword alternates between 500 (`F4 01`) and 516/515 (`04 02`/`03 02`) across the ticks in both traces - not a counter, and what it is is not measured. This tree sends 500, the value the world's own log shows first |
+| 13 | server -> client | `0x001E` | 6 | the first simulation tick: the reference's dword alternates between 500 (`F4 01`) and 516/515 (`04 02`/`03 02`) across the ticks in both traces - not a counter. This tree does not send a tick with this answer: its ticker sends `0x001E` every `World.SimulationTickMs`, carrying the milliseconds since the tick before, as ASURA's does (`WorldSession`, `docs/port/09-parity-audit.md` 3.2 `0x8088` and 4.2 `0x001E`) |
 | 14 | client -> server | `0x8090` | 19 | it asks for the map's players: a 16-byte blob and one byte |
 | 15 | server -> client | `0x001D`, `0x0018` | 4, 36 | the PvP halves: no unlocked skills, and the unlocked-hero bitmap (eight dwords) |
 | 16 | server -> client | the whole load block - see the list below | 4 to 1 + 4m each | the players answer: the PvP unlocks and the unlockable-item table, the account features, the unlocked lists and the team token, the skills and the progress record, the flags, the player and the agent it is drawn as, the agent's own properties and look, the party, and `0x018E` |
@@ -187,6 +198,7 @@ One block, in this order, ported from the working implementation's own
 | 13 | `0x00E9` | the progress record, **fifteen** dwords |
 | 14 | `0x00EF` | the visibility flags, `FFFFFFFF FFFFFFFF` |
 | 15 | `0x003C` | the player's flags word, mask 7 |
+| 15a | `0x00F3`, `0x00F6` per title | the title definitions: each track's current, next and maximum rank (`0x00F3`) before the track (`0x00F6`), from the pack's `titles.json` and `vanilla-title-wire.json` (`game/src/Characters/Titles.rs`, `load_frames`). Not in ASURA's block: ported from the retail and Preforged recordings, `docs/port/09-parity-audit.md` section 5 |
 | 16 | `0x003A` | the agent's 42 attribute ranks, zero |
 | 17 | `0x001F` | how long the load took |
 | 18 | `0x0059` | the player: its id, the agent, the packed appearance and the name |
@@ -200,6 +212,7 @@ One block, in this order, ported from the working implementation's own
 | 29 | `0x0022` | the agent the client drives |
 | 30-33 | `0x01D3`, `0x01CC`, `0x01D4`, `0x01B3` | the party: created, the player added, the member stream ended, and which party the character is in |
 | 34 | `0x018E` | the load is over |
+| 35 | `0x00F4` | the title rank the player displays (`rank_display`); from the same recordings as 15a |
 
 - Before 2026-11-12 this tree sent frames 16 to 18 only, and no party at all: the client hung on
   the loading screen (`m_partyClient`, `PyCliParty.cpp(650)`), and the agent it is played as was
@@ -218,22 +231,25 @@ One block, in this order, ported from the working implementation's own
   `cc 01 | 01 00 | 01 00 | 01`, `d4 01 | 01 00`, `b3 01 | 01 00 | 01`) and
   `game/src/Server/Packets/PartyPackets.rs`.
 - The position is a point of the map's own list, scattered per R13 (`docs/game-rules.md`), so
-  `0x0196`'s x and y differ from run to run; the file id and plane are the map's, from its row.
+  `0x0196`'s x and y differ from run to run; the file id is the map record's (`basic.json`) and the
+  plane the entry point's (`spawns.json`).
 - **The file id is the one thing in this block the client cannot be wrong about.** It is an entry in
   its own `Gw.dat`: a number that names no map file there makes it log `Map '0x...' is not a valid riff
   type`, `Creating default map`, and then assert in `Map.cpp(1762)`. Measured 2026-11-12 with map 148's
   row carrying 112509 (`0x0001B77D`); the value a real load of that map carried is **113021**
   (`0x0001B97D`, `recordings/client/feature/maps/pre-searing-load-3.jsonl` seq 137, the fourth byte of
-  the `0x0196` frame onward, and ASURA's own catalogue row for map 148). `0006-map-148-file-id.sql`
-  corrects the row.
+  the `0x0196` frame onward, and ASURA's own catalogue row for map 148), and it is the
+  `map_file_id` of map 148's `basic.json` in the world pack.
 - `0x017D`'s name is the character row's `name`, as the creation confirm wrote it; the campaign and
   profession of the same row choose which starting set the item stream carries.
-- The agent stream (row 16) is the reference's map content - one `0x001A` per agent in the map - and
-  it arrives with `game/Agents/` (plan step 6); the party stream arrives with `game/Parties/` (step 7).
-  This tree sends the load without them and says so in its log.
+- The map's own agents - its NPCs - are in no frame of this block. The trace creates one agent, the
+  player's own (`0x0020`, once); its 387 `0x001A` are the PvP item table of frame 3, not agents. This
+  tree sends the same: the player's agent and its party (frames 30-33), and no other body
+  (`docs/port/09-parity-audit.md`, "What is not ported").
 - In this tree: the builders are `game/src/Server/Packets/` (`InstancePackets`, `ItemPackets`,
   `CharacterPackets`, `MiscPackets`), the order and the answers are `WorldSession`'s `load_map`, and
-  the rows are `game/Maps/`'s (`0009-world-schema.md`).
+  the map records are the world pack's (`config/World/Vanilla/maps/`, `game/src/Maps/Pack.rs`,
+  `docs/decisions/0014-the-world-content-is-a-pack.md`).
 - The builders' shapes are corroborated by ASURA's protocol crate
   (`crates/asura-protocol/src/game/mod.rs`), written against the same client: the manifest phase is a
   byte, the manifest end a byte, a word and a dword, the item stream a word and a byte, a bag a type,
@@ -246,13 +262,17 @@ One block, in this order, ported from the working implementation's own
 
 ### What the reference's own trace shows, and what this tree sends
 
-The reference's own log for a load of map 146 (`recordings/gwps/world/load-stream.log`) answers the
-client's `0x8090` with the block above, and then with the map's own content: one `0x001A` per agent in
-the map, hundreds of them in that trace, interleaved with the frames that describe them.
+GWPS's own log for a load of map 146 (`recordings/gwps/world/load-stream.log`) answers the
+client's `0x8090` with the block above and nothing else: 387 `0x001A` for the PvP item table, one
+`0x0020` for the player's own agent, and `0x018E`. After it the trace holds only ticks and pings: GWPS
+sends no NPC. The retail client's own captures do record them - each login under
+`recordings/client/raw/` holds some 46 `0x0020` records, in the struct layer - so the stream is
+measured there and nowhere in GWPS or ASURA.
 
-This tree sends the block for the player itself - all thirty-four frames listed above - and **not yet**
-the map's own agents: which agents a map has is the map's content, and it arrives with plan step 6
-(`game/Agents/`). An outpost will therefore be empty, and the block itself is what says so.
+This tree sends the same block - the thirty-four frames of ASURA's block listed above, with the title
+frames (15a, 35) added - and no agent but the player's. An outpost is therefore empty of NPCs, here
+and in ASURA; which agents a map has is the map's content, and it arrives with plan step 6
+(`game/Agents/`).
 
 The position of the content follows the client's asks - the same block appears between `0x0196` and the
 end in `recordings/gwps/session/login-travel-session.log`, where that client asked `0x8088` first - so
@@ -270,8 +290,9 @@ fatal.
 | the answer | 32 bytes: header `0x02F1`, length `0x0020`, then six file ids in tight consecutive order with a zero among them |
 
 - Source of the shape: this client's protocol, recorded in `docs/evidence/client-protocol.md`
-  section 7. The reference server has no equivalent - its client does not ask this - which is why
-  `game/FileCheck/` exists in this tree's naming.
+  section 7. AzerothCore has no equivalent - its client does not ask this - which is why
+  `game/FileCheck/` is in this tree's naming; that directory is an empty stub, and the check is
+  answered by the auth program.
 - In this tree: both byte strings are constants in `authserver/src/Server/file_check.rs`, because they
   are a **payload** rather than a setting - nobody chooses them and the client compares
   them exactly (`docs/port/04-configuration.md`). Refreshing them is a new build: capture the reply a
@@ -336,7 +357,7 @@ whatever the account holds:
 With no characters that is 700 bytes, and the client shows an empty character list; with one it is 802.
 A refusal sends only `0x0003`, with status `11`.
 
-- Source: `recordings/gwps/world/load-stream.log`, the reference's own send trace of one login,
+- Source: `recordings/gwps/world/load-stream.log`, GWPS's own send trace of one login,
   which prints each message with its header, its size and its first 24 bytes. That trace is the
   authority for the sizes, and it is what settles a disagreement in the older notes: their arithmetic
   sums an extra leading 10-byte message that the trace does not carry.
@@ -504,8 +525,9 @@ both               RC4 keyed with those 20 bytes, one instance per direction, bo
 
 - Source: `docs/evidence/client-protocol.md` section 3, whose sizes and constants come from
   the reference's handshake and the client's own arithmetic.
-- In this tree: `authserver/src/Server/handshake.rs` (the sizes, the two constants as decimal
-  digits, `shared_secret`, `server_seed`) and `common/src/Cryptography/Arc4.rs` (the cipher).
+- In this tree: `shared/src/Cryptography/Handshake.rs` (the sizes, the two constants as decimal
+  digits, `shared_secret`, `server_seed`), re-exported by `authserver/src/Server/handshake.rs`, and
+  `common/src/Cryptography/Arc4.rs` (the cipher).
 - Proved by: three published RC4 vectors; the constants' own bit widths; and a test that plays the
   client against a real listener and recovers the master out of the XOR.
 
@@ -526,7 +548,7 @@ instance per direction, both from offset zero.
   master, from SHA-1's initial state, with its first two round constants and two f functions, and a
   digest that adds the working state back onto the input words. Recorded in
   `docs/evidence/client-protocol.md` section 3 and implemented there.
-- In this tree: `authserver/src/Server/handshake.rs` (`derive_key`) and `common/src/Cryptography/`
+- In this tree: `shared/src/Cryptography/Handshake.rs` (`derive_key`) and `common/src/Cryptography/`
   (`Arc4`). It is the one wire fact here that is **transcribed rather than derived**, because there
   is no other record of it and nothing in this repository can prove it: no capture holds a master
   and its digest, there is no published vector, and no other path would fail loudly if a rotation

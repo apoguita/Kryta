@@ -34,7 +34,8 @@ The auth program hosts the portal: it opens the listener on 6601 beside its own 
 
 `game` is a library and nothing in it reaches back into the auth program. Auth also uses game
 account and character types, map placement, travel records and the gameplay version parser.
-`docs/port/10-separation-guide.md` tracks those uses and the unresolved ownership of each.
+`docs/decisions/0010-auth-and-the-game-library.md` inventories those uses and decides that the edge
+stays.
 
 ## What it does not decide
 

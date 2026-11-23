@@ -25,15 +25,17 @@ config/World/Vanilla/maps/<campaign>/<area>/<kind>/<map id>/
 - The tree is ASURA's, copied from `ASURA/config/World/Vanilla/maps/` where the same 265 records, 466
   entry points, 28 arches and 28 arrivals live. The rows this tree served from were an import of those
   files (`data/sql/base/db_world/0011-map-catalogue.sql` says so in its own header), so the pack and
-  the rows state the same numbers: a copy, not a derivation.
+  the rows state the same numbers: a copy, not a derivation. One file has since diverged: map 148's
+  `spawns.json` holds a third entry point here that ASURA's does not, so this pack has 467 entry points
+  against ASURA's 466.
 - The reader is `game/src/Maps/Pack.rs`, and it refuses what a client could not resolve: a folder whose
   name is not the `map_id` its record states, a pack with no `maps/` folder, a record with no `map_id`.
 - A world logs which source answered - "read from the map pack at ..." - so a reader can tell the pack
   from the rows.
-- The database tables `map`, `map_spawn`, `map_arch` and `map_arrival` remain in the schema, and the
-  manager still reads and writes them. **They are no longer what the world serves**, and the manager's
-  map edits do not reach a running world until it edits the pack; that gap is recorded in
-  `docs/port/05-tooling.md` rather than hidden.
+- The database tables `map`, `map_spawn`, `map_arch` and `map_arrival` remain in the schema, empty:
+  `data/sql/base/db_world/0013-content-is-the-pack.sql` clears what earlier files seeded. **They are
+  no longer what the world serves**, and the manager's content page reads the pack, not the tables
+  (`tools/manage/src/pages/content.rs`).
 
 ## Why the earlier decision is replaced rather than amended
 

@@ -1,6 +1,7 @@
 # Rule coverage: where each of the owner's rules stands in this tree
 
-The owner's ledger (`docs/game-rules.md`) is what this port is measured against: 67 asserted rules. This
+The owner's ledger (`docs/game-rules.md`) is what this port is measured against: 67 numbered rules
+(R1-R67, with R27b correcting R27). This
 file answers, for each one, one question - what is there today? It is a statement of today, and it is
 updated in the same commit as the change that moves a rule.
 
@@ -28,11 +29,17 @@ The states are:
 | R57 a named district is honoured | in | `enter` with a hint opens or joins that number; `a_named_district_is_honoured_even_before_it_exists` |
 | R58 a full district cannot be entered | data | `enter` refuses and the connection closes; the refusal's own wire is not captured |
 | R37/R38/R39/R40 teardown and the disconnect hold | partial | an empty copy is held 900 s and disposed by the world's tick; a socket that ends is a disconnect (`a_copy_is_held_for_the_hold_and_then_disposed`). The reconnection itself is not built |
+| R11 explorable teardown: 15 minutes after a disconnect, at once when everyone travels out | partial | an empty copy is held 900 s whatever emptied it, outpost and explorable alike (`game/src/Districts/mod.rs:14-15`, `leave`, `sweep`); disposal at once when everyone travels out, and reappearing at the last outpost after the hold, are not built |
+| R35 one party per instance, except PvP | partial | with no parties, one connection is one party, so each explorable entry opens its own copy (`an_explorable_gets_a_copy_of_its_own`); the PvP exception is not built |
+| R36 a party always shares one instance | not started | `game/Parties/` is a stub |
+| R41 PvP is in scope, built last | not started | no PvP instance rule exists in `game/Districts/` |
+| R42 a disconnect is any end without a clean shutdown; the member is held soft-disconnected | partial | `GAME_CMSG_DISCONNECT` (`0x8008`) ends the connection on the creation screen only (`WorldSession.rs:1037`, ASURA `dispatch.rs:86`); on a loaded map the message is reported as unanswered and the connection ends when the socket does; the two are not told apart, and with no parties no member is held soft-disconnected |
 | R32 an instance lives while a party is inside | partial | empty copies are disposed by the sweep; full party and re-entry behavior still needs implementation and verification |
 | R33 ticking is configurable | partial | `World.InstanceTick` controls the world's instance sweep; `World.SimulationTickMs` sets the session tick interval (100 ms in the distributed configuration). The session loop uses its own interval, so this setting does not establish that all instance simulation can be disabled. `World.SweepIntervalMs` sets the sweep interval |
-| R20/R12 world-map travel reaches unlocked outposts; the walk sets the unlock | partial | `character_unlock` rows with the starting unlock written at the confirm, and the map a character **arrives in** unlocked when its players ask is answered (`ASURA/crates/asura-world/src/player.rs:442-471`: "the walk sets the bit, the bit never gates the walk", which is R12's own "a scripted/forced travel unlocks at arrival"). The server never refuses a load for an unlock - it did until 2026-11-20, and that refusal is what a doorway crossing met as the client's `007`. Proved by `a_step_through_ascalon_citys_arch_crosses_to_lakeside_county` (a walk through 148's arch redirects to 146, the arriving connection stands on map 146's arrival and unlocks it) and by `an_arrival_unlocks_the_map_it_reaches` (a load of a map outside the set proceeds and writes the bit). R20's own travel list still needs the answer's wire |
-| R21 a portal crossing lands on the destination's arrival point | in | `map_arrival` is read into the world; `a_step_through_ascalon_citys_arch_crosses_to_lakeside_county` exercises the crossing and destination arrival |
-| R13 entry takes a random spawn point, scattered | in | `WorldSession::entry_point` and the load's `0x0196`; `An outpost connection is loaded with its entry point` |
+| R20/R12 world-map travel reaches unlocked outposts; the walk sets the unlock | partial, and in conflict with R12 - open, to be resolved later (owner, 2026-11-23): R12 says unlocks gate travel and the code below never gates (`docs/game-rules.md`, "Travel gating") | `character_unlock` rows with the starting unlock written at the confirm, and the map a character **arrives in** unlocked when its players ask is answered (`ASURA/crates/asura-world/src/player.rs:442-471`: "the walk sets the bit, the bit never gates the walk", which is R12's own "a scripted/forced travel unlocks at arrival"). The server never refuses a load for an unlock - it did until 2026-11-20, and that refusal is what a doorway crossing met as the client's `007`. Proved by `a_step_through_ascalon_citys_arch_crosses_to_lakeside_county` (a walk through 148's arch redirects to 146, the arriving connection stands on map 146's arrival and unlocks it) and by `an_arrival_unlocks_the_map_it_reaches` (a load of a map outside the set proceeds and writes the bit). R20's own travel list still needs the answer's wire |
+| R47 "history" means the campaign history | not started | no campaign history is recorded; R67's per-campaign starter map is absent for the same reason |
+| R21 a portal crossing lands on the destination's arrival point | in | the arrivals are the world pack's `portals.json`, read by `game/src/Maps/Pack.rs`; `a_step_through_ascalon_citys_arch_crosses_to_lakeside_county` exercises the crossing and destination arrival |
+| R13 entry takes a random spawn point, scattered | in, with one open point | `WorldSession::entry_point` and the load's `0x0196`; `An outpost connection is loaded with its entry point`. Open (owner, 2026-11-23): R13 names the radius as `config/Server/spawns.json`'s `spawn_scatter`, and this tree has no such file - the value is `World.SpawnScatter` (250) in `worldserver/worldserver.json`. Whether it must move to the file R13 names is the owner's to settle |
 | R14 a load places the character at its last outpost | partial | an **outpost** writes `last_outpost` (an explorable must not overwrite it, ASURA `player.rs:447`) and the login's list reports it; a map that is not an outpost resumes the saved position instead, written when the connection ends and cleared by a travel that is not a doorway crossing (`ASURA` `character.rs:213-294`, `agent.rs:531-545`) - proved by `a_reconnect_to_an_explorable_resumes_where_the_character_left` |
 
 ## The travel unit: party, heroes, henchmen
@@ -41,8 +48,8 @@ The states are:
 |---|---|---|
 | R6, R7, R8, R9, R10 the party travels as one, the leader drives it | not started | `game/Parties/` is a stub |
 | R17, R18, R19 party persistence and leadership | not started | the same |
-| R23, R24, R25, R27, R28 heroes and henchmen | not started | `game/Heroes/` is a stub |
-| R15 the party cap is not a constant | data | `World.PartySizeCap` (8) and `map.party_cap` read by `DatabaseMaps::party_cap`; nothing applies it yet |
+| R23, R24, R25, R27 (as R27b corrects it), R28 heroes and henchmen | not started | `game/Heroes/` is a stub |
+| R15 the party cap is not a constant | data | `World.PartySizeCap` (8) in `game/World/WorldConfig.rs`; no per-map cap is read at run time, and nothing applies the cap yet |
 | R26 an arrival at a smaller cap truncates the party | not started | needs parties |
 
 ## Character creation
@@ -84,8 +91,8 @@ screen's conversation", is the frames.
 | rule | state | where, and what proves it |
 |---|---|---|
 | R45 items a character holds are the character's | in | `item_instance` rows written at the confirm, drawn by the load (`a_creation_confirm_writes_a_character_row`) |
-| moving, wearing and destroying an item | in | `0x8072`/`0x8030`/`0x8069` move or delete the row and answer with the change (`a_travel_record_decides_the_map_and_the_district`); the slot a kind is worn in is content (`config/World/Vanilla/creation/worn_slots.json`, E234), not a compiled table |
-| item definitions are world data | in | `item_template` seeded at start-up and read back (`definitions_are_seeded_once_and_read_back`) |
+| moving, wearing and dropping an item | in for move, equip and drop; destroying not started | `0x8072`/`0x8030` move the row and answer with the change (`a_travel_record_decides_the_map_and_the_district`); a drop (`0x802C`) lowers or removes the stack and sends nothing, as ASURA does; destroying (`0x8069`) has no handler here or in ASURA; the slot a kind is worn in is content (`config/World/Vanilla/creation/worn_slots.json`, E234), not a compiled table |
+| item definitions are world data | in | the world pack's creation files (`config/World/Vanilla/creation/*.json`), held in memory (`Creation::Tables`, `worldserver/src/main.rs:546-549`); nothing is seeded, and `item_template` is empty by design (`0013-content-is-the-pack.sql`) |
 | R54 merchant NPCs hold a fixed list | not started | `game/Trader/` is a stub |
 
 ## Missions, quests, chat, guilds, titles
@@ -95,7 +102,7 @@ screen's conversation", is the frames.
 | R52 missions are instances with success/failure | not started | |
 | R56 a mission outpost presents the Enter Mission button | data | `World.MissionButton` setting; the button is the client's |
 | R55 quests | not started | |
-| the chat and social wire | the channel rule and the commands in; guilds, friends and alliance not started | `game/Chat/` holds the reference's three commands and `/maps`' table, and the connection answers `0x8064` with ASURA's pair (`0x005D`, `0x0061`) - `ASURA/crates/asura-world/src/chat.rs`, and `worldserver/tests/end_to_end.rs` speaks a line and types the commands against the program; `game/Guilds/` is a stub |
+| the chat and social wire | the channel rule and the commands in; guilds, friends and alliance not started | `game/Chat/` holds the reference's three commands and `/maps`' table, and the connection answers `0x8064` with the measured pair (`0x005D`, `0x0061`, `docs/decisions/0012-chat-text-is-sent.md`; the handler is ported from `ASURA/crates/asura-world/src/chat.rs`), and `worldserver/tests/end_to_end.rs` speaks a line and types the commands against the program; `game/Guilds/` is a stub |
 | guilds, friends, alliance | not started | `game/Guilds/` is a stub |
 | titles and character slots | partial - the test display sends 33 captured rank-zero rows and 12 captured earned states. Metrics report zero. Character slots have not started | `titles.json` lists the vanilla IDs and custom definitions. `vanilla-title-wire.json` holds captured metadata for the stock packets. The patched client fetches the custom text from Kryta. [Title research](19-title-research.md) |
 

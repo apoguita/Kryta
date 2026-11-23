@@ -5,7 +5,7 @@ for future work, not a description of implemented Kryta features. Recovered sour
 `docs/guidance/scripting-and-behavior.md`, `docs/guidance/game-packs.md`, and
 `docs/reference/decisions/0014-behavior-tree-execution.md`, under `docs/evidence/asura-history/`.
 Kryta's structure is governed by `AGENTS.md` and `docs/port/01-structure.md`; client-visible
-behaviour is governed by ASURA and the rules and evidence in `docs/game-rules.md`.
+behaviour is governed by Rule 0 and the rules and evidence in `docs/game-rules.md`.
 
 ## Rust mechanics and Lua behaviour
 
@@ -16,9 +16,9 @@ behaviour using existing mechanics should be authorable without rebuilding the s
 requires engine support. Script APIs, event names, packaging, reload semantics and the Lua integration
 remain to be designed.
 
-The durable world and player state remains in database rows. JSON is the authoring surface for shared
-content facts and settings; a JSON asset may be validated and imported into the owning noun's rows, but
-it is not a second mutable world store. Lua authors world behaviour and calls Rust operations. Rust owns
+World content is JSON under `config/`, read on every start; nothing imports it into rows and nothing
+seeds a database (`AGENTS.md`, rule 7). Database rows hold what a server writes while it runs: player
+state, open instances, unlocks. Lua authors world behaviour and calls Rust operations. Rust owns
 authoritative state and executes those operations. A GM command mapped in JSON to a Rust API function
 calls that function directly; Lua is not a required intermediary. Lua can also call the same operation
 when the runtime and bindings exist. The shared operator API, CLI and manager already use one operation
@@ -70,11 +70,11 @@ calls the registered Rust function; Lua is not required for that call
 (`docs/decisions/0011-the-command-surface-is-content.md`).
 
 - **The command mapping is content.** Names and arguments are rows; the travel target alias table
-  and `/maps` text remain in Rust. Any relocation must preserve ASURA's client-visible behaviour.
+  and `/maps` text remain in Rust. Any relocation must preserve the client-visible behaviour already ported.
 - **The text is sent** (`docs/decisions/0012-chat-text-is-sent.md`). A line is one or more `0x005D`
   bodies carrying a coded string, then exactly one commit tag - `0x0061 [u16 player, u8 channel]` for a
   player's line, `0x005E [u16 player, u8 channel]` for one the server composed. Answers go out on
-  `Channel_Global` as the reference's own invalid-command path does (`GmChat.c:116-143`), the player's
+  `Channel_Global` as GWPS's own invalid-command path does (`GmChat.c:116-143`), the player's
   line is broadcast to the map and district, and both were measured on a live client before they were
   written here (`research/Rurik/studies/chat/FINDINGS.md:255-268`).
 
@@ -150,8 +150,8 @@ and this tree's account rows carry no access column.
 Rust owns authoritative state and provides validated services; Lua defines behaviour and calls
 available services. A JSON-mapped GM command calls its registered Rust API function directly.
 Script-defined commands and Lua handlers remain a separate open design. Neither a Lua runtime nor a command handler
-supplies game mechanics that have not been implemented. Preserve ASURA's client-facing behaviour
-and follow the parity audit and captures when developing client-visible paths.
+supplies game mechanics that have not been implemented. Preserve the client-facing behaviour already ported,
+and follow Rule 0, the parity audit and the recordings when developing client-visible paths.
 
 1. **Scripting contract.** Done: the section above. It settles the boundary, organisation, registration,
    events, failure, ownership and the behaviour-tree question, and it names what it deliberately leaves
@@ -177,7 +177,7 @@ and follow the parity audit and captures when developing client-visible paths.
    NPC spawn and item creation require supported server services and evidenced client-facing
    behaviour; world scripts and administrative commands can use those services.
 7. **Validation.** Check loading, errors, dispatch, permissions and command results; compare
-   client-facing frames with ASURA and captures; verify complete workflows with a real client.
+   client-facing frames with their source and the recordings; verify complete workflows with a real client.
    Passing tests alone does not establish client acceptance.
 
 Before implementation, decide whether the interface permits arbitrary interactive server-side Lua
@@ -230,7 +230,7 @@ launcher integration also remain to be designed. The presence of JSON configurat
 in Kryta does not establish a profile loader or isolated saved state. A future launcher can supply the
 selection, but the support need not depend on building that launcher first.
 
-## World-content storage decision to reconcile
+## World-content storage
 
 ASURA's historical D20 records the owner's 2026-11-03 direction to move world configuration and
 content into files and keep operational state in the database. D24 describes selecting one world
@@ -238,12 +238,13 @@ pack. The relevant source is `docs/evidence/asura-history/docs/reference/decisio
 and earlier versions of `docs/38-layer-decisions.md` in ASURA history. D39 describes ASURA's then
 chosen map files and destination-owned arrivals.
 
-Kryta's `docs/decisions/0009-world-schema.md` instead accepts map definitions, spawn points and arrivals
-as rows, following Kryta's configuration/data test. The current implementation reads those rows.
-`AGENTS.md` specifies the present structure and the decision process. The recovered ASURA direction
-and Kryta's later decision have not been reconciled by the owner. Keep the conflict visible when
-planning profiles and content loading; neither description establishes an implemented profile loader
-or authorizes a storage migration by itself.
+Kryta adopted that direction in `docs/decisions/0014-the-world-content-is-a-pack.md`, which
+supersedes `0009-world-schema.md`: a world's map content is a pack of JSON files under
+`config/World/<pack>/`, read at start-up by `game/src/Maps/Pack.rs`, and the pack the world serves is
+named by its `WorldPack` setting. This tree has one pack, `config/World/Vanilla/`. The world database's
+content tables are empty by design (`data/sql/base/db_world/0013-content-is-the-pack.sql`). One pack
+per launch is not yet a profile: profile selection, isolation and distribution remain undesigned
+(above).
 
 ## Content authoring
 
@@ -262,12 +263,12 @@ those interfaces are designed.
 ## Remaining design questions
 
 - Which game decisions, including existing placement rules, are profile-authored and which remain in
-  Rust under the current ASURA parity and AzerothCore structure requirements?
+  Rust under the current packet-parity and AzerothCore structure requirements?
 - How are scripts registered, scheduled, interrupted and bounded, and what happens to state when a
   script fails or content changes?
 - What events and world operations can scripts use, and what ordering and transactional guarantees
   do they have?
-- What decides who may run a command? The reference checks no authority and this tree's accounts carry
+- What decides who may run a command? Neither ASURA nor GWPS checks an authority and this tree's accounts carry
   no access column, so the permission model and any schema remain open; AzerothCore's `account_access` is a reference,
   not an adopted design.
 - How do profile selection, storage isolation, distribution and compatibility work in Kryta?

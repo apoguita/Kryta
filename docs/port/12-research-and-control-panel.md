@@ -35,15 +35,18 @@ otherwise requested.
 The panel should identify the process and environment being inspected and the profile being edited
 or run once profile selection exists. Pin capture and inspection tasks to the selected process;
 if it exits, do not silently switch to another client. The recorded first content-editing example
-is default map spawns, portal destinations and arrival points, verified with the real client; it
-does not establish a chosen Kryta storage format. A saved content change does not establish a live reload. The
+is default map spawns, portal destinations and arrival points, verified with the real client. Kryta
+stores those in the world pack's per-map files (`docs/decisions/0014-the-world-content-is-a-pack.md`),
+and the panel's content page reads them without editing them. A saved content change does not establish a live reload. The
 client research runner operates on the client machine and should not be a dependency of ordinary
 server operation. ASURA's historical plan documents capture tool and hook limitations; check the
 current tools before carrying any specific command or capability forward.
 
 The owner selected a web application for the comprehensive server manager, accessible locally and
-remotely and delivered as part of the server stack. Its hosting and the possible use of the existing
-portal remain to be designed; `docs/port/14-operator-surfaces.md` records the access decisions.
+remotely and delivered as part of the server stack. The local panel exists: `kryta-management-service`
+serves `tools/manage` as a stack service (`docs/port/14-operator-surfaces.md`, section 2). Its remote
+hosting and the possible use of the existing portal remain to be designed; `14` records the access
+decisions.
 Initial capture concurrency, first reader coverage, storage format and profile packaging remain open.
 The requested
 research and content workflows are part of the intended panel, while their implementation order and
@@ -137,9 +140,11 @@ separate completeness gap; it is not a proven explanation for the delay. The cap
 and experimental limitations remain in the historical source. Current ASURA-parity status and Kryta
 message sequences are owned by `docs/port/09-parity-audit.md` and `docs/port/02-wire.md`.
 
-The former `docs/26-packet-gaps.md` contains a dated frequency-ranked list of live-client struct
-observations. It is a lead for examining recordings, not the current missing-packet ledger and not a
-wire-size table. `docs/work/unnamed-packets.md` records 17 historical naming candidates, their observed
+ASURA's former `docs/26-packet-gaps.md` (archived at
+`docs/evidence/asura-history/docs/26-packet-gaps.md`) contains a dated frequency-ranked list of
+live-client struct observations. It is a lead for examining recordings, not the current missing-packet
+ledger and not a wire-size table. `docs/evidence/asura-history/docs/work/unnamed-packets.md` records 17
+historical naming candidates, their observed
 neighbors and possible client actions to investigate them. Confirm each against the current catalogue
 and the evidence before treating its historical status as current.
 
@@ -149,5 +154,5 @@ The historical source index in `docs/evidence/asura-history/README.md` lists the
 of each documentation path and its commit. Earlier versions remain in ASURA's Git history. The index
 is a research aid; the active Kryta documents own current status and instructions. The design and
 research above preserve major material identified so far. A claim-by-claim comparison of all historical
-files and earlier revisions has not been completed. The audit scope and dispositions are in
+files and earlier revisions has not been completed. Which recovered document went where is
 `docs/port/13-documentation-audit.md`.

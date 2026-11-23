@@ -34,7 +34,7 @@ where does that behaviour live?
    `:42`; the confirmed bytes `6100 0100 03` and `5e00 0100 06`). The channel byte is the whole
    selector: 3 All, 6 Emote, 7 the on-screen warning panel, 10 the server's own notices, 11 Group,
    12 Trade (`studies/chat/FINDINGS.md:145-153`; the same numbers in `GmChat.h:3-20`).
-4. **Answers are sent, as the reference sends them.** The reference's own invalid-command path builds
+4. **Answers are sent, as GWPS sends them.** GWPS's own invalid-command path builds
    the text body and sends `0x005D` plus `0x005E` on `Channel_Global` (10) - `GmChat.c:116-143`,
    `Channel_Global = 10` at `GmChat.h:14`. So an answer the server generates goes on the wire as the
    body pair, not to the log. A player's line is echoed the same way: `0x005D`* then

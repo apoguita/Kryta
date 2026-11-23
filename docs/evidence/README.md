@@ -1,7 +1,11 @@
 # Evidence
 
 This directory holds measurements this tree relies on, copied here so a citation points at something
-in the repository rather than at another project's working copy.
+in the repository rather than at another project's working copy, and `asura-history/`, a historical
+archive of ASURA's documentation - its plans, drafts, status and measurements. Nothing in
+`asura-history/` is a current Kryta instruction or status. Its 121 files are byte-for-byte copies of
+ASURA Git blobs (one escaped for ASCII, per its README) and carry no banner of their own, so a file
+opened directly reads in its original voice.
 
 | file | is | came from |
 |---|---|---|
@@ -10,7 +14,7 @@ in the repository rather than at another project's working copy.
 | `asura-history/README.md` | recovered historical documentation, source commits, and a subject index | ASURA Git history |
 
 `recordings/` is the other half: the captures themselves, copied whole from ASURA's `recordings/` -
-`gwps/` (the reference server's own send trace), `asura/` (a working server's wire), and `client/`
+`gwps/` (GWPS's own send trace), `asura/` (the wire as ASURA's world server recorded it), and `client/`
 (the client sniffer, which records the client's message structs rather than the wire).
 
 ## How to read these

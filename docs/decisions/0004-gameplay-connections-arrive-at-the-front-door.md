@@ -31,10 +31,10 @@ is.
 
 ## Why this shape and not the alternatives
 
-1. **It is the reference's own arrangement.** The GW reference's auth service receives both kinds of
-   connection on one port and hands the gameplay one to a game server; its `0x0009` names its own
-   address for exactly that reason. Two programs, one front door, the game protocol in the game
-   server - this is what the reference does, not an invention here.
+1. **It is GWPS's own arrangement.** GWPS's auth service (the Guild Wars server ASURA was measured
+   against, not AzerothCore) receives both kinds of connection on one port and hands the gameplay one
+   to a game server; its `0x0009` names its own address for exactly that reason. Two programs, one
+   front door, the game protocol in the game server - this is what GWPS does, not an invention here.
 2. **Naming the launch address in `0x0009` and answering gameplay on the auth port fuses the halves.**
    That is the arrangement this project exists to avoid: the auth program would own a world socket, a
    session, a map and a load block, and the separation between the two programs would stop meaning
@@ -59,10 +59,11 @@ because the world decodes them again and that decode is the authoritative one.
 
 ## What it costs
 
-The transport between the two programs is this tree's own: the reference has a control channel
-(`0x000C0FFF` connections and `CtrlMsgId_TransferConnection`) and this does not, so a travel's token
-pair reaches the world by the front door's own packet rather than the reference's control message. If
-the control channel is ever ported, this crossing is what it replaces.
+The transport between the two programs is this tree's own: GWPS has a control channel
+(`0x000C0FFF` connections and `CtrlMsgId_TransferConnection`) and this does not. The front door
+forwards the client's 64 bytes unchanged, and a travel's token pair reaches the world as a `travel` row
+the login writes and the world claims (`game/src/Maps/Travels.rs`), rather than by GWPS's control
+message. If the control channel is ever ported, this crossing is what it replaces.
 
 Costs accepted: a copy per gameplay connection, a connect timeout of 3 s when a world cannot be
 reached, and the world's address being configuration the two programs must agree on rather than

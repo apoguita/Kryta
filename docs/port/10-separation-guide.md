@@ -3,7 +3,8 @@
 This guide records the code inspected on 2026-11-14. It identifies the boundaries already in place,
 where responsibilities overlap, and what must be examined to complete the intended separation.
 It does not establish a new design or change client behaviour. The design authority is the local
-AzerothCore checkout at `30a36ec4d`; ASURA at `ca9f532` supplies client-facing behaviour.
+AzerothCore checkout at `30a36ec4d`; client-facing behaviour is ported from a source under Rule 0, and
+what is here today was ported from ASURA at `ca9f532`.
 `docs/port/01-structure.md` records what runs, and `docs/port/09-parity-audit.md` records protocol
 parity. Each proposed change needs its own comparison with those authorities.
 
@@ -16,6 +17,7 @@ parity. Each proposed change needs its own comparison with those authorities.
 | Game mechanics and gameplay connection | Partial | `game/src/Agents/mod.rs`, `game/src/Terrain/`, and `game/src/Maps/Portals.rs` contain mechanics. `game/src/Server/WorldSession.rs` also owns gameplay decisions and state. |
 | Game engine and scripts | Partial | `game/src/Scripting/` registers and dispatches three world lifecycle hooks; the loaders register no content and scripts have no world-action interface. |
 | Modules | Not yet implemented | `modules/README.md` states that there are no module crates; `scripts/src/AddModulesScripts.rs` is empty. |
+| Operator tools and the servers | Established at crate level | Three more workspace members live under `tools/`: `kryta-manage` (`tools/manage`) links `common`, `database`, `game` and `shared`; `kryta-management-service` (`tools/management-service`) links `kryta-manage`; `kryta-supervisor` (`tools/supervisor`) links `common`. No server crate depends on them. |
 
 The AzerothCore reference deliberately places its gameplay socket inside the game library. A socket
 in `game/Server/` is therefore consistent with the reference's structure. Process boundaries and
@@ -30,9 +32,9 @@ front door reads a game version message and relays the connection to the world
 The world owns the gameplay session.
 
 **Done (2026-11-14, the inventory and the decision).** `docs/decisions/0010-auth-and-the-game-library.md`
-holds both. The edge is 37 `game::` uses in five files, and every one of them is one of six things: the
-portal (`0003`'s subject), the client's 64-byte version message (a protocol message), the character's
-rows, the travel hand-off row, the account table (rows), and the pure rule that decides where a
+holds both. The edge is 38 `game::` uses in six files, and every one of them is one of six things: the
+portal (`0003`'s subject, including the title catalog it serves, `authserver/src/main.rs:489`), the
+client's 64-byte version message (a protocol message), the character's rows, the travel hand-off row, the account table (rows), and the pure rule that decides where a
 character enters (`game::maps::placement`, `session.rs:1075-1111`). Measured against ASURA, that is
 exactly its own layering: `crates/asura-auth` links `asura-protocol`, `asura-db`, `asura-store`,
 `asura-rules` and `asura-config`, and links `asura-world` not at all - and its accepted decision D25 is
@@ -58,8 +60,9 @@ remaining deviation is described accurately in its decision record.
 
 **What exists (2026-11-14, after the families moved).** `game/src/Server/WorldSession.rs` holds what a
 connection is: the seed exchange, the version message, the travel row's claim, the head block, the read
-loop, the outbox and the district it gives back. Six message families are in `game/src/Handlers/`, and
-the load's answers are `game/Agents/Player.rs`'s, and where a character enters a map is
+loop, the outbox and the district it gives back. Five message families are in `game/src/Handlers/`
+(item, movement, travel, chat, character), the load's answers are `game/Agents/Player.rs`'s, and where a
+character enters a map is
 `game/Agents/Entry.rs`'s. What is still the session's and should not be is the map's clock
 (`step_map`, which calls `Agent::advance` and `Portals::crossed` and decides when to advance and what
 to do with the result) - the third item's subject.
@@ -77,7 +80,7 @@ handler needs (`say`, `send`, `characters()`, `bags()`, `item_templates()`, `equ
 **Done (2026-11-14, movement family).** The four movement messages moved the same way:
 `answer_move_to_coord`, `answer_position_update`, `answer_cancel_movement` and `answer_last_position` are
 `impl WorldSession` members in `game/src/Handlers/MovementHandler.rs`, and the dispatch in the session is
-one call each. Their decisions were already the nouns': `AgentState::adopt_report`,
+one call each. Their decisions were already the nouns': `Agent::adopt_report` (ASURA's `AgentState`),
 `begin_walk`/`begin_manual_walk`/`advance`/`cancel_movement`/`adopt_correction` in `Agents/`, the route
 in `pathfind`/`directional`, and the wall in `Maps/Portals.rs`. What stays in the session is what is not a
 message: the map's clock (`step_map`) and the transfer it can start (`cross_portal`), which the guide's
@@ -90,7 +93,7 @@ moved as they stand, doc comments and ASURA citations intact: `cross_portal`, `a
 `game/src/Handlers/TravelHandler.rs` (from `travel.rs:132-169`, `184-258`, `279-302`, `319-388`,
 `401-534`), and `answer_chat_message` in `game/src/Handlers/ChatHandler.rs` (from `chat.rs:193-353`).
 The decisions these carry - the doorway test, the travel row's claim, the landing point - stay in the
-nouns they belong to: `Maps/Portals.rs`, `Portal/`, and `place_for_travel` in the session, which is
+nouns they belong to: `Maps/Portals.rs`, `Maps/Travels.rs`, and `place_for_travel` in the session, which is
 where the map's own placement rule is read. What the session now keeps from the travel path is the
 hand-off itself, and the map's clock, which the third item owns. No frame, order, size, broadcast or
 log line changed; the end-to-end arch journey and the login journey pass untouched.
@@ -180,7 +183,7 @@ frames and the client confirm the same behaviour.
 (`MapMgr::Update`, `src/server/game/Maps/MapMgr.cpp:251`, scheduling every map's own `Update`), so a
 program's loop drives the world, the world drives the maps, and a session ticks nothing.
 
-**Done (2026-11-14, the copies' sweep).** The first piece of the world's own update: `World::update(now, diff)`
+**Done (2026-11-14, the copies' sweep).** The first piece of the world's own update: `World::update(diff)`
 (`game/src/World/mod.rs`) tells the scripts (`sScriptMgr->OnWorldUpdate(diff)`, `World.cpp:1355`) and
 disposes the copies that have been empty past their hold, naming them (R37, R40), and `worldserver`'s
 timer calls it instead of locking the district table itself - the reference's `sWorld->Update(diff)`,
@@ -240,7 +243,7 @@ numbered by its order of registration (`ScriptPointerList[_scriptIdCounter++]`, 
 registered twice is refused, and a hook is answered only by the scripts that declared it
 (`AddScript(script, enabledHooks)`, `:796`; `CALL_ENABLED_HOOKS`, `ScriptMgrMacros.h:73-77`). The
 engine now raises its own moments: `World::on_startup` at the program's ready line
-(`sScriptMgr->OnStartup()`, `Main.cpp:398`), `World::update(now, diff)` from the world's timer
+(`sScriptMgr->OnStartup()`, `Main.cpp:398`), `World::update(diff)` from the world's loop
 (`OnWorldUpdate(diff)`, `World.cpp:1355`), and `World::on_shutdown` on the way down
 (`Main.cpp:426`) - the same three moments, in the same order, in the reference's own places. The world
 owns the manager the way it owns its copies, so a session can reach it without a global.
@@ -272,7 +275,7 @@ hooks. Lifecycle, ordering and client-visible behaviour have corresponding verif
 ## Applying the guide
 
 These items are findings and work to investigate, rather than authorization to alter the protocol or
-choose a new architecture. Follow `AGENTS.md` before each change, including its ASURA comparison,
+choose a new architecture. Follow `AGENTS.md` before each change, including its comparison with the source (Rule 0),
 pre-flight sentence, single-subject and audit requirements. `docs/port/06-world-plan.md` maps game
 systems to their owners and `docs/game-rules.md` records their expected behaviour. Reassess this guide
 when a boundary changes, and correct outdated descriptions where they already occur.

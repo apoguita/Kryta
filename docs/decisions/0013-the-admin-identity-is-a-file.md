@@ -1,8 +1,12 @@
 # 0013 - The administrator identity is a file, and it is never locked out
 
-Status: accepted, on the owner's instruction, 2026-11-19. It decides where the operator's own identity
-lives; it does not yet implement the manager's login, and it does not choose a hash library. The owner
-may correct it; a correction replaces this text rather than being appended beside it.
+Status: accepted, on the owner's instruction, 2026-11-19, and confirmed 2026-11-23: there is one
+administrator, held in a file, who cannot be locked out by the database, and every other user is a row.
+It decides where the operator's own identity lives. **It is not implemented**: the manager has no
+login, and no hash library is chosen. `config/Server/admin.json`, which the login program reads to
+insert a first *game account* into an empty `account` table (`authserver/src/main.rs`,
+`AdminAccountFile`), is not this identity - that is a client's account, and it is a row. The owner may
+correct this record; a correction replaces this text rather than being appended beside it.
 
 ## The question
 

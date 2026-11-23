@@ -58,7 +58,9 @@ python tools/client/patch-gw.py "C:\Games\Guild Wars\Gw.exe" tools/client/keys.t
 ```
 
 Start the stack before launching the client. The patch creates a separate executable and leaves
-`Gw.exe` intact.
+`Gw.exe` intact. It expects stock build 39167 and builds `KrytaTitles.dll` with Visual Studio's x86
+tools; `Gw.custom.exe` runs with that DLL beside it. What the patcher needs and its options are in
+[Tools](docs/port/05-tooling.md#building-and-running-the-client).
 
 Use `Gw.custom.exe` for regular play and vanilla title testing. The other client builds are
 listed in the [title research notes](docs/port/19-title-research.md#client-builds-on-this-machine).
@@ -69,4 +71,8 @@ listed in the [title research notes](docs/port/19-title-research.md#client-build
 - [Tools, stack controls, and client patching](docs/port/05-tooling.md)
 - [Manual client test](docs/port/07-manual-test.md)
 - [Operator API and Control Panel status](docs/port/14-operator-surfaces.md)
+- [What runs today, and what proves it](docs/port/01-structure.md)
+- [The protocol audit](docs/port/09-parity-audit.md)
+- [The game rules](docs/game-rules.md)
+- [Research sources](docs/research-sources.md)
 - [Project instructions](AGENTS.md)

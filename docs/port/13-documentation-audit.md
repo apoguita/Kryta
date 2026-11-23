@@ -1,4 +1,7 @@
-# ASURA documentation audit
+# Recovered ASURA documentation: coverage and disposition
+
+This page covers the ASURA documentation recovered under `docs/evidence/asura-history/`. It is not an
+audit of Kryta's own documents.
 
 Status: source inventory and historical revision scans completed at subject level; individual
 claims remain to be verified as their subjects are implemented or investigated. The audit compares
@@ -13,8 +16,8 @@ is changed by this audit. `AGENTS.md` governs code and protocol work.
 - Corrected packet-size guidance, distinguished the live profession-change order from ASURA's
   order, and reconciled map-unlock and portal status with the current code and parity ledger.
 - Corrected the script-manager and world-update descriptions and qualified partial rule coverage.
-- Recorded the unresolved conflict between ASURA's owner-directed file content and Kryta's world
-  schema decision in `docs/port/11-content-and-behaviour.md`; no storage migration was performed.
+- Traced ASURA's owner-directed file content against Kryta's world schema decision; it is settled by
+  `docs/decisions/0014-the-world-content-is-a-pack.md`, which supersedes `0009-world-schema.md`.
 - Restored the owner's scripting, profile, HeroAI and control-panel intentions in
   `docs/port/11-content-and-behaviour.md` and `docs/port/12-research-and-control-panel.md`.
 - Reconciled R11/R12, R22, R27, E199 and E220 with the later ASURA world-model review and
@@ -32,8 +35,8 @@ line wrapping, corrections and moved content can produce matches or differences.
 not prove that a path is complete, and a high count does not prove that useful information was lost.
 The table records the subject-level disposition of the identified lines against the commits, later
 ASURA consolidations and Kryta's active documents. Earlier versions are retrieved from ASURA with `git log --all -- <path>` and
-`git show <commit>:<path>`. Each subject needs an evidence-backed disposition before the audit is
-complete. A delta disposition below covers only the earlier lines identified by the scan; it does
+`git show <commit>:<path>`. Every path below has a subject-level disposition; claim-level
+verification happens as each subject is implemented or investigated. A delta disposition below covers only the earlier lines identified by the scan; it does
 not claim the entire source or every shorter historical line has been semantically checked. Historic commands and implementation claims apply to their recorded revisions.
 
 | ASURA path | Distinct earlier lines absent from recovered snapshots | Review |
@@ -60,7 +63,7 @@ not claim the entire source or every shorter historical line has been semantical
 | `docs/33-control-panel-design.md` | 26 | historical deltas reviewed: the editor section was deliberately removed in ASURA commit `bc58da1` on the owner's instruction; do not reinstate its claims as project decisions |
 | `docs/04-from-gwps.md` | 25 | historical deltas reviewed: historical gateway and vendor plans, and patcher origin; current tooling and architecture are in 05 and 01 |
 | `docs/21-surrounding-packets.md` | 18 | historical deltas reviewed: historical packet sightings, interpretation and task queue; evidence and limitations are retained in 12 and the archive |
-| `docs/38-layer-decisions.md` | 18 | historical deltas reviewed: earlier D20/D24/D39 content-file direction now recorded as unresolved against Kryta decision 0009 in 11; other changes are historical |
+| `docs/38-layer-decisions.md` | 18 | historical deltas reviewed: earlier D20/D24/D39 content-file direction adopted by Kryta decision `0014-the-world-content-is-a-pack.md`, recorded in 11; other changes are historical |
 | `docs/05-gw2-lessons.md` | 16 | historical deltas reviewed: historical external-talk research and ASURA deployment proposals; no new Kryta policy follows |
 | `docs/adr/0003-simulation-in-scope.md` | 15 | historical deltas reviewed: superseded external C simulation phases; current separation is in 01 and 10 |
 | `docs/adr/0004-port-azerothcore-structure.md` | 15 | historical deltas reviewed: historical source structure and vendor debate; current authority and PostgreSQL decision are in 01 and decision 0001 |
@@ -113,7 +116,7 @@ claim that all facts and historical versions were independently verified against
 | Subject | Kryta disposition | Recovered ASURA paths |
 |---|---|---|
 | Entry and handoff | Kryta AGENTS, 01, 07 and 13; earlier handoffs are dated history. | `docs/00-glossary.md`<br>`docs/HANDOFF.md`<br>`docs/README.md`<br>`docs/reference/glossary.md`<br>`docs/work/session-handoff.md` |
-| Architecture and decisions | Kryta 01, 10 and decisions; content-file conflict is explicit in 11. | `docs/01-scope.md`<br>`docs/02-architecture.md`<br>`docs/05-gw2-lessons.md`<br>`docs/38-layer-decisions.md`<br>`docs/40-guidelines.md`<br>`docs/guidance/architecture.md`<br>`docs/reference/decisions/layer-decisions.md`<br>`docs/reference/decisions/project-decisions.md`<br>`docs/research/azerothcore-structure.md`<br>`docs/research/gw2-service-design-lessons.md` |
+| Architecture and decisions | Kryta 01, 10 and decisions; the content-file direction is settled by decision `0014-the-world-content-is-a-pack.md`. | `docs/01-scope.md`<br>`docs/02-architecture.md`<br>`docs/05-gw2-lessons.md`<br>`docs/38-layer-decisions.md`<br>`docs/40-guidelines.md`<br>`docs/guidance/architecture.md`<br>`docs/reference/decisions/layer-decisions.md`<br>`docs/reference/decisions/project-decisions.md`<br>`docs/research/azerothcore-structure.md`<br>`docs/research/gw2-service-design-lessons.md` |
 | Wire and captures | Kryta 02, 09 and evidence; recorded research and capture layer limits are in 12. | `docs/03-protocol.md`<br>`docs/06-reference-session.md`<br>`docs/21-surrounding-packets.md`<br>`docs/23-initialization-protocol.md`<br>`docs/24-stream-parity.md`<br>`docs/26-packet-gaps.md`<br>`docs/28-headers-to-name.md`<br>`docs/29-initialization-capture.md`<br>`docs/operations/capturing-instance-initialization.md`<br>`docs/reference/captures/login-session-2026-10-26.md`<br>`docs/reference/client-protocol.md`<br>`docs/reference/instance-initialization.md`<br>`docs/research/client-session-packet-analysis.md`<br>`docs/work/packet-coverage.md`<br>`docs/work/unnamed-packets.md` |
 | Parity history and status | Kryta 01, 08 and 09; GWPS comparisons and earlier acceptance stay historical. | `docs/07-status.md`<br>`docs/09-parity-audit.md`<br>`docs/10-parity-queue.md`<br>`docs/11-parity-state.md`<br>`docs/12-schema-parity.md`<br>`docs/13-command-parity.md`<br>`docs/14-test-plan.md`<br>`docs/25-client-readiness.md`<br>`docs/27-packet-parity-attempt.md`<br>`docs/history/gwps-parity/behavior-audit.md`<br>`docs/history/gwps-parity/chat-command-comparison.md`<br>`docs/history/gwps-parity/completed-work-queue.md`<br>`docs/history/gwps-parity/database-schema-comparison.md`<br>`docs/history/gwps-parity/handler-status.md`<br>`docs/history/gwps-parity/parity-snapshot-2026-10-31.md`<br>`docs/history/gwps-parity/reference-test-coverage.md`<br>`docs/history/packet-parity-attempt-2026-10-31.md`<br>`docs/work/project-status.md` |
 | Operations and deployment | Kryta 05 and 07; historical supervisor intent and limitations are in 12. | `docs/15-service-startup.md`<br>`docs/16-implementation-plan.md`<br>`docs/17-running-on-linux.md`<br>`docs/18-multi-machine.md`<br>`docs/19-running.md`<br>`docs/history/service-supervisor-delivery-plan.md`<br>`docs/history/service-supervisor-research.md`<br>`docs/operations/running-on-linux.md`<br>`docs/operations/running-the-server.md`<br>`docs/research/multi-host-routing-experiment.md` |

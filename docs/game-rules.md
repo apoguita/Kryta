@@ -11,6 +11,12 @@ asserted is law until he corrects it, an evidenced fact names its witness, a con
 rows, and a suspect rule may not be depended on without raising it. Where this file and a capture or the
 client disagree, the client wins and the disagreement is reported (`AGENTS.md`, rule 3).
 
+**Where a witness lives.** `Eden/`, `Rurik/` and `ASURA/` are under `C:\Users\Apo\Documents\GitHub\`,
+with copies under this repository's `research/` (`docs/research-sources.md`); `ASURA_testfork/`,
+`OpenTyria/`, `entice/`, `preforged-source/` and `preservation-main/` are under `research/` only;
+`Py4GW_Stealth/` is `C:\Users\Apo\Py4GW_Stealth`, and a bare `context/` (its `py4gw/context/`) or
+`tests/` path in a Py4GW row is inside it; `recordings/` and `config/` are this repository's own.
+
 **What it is not.** It is not a port order, not an architecture, and not a list of features to build in
 sequence. `docs/port/06-world-plan.md` maps each subject here to the noun that owns it.
 
@@ -21,11 +27,15 @@ wrong until the owner asserts otherwise.** This page tracks that assumption, so 
 from a document, a capture, a wiki, or memory is never read as fact merely because it is written
 down.
 
-**Phase assumption (owner, 2026-11-02): the game and Eden are the reference, and our own code is
-assumed wrong.** "This task is about achieving parity on that; if Eden or the game tells you
-something, you should listen; we are only assuming our own code is not correct for this phase."
-Where our code and the game or Eden disagree, the game or Eden wins, and the disagreement is a code
-fix to be scheduled, never a reason to edit the evidence.
+**The client sources (owner, 2026-11-23): the game client and Eden.** Eden is a reverse-engineered
+game client, and it can be used for testing as well as read. Both are sources for what the client
+sends, expects and draws. Where this tree's code and the game client or Eden disagree, the client
+side wins, and the disagreement is a code fix to be scheduled, never a reason to edit the evidence.
+
+The wording this replaces was recorded on 2026-11-02, during ASURA's parity phase: "This task is about
+achieving parity on that; if Eden or the game tells you something, you should listen; we are only
+assuming our own code is not correct for this phase." That phase is over; the instruction to listen to
+the game and to Eden stands.
 
 ## Questions carried from the later ASURA review
 
@@ -35,7 +45,7 @@ requiring review", available under `docs/evidence/asura-history/`.
 
 | Subject | Statements to reconcile |
 |---|---|
-| Travel gating | R12/R20 describe unlocked-outpost travel. Earlier owner wording said the game decides whether travel is allowed. The scope of server-side gating remains open. |
+| Travel gating | **Open, to be resolved later (owner, 2026-11-23).** R12/R20 describe unlocked-outpost travel, and C2 records R12 as a gate. Earlier owner wording said the game decides whether travel is allowed. This tree's code does not gate: it never refuses a load for an unlock and marks the map unlocked on arrival (`docs/port/08-rules-coverage.md`, R20/R12). Rule and code disagree until this is settled. |
 | Last-outpost placement | R14 describes a load at the last outpost, while R13 and the later doorway instruction provide destination-specific arrivals. Distinguish login, ordinary travel and disconnect restoration. |
 | Party capacity | R17 describes disbanding at a smaller cap; R26 describes truncation and separate parties for remaining players. |
 | Population timing | R29 says content exists when an instance is created; R34 describes spawning and ticking most enemies in compass range. Distinguish definitions, actor creation and active simulation. |
@@ -457,13 +467,16 @@ captures and one second lineage say about the same flow; they answer the questio
 | E228 | **The appearance choices are bounded, and the bounds are the client's own**: face and hair-style counts come from the composite data in `Gw.dat` per (campaign, sex, profession); hair and skin colour counts come from the client's const tables, also per (campaign, sex, profession) - Prophecies gives Warrior 8 hair colours and 8 skins, Necromancer 11 and 7, Elementalist 10 and 9; Factions gives Assassin 7 and 6; every Nightfall profession gives 16 and 8 - and **height is a signed 4-bit value, -8..7** (a captured "minimum" is -8 and "maximum" is +7). A server that accepted only the bit widths would accept values the client never offers; none is refused by any source | `Eden/docs/re/char-create-ui.md:638-666`, `:796-847`, `Eden/docs/re/char-create-protocol.md:101`; `Rurik/studies/character/FINDINGS.md:353-363` (the counts were NOT FOUND before this read) |
 | E229 | **The English name rule, as the client enforces it**: **3 to 19** characters (spaces count), letters and single spaces only, **each word begins with a capital and no capital sits inside a word**, no digits and no other characters, no leading or trailing space, and the name must fit the wire's `string16` cap of 20 units. The name screen draws three rule lines - maximum length, minimum length, charset - and `Create` is enabled only when all pass. **The create message is not re-validated**, so the server is the second check; no source states that a surname is required on the wire | `Eden/docs/re/char-create-ui.md:958-1015`; `Rurik/studies/character/FINDINGS.md:1873-1874` (the cap), `:1924-1929` (no name-check round trip) |
 | E230 | **A refused create is `0x18B` = `u16 opcode`, `u32 code`** (6 bytes), and the code is the client's to interpret - **contested**: the client's own create-error table read from the binary gives **25** "You already have a character with the name ...", **29** "... is already in use by another player", **31** "... contains words or partial words that are not permitted", anything else the generic network error, with "(Code=NNN)" appended; OpenTyria's server enum gives **23** invalid name and **29** already exists; a second client-table reading reports no case 29 at all, with **39** "... already in use by another player", **31** forbidden words and **41** too many creations recently. **Both captured rejections in the creation sessions carried 29.** Settlement is one live run per code | `Eden/docs/re/char-create-ui.md:1228-1253`, `Eden/docs/re/char-create-protocol.md:289-306`; `OpenTyria/code/OpenTyria/GmErrors.h:5-9`; `Rurik/studies/character/FINDINGS.md:1931-1941` |
-| E231 | **The confirm does not place the character in its starter outpost.** The capture shows the confirm answered, then `0x0099` naming map **416** and a load of 416, and only later `0x0099` and `0x01A6` and `0x019A` naming **212**, the Factions starter outpost, whose load takes the character into the world; the `0x0188` success carries a map id too and the capture carries 416 there. One client table names the creation scene **730 "CharCreation"** with no map file, and the arrival position inside a map is a **static row**, byte-identical on six live loads of map 280. The `0x0188` u16 was long called `0x2211` (OpenTyria); two other lineages name it `mapId` | `ASURA/recordings/client/feature/character_creation/character_creation-live-necro_factions.jsonl` seq 462-468, 792, 900-906; `Rurik/studies/character/FINDINGS.md:1830-1834`, `:1983-1987`; `Rurik/studies/unitsetup/FINDINGS.md:99`, `Rurik/RUNBOOK.md:575` |
+| E231 | **The confirm does not place the character in its starter outpost.** The capture shows the confirm answered, then `0x0099` naming map **416** and a load of 416, and only later `0x0099` and `0x01A6` and `0x019A` naming **212**, the Factions starter outpost, whose load takes the character into the world; the `0x0188` success carries a map id too and the capture carries 416 there. One client table names the creation scene **730 "CharCreation"** with no map file, and the arrival position was byte-identical on six live loads of map 280 (a single map; see E233 for the rule). The `0x0188` u16 was long called `0x2211` (OpenTyria); two other lineages name it `mapId` | `ASURA/recordings/client/feature/character_creation/character_creation-live-necro_factions.jsonl` seq 462-468, 792, 900-906; `Rurik/studies/character/FINDINGS.md:1830-1834`, `:1983-1987`; `Rurik/studies/unitsetup/FINDINGS.md:99`, `Rurik/RUNBOOK.md:575` |
 | E232 | **The starter outpost is per campaign, and one of the four is measured**: Prophecies 148 Ascalon City (pre-Searing), Factions **212 Monastery Overlook** (measured: the capture redirects to 212, and the load's spawn point is blob 156969 at (-2132.0, 1054.0) plane 0), Nightfall 449 Kamadan Jewel of Istan, Eye of the North 642; the PvP starting maps in the same captures were **248 Great Temple of Balthazar** (2 of 2 in the 38888 session) and **280 Isle of the Nameless** (the one 38974 create). **The table has four witnesses and one conflict**: ASURA holds it as a world-pack data file (and refuses a campaign it has no map for), its test fork as a compiled `match` with the same values, Preforged as a `switch` from a pinned MapID enum whose **Nightfall entry is 490 Island of Shehkah** instead of 449, and Preserved, OpenTyria and Entice each send **one constant** for every campaign (148, 449 and 248). No capture names Nightfall's or Prophecies' creation outpost, so 449 against 490 is open | `ASURA/config/World/Vanilla/character_spawn.json`; `ASURA/crates/asura-db/migrations/0017_starter_outpost.sql`; `ASURA_testfork/crates/asura-world/src/creation.rs:157-165`; `preforged-source/src/runtime/gw_creation_request.h:28-33`; `preservation-main/gameservice/handlers.go:202`; `OpenTyria/code/OpenTyria/GameSrv.c:1709`; `entice/gw-interface/GuildWarsInterface/Controllers/GameControllers/CharacterCreationController.cs:75-79`; `Eden/docs/re/char-create-protocol.md:285-287`, `:47` |
-| E233 | **Retail's arrival point is one fixed position per map**, not a random point from a list: the spawn the server sends on a load was byte-identical across six live loads of map 280. The owner's R13 asks for a random point of the map's own list scattered up to 250 units, so R13 is an owner decision that differs from what retail was measured doing - recorded, not resolved. One project records an observed level-one creation arrival rather than a selector: campaign 1 leaves the character at (9661.211914, 7888.114746) on map 148, facing -2.2758 | `Rurik/studies/unitsetup/FINDINGS.md:99`, `Rurik/RUNBOOK.md:575`; `preforged-source/config/creation-spawn-points.txt` ("Observed level-one creation arrival, not a reconstructed retail spawn selector") |
-
+| E233 | **An arrival is a random point of the outpost's list, scattered around that point** - never one fixed point, unless the outpost has only one spawn point (owner, 2026-11-23; R13). The one measurement on this: the spawn the server sends on a load was byte-identical across six live loads of map 280, which is what a map with a single spawn point gives. One project records an observed level-one creation arrival rather than a selector: campaign 1 leaves the character at (9661.211914, 7888.114746) on map 148, facing -2.2758 | `Rurik/studies/unitsetup/FINDINGS.md:99`, `Rurik/RUNBOOK.md:575`; `preforged-source/config/creation-spawn-points.txt` ("Observed level-one creation arrival, not a reconstructed retail spawn selector") |
 | E234 | **The client uses two worn-slot orders, and they are not the same order.** The equipped bag's cell is body 2, legs 3, head 4, boots 5, gloves 6 - ASURA's list, matched by OpenTyria, Rurik, Preforged, Preserved and Entice - and that cell is what an item's placement names and what a character's row stores. The agent's nine-dword visual list is body 2, **boots 3, legs 4, gloves 5, head 6**, measured on a live session whose per-slot writes each follow the item declaration naming its kind. The bridge is `wire = {0, 1, 2, 4, 6, 3, 5, 7, 8}[bag]`, and it is the same bridge in three implementations. Both numbers are `config/World/Vanilla/creation/worn_slots.json` | `Rurik/studies/newopcodes/FINDINGS.md:1556-1760` (the bag-order reading recorded as refuted **for the wire**); `preforged-source/src/runtime/gw_equipment_wire.h:24`; `Rurik/toolkit/authsrv/itemstore.py:195`; `preservation-main/item/item.go:154-164`; `ASURA/crates/asura-protocol/src/game/mod.rs:287-316` (the bag cells); `config/World/Vanilla/creation/worn_slots.json` |
 
 ## Contradicted
+
+The paths in the *Contradicted* and *Suspect* tables are ASURA's: `asura-world/src/` is in
+`C:\Users\Apo\Documents\GitHub\ASURA\crates\`, and `docs/22-world-model.md`, `docs/plans.md`,
+`docs/35` and `docs/36` are archived under `docs/evidence/asura-history/docs/`.
 
 | # | what was believed | the assertion | where the belief lives |
 |---|---|---|---|
@@ -473,7 +486,6 @@ captures and one second lineage say about the same flow; they answer the questio
 | C4 | quests can **provide transport** to zones otherwise unreachable (E21, the wiki's wording) | R55: a quest **never travels** the character; it affects only the quest log | ledger E21 vs R55 |
 | C5 | a district hop is a **game-instance request** `CtoA 41 RequestGameInstance` answered by `AtoC 9` (the first reading of E2) | the capture shows every in-game map change is a server `StoC 421 Redirect`; the hop itself is the game link's `CtoS 177 TravelMission`, and `CtoA 41` appears only at character select, creation and observer entry (E2, E27, E28) | ledger E2 (corrected), `docs/22-world-model.md` "District list" row |
 | C6 | R22's "the only retained choice is the region" - a joining character is placed in the first district with slots | R57: a named district is honoured, and the wire carries district, language and territory (owner, 2026-11-02; E28, E29) | ledger R22, `docs/22-world-model.md` "District assignment" row |
-
 ## Suspect - carried in, not asserted or witnessed
 
 | # | rule as written somewhere | where | why suspect |
@@ -487,7 +499,10 @@ captures and one second lineage say about the same flow; they answer the questio
 
 ## Still missing - what the sources do **not** answer
 
-Py4GW Stealth gives the **client's view** (E22-E25). Eden's and Rurik's documents (E27-E219) now give the client-side wire facts for travel, districts, parties, items, quests, creation, skills, movement, chat, guilds, death, aggro, titles and commerce, and they still do not state the server's rules. These remain open, and each needs either the owner or a measurement:
+Py4GW Stealth gives the **client's view** (E22-E25). Eden's and Rurik's documents (E27-E219,
+E221-E234) now give the client-side wire facts for travel, districts, parties, items, quests, creation,
+skills, movement, chat, guilds, death, aggro, titles and commerce, and they still do not state the
+server's rules. These remain open, and each needs either the owner or a measurement:
 
 | area | the gap the sources leave |
 |---|---|
@@ -504,6 +519,7 @@ Py4GW Stealth gives the **client's view** (E22-E25). Eden's and Rurik's document
 | **PvP** | out of the near term (R41) |
 | **Persistence** | the client expects its state to come back; **what the server must store versus regenerate** is our decision, informed by the client's lists |
 | **Protocol gaps** | the district count request, the hop, the redirect and the load order are evidenced (E27-E31), and the client's travel request is measured in the recordings (E220: struct 24 bytes, wire 9, district 0 = unset); still unmeasured: **the meaning of `409 MapData`'s first word** |
+
 ## Unknown
 
 - nothing blocking. The allotment value is a configuration decision (R5), not a game fact.
@@ -519,6 +535,7 @@ Py4GW Stealth gives the **client's view** (E22-E25). Eden's and Rurik's document
    the older document away.
 3. **When code is written from an asserted row:** the compliance item names the crate/file and the
    row, so behaviour can be traced to the owner's words.
-4. **Documents stay descriptive.** `docs/22-world-model.md`, `docs/plans.md` and
-   `docs/plans.md` carry the detail; this page carries the status. Where
-   they disagree with a row here, the row here wins and the document is corrected to match.
+4. **Documents stay descriptive.** ASURA's `docs/22-world-model.md` and `docs/plans.md`, archived
+   under `docs/evidence/asura-history/docs/`, carried the detail; this page carries the status.
+   They are historical and are not corrected here: where they disagree with a row here, the row
+   here wins.

@@ -6,10 +6,12 @@ The faithful base pack: the client's own vocabulary and the values a faithful wo
 Vanilla/
   titles.json         vanilla title IDs and editable custom titles
   vanilla-title-wire.json   captured vanilla title packet records
+  character_spawn.json      the map a new character is created in, per campaign
   maps/               one folder per map, by campaign, area, kind and id:
                         <campaign>/<area>/<kind>/<map id>/basic.json    the map's own record
                         <campaign>/<area>/<kind>/<map id>/spawns.json   where a character may stand
                         <campaign>/<area>/<kind>/<map id>/portals.json  arches and arrival points
+                        unplaced/<map id>/...                           a map with no campaign folder
   creation/
     inventory.json    the bags and the items a creation screen is given, before a profession is chosen
     equipment.json    what a new character wears, one set per (campaign, profession)
@@ -18,7 +20,8 @@ Vanilla/
 ```
 
 - `maps/` is the world itself: 265 map records, 138 entry lists and 17 doorway files, copied from
-  ASURA's pack of the same name. The world reads the tree at start-up (`WorldPack`) and refuses a
+  ASURA's pack of the same name. One file differs from ASURA's: map 148's `spawns.json` holds a third
+  entry point here. The world reads the tree at start-up (`WorldPack`) and refuses a
   folder whose name is not the `map_id` its record states. A record that states a `map_type` and a
   `map_file_id` is a map this world can host; one that states only an `instance_value` is a destination
   the client can name and this world cannot load (`docs/decisions/0014-the-world-content-is-a-pack.md`).
@@ -26,12 +29,13 @@ Vanilla/
   new character leaves with. Its three files are read together at start-up (`InventoryFile`,
   `EquipmentFile` and `EquippedSlotsFile` in `worldserver.json`), and the world logs what it read.
 - `inventory.json` and `equipment.json` are imported, not written by hand: `tools/import-creation-inventory.py`
-  regenerates them from ASURA's generated equipment table, which came from the reference's own
+  regenerates them from ASURA's generated equipment table, which came from GWPS's own
   `GetDefaultEquipments`. `worn_slots.json` is written by hand, because its order is a measurement and
   its two numberings must agree with a capture (`docs/game-rules.md` E234).
-- A file that would describe something the world does not read yet is not here. `character_spawn.json`
-  (the outpost each campaign's new character starts in, `docs/game-rules.md` E232) arrives with the
-  stage that reads it, not before.
+- `character_spawn.json` is the map each campaign's new character is created in (`docs/game-rules.md`
+  E232), copied from ASURA's pack. Only the panel reads it today, for its character creation
+  (`tools/manage/src/pages/players.rs`); a null map refuses that creation. The world's own creation
+  confirm does not read it.
 
 Every file carries a `note` and an `information` block saying what a row means and where the numbers
 came from, so a reader does not have to open the code to know what they are looking at.

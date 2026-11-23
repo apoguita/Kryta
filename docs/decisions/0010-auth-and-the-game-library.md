@@ -15,7 +15,7 @@ answers, and a destination for each piece.
 
 ## The inventory
 
-Every use of `game` in the auth program, by what it is for. `game::` appears 37 times across five
+Every use of `game` in the auth program, by what it is for. `game::` appears 38 times across six
 files; the categories below are the whole of it, and each one is named by the first place it appears.
 
 | what auth uses | where | is, in ASURA's layering |
@@ -61,9 +61,9 @@ Measured against that, `crates/asura-auth/Cargo.toml` depends on `asura-protocol
    does, because in AzerothCore the world answers the character list - reaches those nouns by the
    reference's own placement of them.
 2. **The alternative that stays inside the reference's chain blurs it.** Moving `placement` into
-   `shared` would make the library both programs link carry a game rule, which is the blur `AGENTS.md`
-   forbids ("no game behaviour is written into `shared/`"). Keeping it in `game` keeps the rule where
-   the rule's nouns are.
+   `shared` would make the library both programs link carry a game rule, which blurs the separation
+   `AGENTS.md` names as the deliverable ("Why the separation is the point"). Keeping it in `game`
+   keeps the rule where the rule's nouns are.
 3. **The edge is one-way and already checked.** Nothing in `game` names `authserver`; the crate graph
    in `Cargo.toml` refuses it, so the compiler holds it.
 

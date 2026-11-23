@@ -7,6 +7,7 @@ where the file is, and the file holds the values.
 | file | concern | read by |
 |---|---|---|
 | `commands.json` | the chat command surface: the names a player may type, what each takes, and which registered operation it runs | `worldserver` at start-up, `CommandsFile`; a name granted with no operation behind it is refused then, not when a player types it (`docs/decisions/0011-the-command-surface-is-content.md`) |
+| `admin.json` | the first game account: the login name and the portal token. Not the administrator identity of `docs/decisions/0013-the-admin-identity-is-a-file.md`, which is a file of its own and is not built | `authserver` at every start, `AdminAccountFile` (default `config/Server/admin.json`); it writes an `account` row only when the account table is empty (`authserver/src/main.rs`) |
 
 A file arrives here with the stage that reads it. There is no placeholder for a value nobody reads:
 an unread file is a claim without a reader, and the program says what it is missing instead.

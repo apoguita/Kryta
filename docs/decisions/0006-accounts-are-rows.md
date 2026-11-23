@@ -19,8 +19,8 @@ portal reads the row on every login. There is no file.
 
 1. **It is state, and state is the database's.** An account is created once, used many times, and its
    columns change as a person plays; a configuration file is a thing an operator writes and shares.
-   `AGENTS.md` rule 7 says values are JSON files and decisions are code - it does not say *data* is a
-   file, and the difference is what this record exists to fix.
+   `AGENTS.md` rule 7 keeps a database row for what a server writes while it runs, and an account is
+   exactly that; the difference between that and a file is what this record exists to fix.
 2. **The reference does the same.** `AuthSocket::HandleAuthSession` asks `LoginDatabase` for the row
    and reads the answer; there is no account file in that tree either.
 3. **A file cannot be the authority for something many processes share.** The auth program reads an
@@ -43,8 +43,7 @@ portal reads the row on every login. There is no file.
 
 ## What it does not decide
 
-How an account is created or how a password is checked. Today a row is inserted by an operator
-(`INSERT INTO account (username, user_id, token) VALUES (...)`, one line per person, and the pair is
-what the portal hands out), and a name the table does not hold is the reference's own refusal:
-`400 who are you?`. An account-creation path - the reference reaches `AccountMgr::CreateAccount` from
-its console - arrives with the console or with the identity store, whichever comes first.
+How a password is checked. An operator creates an account in the panel (`tools/manage`, `/accounts`,
+through `game::accounts`), and the login program inserts the first one from `config/Server/admin.json`
+when the table is empty; the pair on the row is what the portal hands out, and a name the table does
+not hold is GWPS's own refusal: `400 who are you?`. A client cannot create an account.

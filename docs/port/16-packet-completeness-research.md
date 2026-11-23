@@ -29,9 +29,8 @@ For one feature, read every relevant source implementation and extract one order
 
 The source's adapter or build is recorded beside the evidence only to explain packet translation. It
 never rejects the source. If the source has a complete contract and Kryta does not, it is a research
-subject. Before client-facing code is written, Rule 0 requires the ASURA counterpart; where it is
-absent, retain the extracted contract, compare a capture, and ask the owner instead of inventing a
-response.
+subject. Client-facing code is ported from the source whose contract is the most complete (Rule 0);
+where no project and no recording has the feature, ask the owner instead of inventing a response.
 
 ## Source inventory
 
@@ -40,7 +39,7 @@ system is complete, and it does not dismiss a source because it uses a different
 
 | source | packet-contract material | current use |
 |---|---|---|
-| ASURA | Packet table, wire framing, handlers, builders, tests, and captures. Kryta's audit currently compares 682 game and 100 auth rows plus ASURA's handled/emitted sequences. | The Rule 0 source for the final client-facing port. |
+| ASURA | Packet table, wire framing, handlers, builders, tests, and captures. Kryta's audit currently compares 682 game and 100 auth rows plus ASURA's handled/emitted sequences. | The project Kryta was ported from; ported to parity, and now one source among the others. |
 | ASURA_testfork | `MILESTONES.md` names proved user-visible functions; its forked code and tests can supply their packet contracts. | Extract a contract for each milestone before deciding whether Kryta already completes it. |
 | OpenTyria | `GameSrv.c`, `AuthSrv.c`, `GameMsg.h`, `AuthMsg.h`, and the message definitions contain request/response sequences. | Packet source. A row still needs a real contract: for example, its `GAME_CMSG_ITEM_UPDATE_EQUIPPED_COLOR` handler at `GameSrv.c:1684-1691` is a no-op, so it proves no completed dye function. |
 | Rurik | `schema/messages.json`, `toolkit/`, and `studies/` contain packet shapes, captures, client observations, and server flows for movement, skills, NPCs, quests, and parties. | High-value contract source. Extract each feature's ordered flow; do not mistake its imported OpenTyria table for independent corroboration. |
@@ -54,12 +53,14 @@ system is complete, and it does not dismiss a source because it uses a different
 
 ## Initial comparison result
 
-Kryta already matches ASURA's declared packet table exactly (`docs/port/09-parity-audit.md:15-40`),
+Kryta already matches ASURA's declared packet table exactly (`docs/port/09-parity-audit.md`, section 1),
 but table equality is not function equality. The earlier source sweep incorrectly treated adapters and
 client versions as a reason to reject other projects. That conclusion is withdrawn.
 
-No feature outside ASURA has yet been reduced in this document to a full, ordered packet contract and
-compared line by line with Kryta. Therefore this page makes no claim that the remaining sources add
+One feature outside ASURA has been reduced to an ordered packet contract: titles, in
+`docs/port/19-title-research.md`, from retail and Preforged captures. ASURA has no counterpart, so
+`docs/port/09-parity-audit.md` records the slice Kryta sends as ported thin from those recordings. No other feature has been
+reduced this way. Therefore this page makes no claim that the remaining sources add
 nothing, and it creates no false claim that Kryta is function-complete. The next research action is to
 extract contracts by function, beginning with the richer packet sources: Rurik, Preforged, Preservation,
 Entice's original-client boundary, and GameRevision.

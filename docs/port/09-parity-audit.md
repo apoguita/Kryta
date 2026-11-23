@@ -10,13 +10,22 @@ adapter, architecture, or client build does not disqualify its packet evidence; 
 it completes a packet contract Kryta does not. A larger table or an isolated packet builder is not, by
 itself, a missing Kryta function.
 
-Every number below was measured on 2026-11-12 by reading ASURA's table and this tree's tables with
-the same script and diffing them row by row (`target/diff-tables.py`, `target/diff-headers.py`; the
-scripts are scratch and are not committed, the findings are).
+The numbers below were first measured on 2026-11-12 by reading ASURA's table and this tree's tables
+with the same script and diffing them row by row (`target/diff-tables.py`, `target/diff-headers.py`;
+the scripts are scratch and are not committed, the findings are). Section 1's table comparison (782
+rows, no row missing on either side, no difference in size, name, fields or status) and ASURA's 36
+`Handled` and 87 `Emitted` status rows were re-measured on 2026-11-23. The per-message verdicts in
+sections 2 to 5 are as of 2026-11-12, plus the title rows added on 2026-11-21; section 6 counts the
+tables as they stand.
 
-Verdicts: **ported** (ASURA's bytes and behaviour, translated, cited) - **ported thin** (ported, but
-only part of what ASURA gives the same message) - **ours** (written here, no ASURA counterpart: a
-defect of Rule 0) - **missing** (ASURA has it, this tree sends or handles nothing).
+This audit is the record of the port from ASURA, which was the source of truth until parity with it
+was reached. Since parity every research project and every live recording is a source (`AGENTS.md`,
+Rule 0), so a row names the source it came from, and the ASURA columns below are the ASURA port's.
+
+Verdicts: **ported** (the source's bytes and behaviour, translated, cited) - **ported thin** (ported,
+but only part of what the source gives the same message) - **missing** (a source has it, this tree
+sends or handles nothing). Anything this tree sends or handles with no source at all is a defect of
+Rule 0 and is named as one.
 
 ## 1. The packet table
 
@@ -61,9 +70,12 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | the 64-byte version message | `client/game_version.rs` (8.9 KB) | `game/src/Server/Protocol/mod.rs` | ported |
 | the connection's first four bytes | `client/version.rs` (11 KB) | `authserver/src/Server/stream.rs`, `front_door.rs` | ported thin |
 | the reference client (a test double that speaks the wire) | `client/reference_client.rs` (17 KB) | nothing | **missing**: no test proves a whole conversation against an independent speaker |
-| the trace of every byte | `client/trace.rs` | `shared/src/network` trace + logs | ported thin |
+| the trace of every byte | `client/trace.rs` | `shared/src/Network/` trace + logs | ported thin |
 
-## 3. Client -> server: the 37 messages ASURA handles
+## 3. Client -> server: the 37 messages ASURA's code handles, and 2 of this tree's
+
+ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which the table marks
+`Observed` (`dispatch.rs:73`), so its code handles 37.
 
 ### 3.1 The auth connection (15)
 
@@ -81,15 +93,15 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x8020` | `AUTH_CMSG_SETTING_UPDATE_CONTENT` (522) | `lib.rs:369-382` | `session.rs`: acknowledged with status 0 | ported |
 | `0x8021` | `AUTH_CMSG_SETTING_UPDATE_SIZE` | `lib.rs:369-382` | `session.rs`: acknowledged with status 0 | ported |
 | `0x8026` | `AUTH_CMSG_ACCEPT_EULA` | `lib.rs:487`, `decode_eula` | `session.rs`, recorded | ported |
-| `0x8029` | `AUTH_CMSG_REQUEST_GAME_INSTANCE` | `lib.rs:507`, `travel::answer` | `session.rs` `answer_game_instance` | ported thin: no lease, no capacity, no world probe, and 2 of `asura-rules`' 3 placement rules - see the stop below |
+| `0x8029` | `AUTH_CMSG_REQUEST_GAME_INSTANCE` | `lib.rs:507`, `travel::answer` | `session.rs` `answer_game_instance` | ported thin: no lease, no capacity, no world probe, and the outpost rule of `asura-rules` ported but not in force while the caller passes `destination_type` as `None` (`session.rs:1076`) - see 7a |
 | `0x8035` | `AUTH_CMSG_ASK_SERVER_RESPONSE` | `lib.rs` | `session.rs` | ported |
 | `0x8038` | `AUTH_CMSG_PORTAL_ACCOUNT_LOGIN` | `lib.rs:572-680` | `session.rs` `answer_login`: the named character is recorded, or the account's first | ported |
 
-### 3.2 The game connection (22)
+### 3.2 The game connection (22, and 2 of this tree's)
 
 | header | message | ASURA handler | this tree | verdict |
 |---|---|---|---|---|
-| `0x8008` | `GAME_CMSG_DISCONNECT` | `dispatch.rs:86` | ends the connection | ported |
+| `0x8008` | `GAME_CMSG_DISCONNECT` | `dispatch.rs:86` | ends the connection on the creation screen (`WorldSession.rs:1037`); on a loaded map it reaches `report_unanswered` (`:1688-1692`) | **ported thin**: the loaded-map loop has no arm for it (`docs/port/21-code-assessment.md`, 2) |
 | `0x8009` | `GAME_CMSG_PING_REPLY` | `dispatch.rs:119`, discarded | discarded | ported |
 | `0x800C` | `GAME_CMSG_HEARTBEAT` | `dispatch.rs:122`, discarded | discarded | ported |
 | `0x800D` | `GAME_CMSG_PING_REQUEST` | `connection.rs:579-587`, `handle_ping_request` | `0x000D` and `World.PingValue` | ported |
@@ -100,6 +112,8 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x803E` | `GAME_CMSG_MOVE_TO_COORD` (14) | `agent.rs:710` | `answer_move_to_coord` | ported |
 | `0x8047` | `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` | `agent.rs:1117`, then `dispatch.rs:60-68` | `answer_last_position`, then `cross_portal` | ported (a taken correction crosses a doorway like a step) |
 | `0x804F` | `GAME_CMSG_UNEQUIP_ITEM` (6) | `item.rs:555`, `handle_unequip_item` | `CLIENT_UNEQUIP_ITEM`: ASURA's answer, a log line and nothing on the wire | ported |
+| `0x8058` | `GAME_CMSG_TITLE_DISPLAY` (6) | none: the row only (`packets.rs:422`) | `WorldSession.rs:1577`: the selectable rank, `0x00F4` to the player and its peers | ported thin, from the retail and Preforged recordings (section 5, the title block) |
+| `0x8059` | `GAME_CMSG_TITLE_HIDE` (2) | none: the row only (`packets.rs:423`) | `WorldSession.rs:1577`: rank zero, `0x00F4` to the player and its peers | ported thin, from the retail and Preforged recordings (section 5, the title block) |
 | `0x8060` | `GAME_CMSG_CHAR_CREATION_CHANGE_PROF` (4) | `creation.rs:275` | handled | ported: the body is `chapter, profession`, chapter `0` for a PvP character and `1`-`3` for Prophecies, Factions, Nightfall (`docs/game-rules.md` E226); the client sends it on entry, on every campaign change and on every profession change, and follows each one with seven `0x8084` |
 | `0x8064` | `GAME_CMSG_SEND_CHAT_MESSAGE` (286) | `chat.rs:193`, `handle_chat_message` | `answer_chat_message` | ported |
 | `0x8072` | `GAME_CMSG_ITEM_MOVE` (9) | `item.rs:255`, `move_item` | `answer_item_move` | ported |
@@ -112,9 +126,10 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x80B1` | `GAME_CMSG_PARTY_TRAVEL` (9) | `travel.rs:279`, `handle_party_travel` | `answer_party_travel` and `begin_transfer` | ported |
 | `0x80C1` | `GAME_CMSG_TRAVEL_INIT` (10) | `travel.rs:147`, `handle_travel_init` (`dispatch.rs:73`) | `answer_travel_init` | ported - **missing until round 17**, and it starts no transfer in either tree |
 
-**Score: 37 ported or ported thin (15 auth + 22 game), 0 ours, 0 missing.**
+**Score: 37 of ASURA's ported or ported thin (15 auth + 22 game), 0 missing; 2 more ported thin from
+recordings (`0x8058`, `0x8059`).**
 
-## 4. Server -> client: the 87 messages ASURA emits
+## 4. Server -> client: the 87 messages ASURA emits, and 3 of this tree's
 
 ### 4.1 The auth connection (8)
 
@@ -129,7 +144,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x0014` | `AUTH_SMSG_FRIEND_STREAM_END` | `messages.rs:524` | `login_reply::friend_stream_end` | ported |
 | `0x0016` | `AUTH_SMSG_ACCOUNT_SETTINGS` (2058) | `messages.rs:572` | `login_reply::account_settings_frame` | ported |
 
-### 4.2 The game connection (79)
+### 4.2 The game connection (79, and 3 of this tree's)
 
 | header | message | ASURA builder | this tree | verdict |
 |---|---|---|---|---|
@@ -180,6 +195,9 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x00EF` | visibility flags | `char_visibility_flags` | same | ported |
 | `0x00F0` | initial effects | `agent_initial_effects` | same | ported |
 | `0x00F2` | instance loaded | `instance_loaded` | same | ported |
+| `0x00F3` | title rank data (34) | none: the row only (`packets.rs:771`) | `title_packets::rank_data`, out of `Titles.rs:371` during the load | ported thin, from the retail and Preforged recordings (section 5, the title block) |
+| `0x00F4` | title rank display (8) | none: the row only (`packets.rs:772`) | `title_packets::rank_display`, after the load and on `0x8058`/`0x8059` (`WorldSession.rs:1525,1567,1577`) | ported thin, from the retail and Preforged recordings (section 5, the title block) |
+| `0x00F6` | title track info (82) | none: the row only (`packets.rs:774`) | `title_packets::track_info`, out of `Titles.rs:379` during the load | ported thin, from the retail and Preforged recordings (section 5, the title block) |
 | `0x013E` | item moved to a location | `item_move_to_location` | same | ported |
 | `0x013F` | inventory create bag | `inventory_create_bag` | same | ported |
 | `0x0141` | gold | `update_gold_storage` | same | ported |
@@ -202,24 +220,26 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x0198` | manifest done | `instance_manifest_done(phase, map_id)` | the 877 sentinel then the map, as ASURA sends them | ported |
 | `0x0199` | manifest phase | `instance_manifest_phase` | same | ported |
 | `0x019A` | instance load info | `instance_load_info` | same | ported |
-| `0x01A0` | the instance table (102) | `instance_table` | `instance_packets::instance_table` | ported: ASURA's shape, and the content is every row with an `instance_value` - 137 pairs in ten batches |
+| `0x01A0` | the instance table (102) | `instance_table` | `instance_packets::instance_table` | ported: ASURA's shape, and the content is every map record (`basic.json`) with an `instance_value` - 137 pairs in ten batches |
+| `0x01A6` | transfer game server info (46) | `transfer_game_server_info` (`game/mod.rs:839`) | `misc_packets::transfer_game_server_info` | ported |
 | `0x01AC` | ready for a spawn | `ready_for_map_spawn` | same | ported |
 | `0x01B3` | which party the character is in | `character_update_party` | same | ported |
 | `0x01CC` | party player add | `party_player_add` | same | ported |
 | `0x01D3` | party create | `party_create` | same | ported |
 | `0x01D4` | party member stream end | `party_member_stream_end` | same | ported |
 
-**Score: 79 ported or ported thin, 0 missing, 0 ours among the emitted set.**
+**Score: 79 of ASURA's ported or ported thin, 0 missing; 3 more ported thin from recordings
+(`0x00F3`, `0x00F4`, `0x00F6`).**
 
 ### 4.3 Builders ASURA has that no message above covers
 
 `map_update_current_redirect` (`0x0099` in its four-byte-header form), `map_init_start` and
-`cartography_data` (counted above), `create_unnamed_item`, `agent_update_effects` (`0x00F0`'s
-update form), `agent_update_direction`/`_speed`/`_position` and their `_live` forms, and
+`cartography_data` (counted above), `create_unnamed_item`, `agent_update_effects` (`0x00F1`,
+which ASURA's table marks `Known` and its travel sends), `agent_update_direction`/`_speed`/`_position` and their `_live` forms, and
 `equipped_slot` (the item-kind to slot table, which this tree has as
 `creation::equipped_slot`). The `_live` forms exist because the live client's structs differ from the
-sniffer's; **this tree has neither of the movement families**, so it has neither the choice nor the
-setting that selects one.
+sniffer's; this tree has both forms of each movement builder (`agent_packets`, 4.2) and
+`agent_update_effects` (`AgentPackets.rs:334`).
 
 ## 5. The sequences - the protocol is also the order
 
@@ -231,34 +251,34 @@ setting that selects one.
 | the items ask | the stream, the bags and items, four weapon sets, the gold, four faction caps, the hard-mode flag, the character summary, the map, ready-for-spawn, the manifest (`item.rs:70`) | same, plus the reference's own `0x0196`-before-manifest order | ported |
 | the spawn ask | the entry point (`agent.rs:1219`, `map.rs:13-20`) | the same one frame | ported |
 | the players ask | 34 frames, in one order (`player.rs:382-388` for the party) | the same 34 in order, with the title definitions during load and the test display selection afterward | ported for the ASURA block |
-| title definitions and selection (`0x00F3`, `0x00F6`, `0x8058`, `0x8059`, `0x00F4`) | `asura-protocol/src/packets.rs:422-423,771-774` defines the messages; ASURA has no title handler | The Northlands capture places the title block after progress and flags and before `0x018E` (seq 534-582). Kryta sends current and next ranks before their track and omits deprecated rows 11 and 12. Retail selection returns a single displayed rank (`login-unfiltered-9292.jsonl`, seq 659-775). Hide clears it with rank zero (Preforged `packets-1360-15821281.jsonl:36252`). The loaded district distributes this value to peers. | **ours**, partial. The test states, selection, and clear are sent. Earning and persistence are outside this slice. [Title research](19-title-research.md) |
-| custom title text (`GET /kryta/custom-titles.json`) | ASURA `asura-webgate/src/lib.rs:136-195` has the stock login routes | The patched client fetches public custom text for rows numbered 48 and above from the same world-pack catalog that supplies the gameplay title records. The stock login and title packet layouts stay the same. | **ours**, approved custom-client extension. [Title research](19-title-research.md) |
-| the travel | the redirect `0x01A6`, `0x0099` in its twelve-byte form, `0x00B0`, `0x00B1`, `0x005A`, `0x0021` (`travel.rs:480-518`) | the same eight, in the same order, out of `begin_transfer` | ported: the crossing starts it from a step (`cross_portal`) and hands its landing over; the seat reservation is 7.4's named difference |
+| title definitions and selection (`0x00F3`, `0x00F6`, `0x8058`, `0x8059`, `0x00F4`) | `asura-protocol/src/packets.rs:422-423,771-774` defines the messages; ASURA has no title handler | The Northlands capture places the title block after progress and flags and before `0x018E` (seq 534-582). Kryta sends current and next ranks before their track and omits deprecated rows 11 and 12. Retail selection returns a single displayed rank (`login-unfiltered-9292.jsonl`, seq 659-775). Hide clears it with rank zero (Preforged `packets-1360-15821281.jsonl:36252`). The loaded district distributes this value to peers. | ported thin, from the recordings named here (ASURA has no title handler). The test states, selection, and clear are sent. Earning and persistence are outside this slice. [Title research](19-title-research.md) |
+| custom title text (`GET /kryta/custom-titles.json`) | ASURA `asura-webgate/src/lib.rs:136-195` has the stock login routes | The patched client fetches public custom text for rows numbered 48 and above from the same world-pack catalog that supplies the gameplay title records. The stock login and title packet layouts stay the same. | no source: no project and no recording has it. Kryta's own custom-client feature, added and approved by the owner (confirmed 2026-11-23). The Hero Panel displays the titles; the feature is not finished, including the client injection and patching. [Title research](19-title-research.md) |
+| the travel | `0x00F1` (`agent_update_effects`), `0x0028`, the redirect `0x01A6`, `0x0099` in its twelve-byte form, `0x00B0`, `0x00B1`, `0x005A`, `0x0021` (`travel.rs:480-518`) | the same eight, in the same order, out of `begin_transfer` | ported: the crossing starts it from a step (`cross_portal`) and hands its landing over; the seat reservation is 7.4's named difference |
 | a player joining a map others are in | `introduction` (`0x0059`, `0x00B0`, `0x00B1`, `0x0020`) and `farewell` (`0x005A`, `0x0021`) (`instance.rs:432-473`, `player.rs:499-532`) | the same, plus the worn items in the unnamed form and the agent's look, out of `game/Districts/Peers.rs` | ported |
 | chat | `0x005D` body plus `0x0061` who spoke, and every generated answer printed (`chat.rs:193-353`) | `0x005D`* then `0x0061`, broadcast to the map and district, and every generated answer **sent** as `0x005D`* + `0x005E` on `Channel_Global` | ported with one corrected divergence: ASURA prints the answers and its two tags are eight body bytes where the wire has three. The reference sends them (`GmChat.c:116-143`), the client renders the pair (`Rurik/studies/chat/FINDINGS.md:263-268`), and both frames go to the asker rather than the body to everyone plus a tag to one (`0012-chat-text-is-sent.md`) |
 | the exploration grid | `0x008B` then `0x008A`, 0.58-0.73 s into the load, once per instance (`cartography.rs`, `map.rs:22-48`) | the same two, right after the instance's record, with every band empty (`maps::cartography::init_frames`) | ported |
-| the instance table | `0x01A0` batches of fifteen pairs, in the same phase (`instance_table.rs`, `map.rs:49-58`) | the same batches, from every row with a value (`maps::instance_table::table_for`) | ported |
+| the instance table | `0x01A0` batches of fifteen pairs, in the same phase (`instance_table.rs`, `map.rs:49-58`) | the same batches, from every map record with a value (`maps::instance_table::table_for`) | ported |
 
 ## 6. What the protocol audit says, in numbers
 
 | | count |
 |---|---|
-| messages ASURA handles (client -> server) | 36 |
-| ... this tree handles as ASURA does | **36** (15 auth, 21 game) |
-| ... this tree handles, but not as ASURA does | **0** |
-| ... of those, answered differently | 0 |
+| messages ASURA's code handles (client -> server) | 37: 36 marked `Handled`, plus `0x80C1` |
+| ... this tree handles as ASURA does | **34** |
+| ... this tree handles, ported thin | **3** (`0x8008`, `0x8029`, `0x808B`) |
 | ... this tree does not handle | **0** |
+| messages this tree handles that ASURA does not | **3**: `0x8058` and `0x8059` (from recordings, 3.2), and the district-count query `0x800B` on the auth connection, answered with that connection's `0x001A` (`authserver/src/Server/session.rs`, `QUERY_INSTANCE_COUNT`; in no table of section 3 or 4) |
 | messages ASURA emits (server -> client) | 87 |
-| ... this tree emits | **87** (8 auth, 79 game) |
+| ... this tree emits | **87** (8 auth, 79 game), one of them ported thin (`0x018B`) |
 | ... this tree does not emit | **0** |
-| messages this tree emits that ASURA does not have | 1: the district-count answer on the auth connection |
-| sequences ported whole | **11 of 11**, none ported thin and none missing |
+| messages this tree emits that ASURA does not have | 4: the district-count answer on the auth connection, and `0x00F3`, `0x00F4`, `0x00F6` (from recordings) |
+| sequences | **13**: the 11 of ASURA's ported, none ported thin and none missing; the title block, ported thin from recordings; and the custom title text, which has no source |
 | the packet table | identical, 782 rows (682 game + 100 auth) |
-| `ASURA/crates/asura-world/src` | 36 files | all 36 have a verdict in 9: 29 ported (code or data), 4 this tree's arrangement, 3 ASURA's own harness |
+| `ASURA/crates/asura-world/src` | 35 files | all 35 have a verdict in 9: 28 ported (code or data), 4 this tree's arrangement, 3 ASURA's own harness |
 
 ## 7. The defects, in the order the client feels them
 
-1. **The movement family walks on ASURA's own graphs, imported at start-up.** The five frames and their
+1. **The movement family walks on the map's own graphs, loaded from the shipped cache at start-up.** The five frames and their
    `_live` forms, `AgentState`, `densify`, the cadence, the tolerance and the four handlers are
    `ASURA`'s; the tick carries elapsed time. The **archive is ported** (`game/Pack/`): the index
    (`Gwdat.rs`) turns a file id into an entry - this machine's `Gw.dat` holds 156,315 of them - and the
@@ -270,7 +290,7 @@ setting that selects one.
    the world installs them before its listener opens (`worldserver/src/main.rs`, port of
    `ASURA/crates/asura-worldserver/src/main.rs:366-391`). Kryta deliberately omits ASURA's archive
    fallback: it loads the shipped `PathGraphs` cache, binds whichever maps it contains, and a map with
-   no graph answers `NoGraph` and nothing on the wire (`docs/decisions/0014-headless-navigation-assets.md`).
+   no graph answers `NoGraph` and nothing on the wire (`docs/decisions/0015-headless-navigation-assets.md`).
    The importer remains an offline management capability. It was proved against this machine's archive:
    map 148 - entry
    `0x0001B97D`, whose path chunk is `0x20000008` (`0xEEFE704C` signature, version 12) - walks from its
@@ -283,27 +303,27 @@ setting that selects one.
 3. **The instance table carries the whole catalogue.** ASURA's batch shape goes on the wire and its
    content is every record the pack gives a value to: **137 pairs** in ten `0x01A0` batches - 17 of them
    hosted maps and 120 that are destinations only (`ASURA/crates/asura-world/src/instance_table.rs:63-71`
-   keeps a record its own catalogue reader skips). A record with no type is a row like any other and
+   keeps a record its own catalogue reader skips). A record with no type is a record like any other and
    `MapEntry::is_hostable` is the difference: a travel or a crossing that names one is refused, exactly
    as `catalogue::entry` answers `None` for it (`ASURA/crates/asura-world/src/catalogue.rs:54-63`).
-4. **The travel is ported with its cycle and without the doorway.** The eight frames, the three
-   triggers (`/tp`, the world map's `0x80B1`, the touch's `0x80C1`), the `is_explorable` switch and the
-   hand-off row are ASURA's. Two parts are not, each named with its reason:
+4. **The travel is ported with its cycle and its doorway crossing; the seat reservation is not.** The
+   eight frames, the three triggers (`/tp`, the world map's `0x80B1`, the touch's `0x80C1`), the
+   `is_explorable` switch and the hand-off row are ASURA's. Three parts are named, each with its reason:
    - **The seat reservation** (`travel.rs:419-431`, `placement::Placement::reserve`) is ASURA's own
      deployment accounting - a world registry, leases and a heartbeat, which is the multi-process
      arrangement this tree's structure does not have (rule 0's scope is the protocol; the arrangement
      is the reference's). The capacity it enforces has a counterpart here: a district holds
      `World.DistrictAllotment` players, a full outpost opens the next district and a named full district
      is refused (`game/Districts/mod.rs`, `enter`, R5/R22/R58).
-   - **The entry's facing is a row**: a spawn point now states the direction a character entering there faces (`map_spawn.angle`, ASURA `agent.rs:460-476`, `Standing::at_spawn`), so the create message carries the point's own vector instead of the neutral +y, and map 148's two points are the pack's own (`Outposts/148/spawns.json`), with their angles.
-- **The doorway crossing** is ported (round 18): `game/Maps/Portals.rs` is `portals.rs` whole - the
-     wall test, the point box, `Crossed`, and the three lookups - with the rows in place of the pack's
-     `portals.json` (`map_arch` for arches, `map_arrival` for arrivals, which gains the facing as
-     `angle`), and `cross_portal` (`game/Handlers/TravelHandler.rs`) is `travel.rs:319-388`: the step between two reports,
+   - **The entry's facing is pack data**: a spawn point states the direction a character entering there faces (the point's `angle` in its map's `spawns.json`, ASURA `agent.rs:460-476`, `Standing::at_spawn`), so the create message carries the point's own vector instead of the neutral +y, and map 148's three points are the pack's own (`Outposts/148/spawns.json`), two of them with an angle.
+   - **The doorway crossing** is ported (round 18): `game/Maps/Portals.rs` is `portals.rs` whole - the
+     wall test, the point box, `Crossed`, and the three lookups - with the data in each map's own
+     `portals.json` in the world pack (`arches`, and `arrivals`, which carry the facing as `angle`;
+     `game/src/Maps/Pack.rs`, `docs/decisions/0014-the-world-content-is-a-pack.md`), and `cross_portal` (`game/Handlers/TravelHandler.rs`) is `travel.rs:319-388`: the step between two reports,
      the map's own walls, an arch that names no destination doing nothing, the receiving map's arrival
      as the landing, and the same `begin_transfer` every trigger ends in. The landing travels on the
      hand-off row (`travel.landing_x/y/plane/from`) and the arriving connection stands on it and faces
-     along the arrival's own angle. On this machine: `Doorways: 1 arch(es) on 1 map(s)`.
+     along the arrival's own angle. The pack states 28 arches on 11 maps and 28 arrivals.
 
 **Two client-visible values this reading corrected.**
 
@@ -337,7 +357,7 @@ rule** for every destination that is not a main town (`lib.rs:119-134`).
 ```
 
 **What is not settled is the datum, not the rule.** `destination_type` is the *catalogue's* type for
-the map being asked for - the world's `map` row, in this tree - and the login program holds no world
+the map being asked for - the map's record in the world pack (`basic.json`), in this tree - and the login program holds no world
 catalogue: its configuration opens the login and character databases only
 (`authserver/authserver.json`), and the reference's own auth server reads no world database either.
 So the caller passes `None`, which is rule 3's own first branch ("the client's own map"), and the
@@ -425,11 +445,9 @@ road.
    stacked trapezoids and checks the map with no graph still answers `NoGraph`; and lines **1746-1794**
    - `find_path_blob`, the archive's bit-31 replacement rule (the configured id, then the plain one,
    then the flagged one), reporting a substitution with the working implementation's own line.
-   **Left**: nothing. `PathGraphs::load`/`import` (1507-1592) and `import_graph` (1703-1744) wait
-   on `PathStaticData::import` in `map_data.rs` (step 4), and are ported with it; the world's
-   start-up and the session's two walk answers use them.
-4. **The importer** in `map_data.rs` - the last piece, and its own session's work. Surveyed function by
-   function (ASURA's line numbers), so the port starts from this map rather than from the file:
+   **Left**: nothing. `PathGraphs::load`/`import` (1507-1592) and `import_graph` (1703-1744) are
+   ported with `PathStaticData::import` in `map_data.rs` (step 4).
+4. **(done)** **The importer** in `map_data.rs`, function by function (ASURA's line numbers):
    - **(done)** `Reader` and its `new`/`len`/`take`/`tagged` (336-383), the `u16_at`/`u32_at`/`f32_at`
      reads (385-396), `riff_type` (398), the RIFF container (`riff_type`, `RIFF_SIGNATURE`,
      `RIFF_TYPES` = 9, `MapChunk`, `Chunks::parse`/`get`/`iter`/`len`/`is_empty`, 408-455) and
@@ -448,7 +466,7 @@ road.
      -blob case (971), its node-id ranges (994), and against this machine's real archive - map 148's
      blob imports, the graph has planes and trapezoids, and the map's own spawn point lands in a
      trapezoid, which is the check ASURA uses to know its import worked.
-   - **Left**: nothing of the importer. **(done)** The three callers too: `import_graph`
+   - **(done)** The three callers: `import_graph`
      (pathfind.rs 1703-1744, with the working implementation's own log lines for a substituted id, an
      unimportable blob and an absent one), `PathGraphs::load` (1507) and `PathGraphs::import` (1562).
      A test loads map 148 from this machine's real `Gw.dat` through `PathGraphs::load`, binds it, and
@@ -457,20 +475,15 @@ road.
      program reads its required extracted `PathGraphs` cache (`worldserver/src/main.rs`). It never
      opens `Gw.dat`; the manager performs a selected-map export offline. `World` holds the resulting
      graphs and `WorldSession` answers `0x803E` and `0x803D` from them.
-   - `PathStaticData::import` (490) and `read` (506): the `PATH_DATA_SIGNATURE`/`PATH_DATA_VERSION`
-     check, then `read_planes` (535) -> `read_plane` (551) -> per plane `read_counts` (578),
-     `skip_tag11` (606), `read_vectors` (618), `read_trapezoids` (639), `read_root_node` (681),
-     `read_xnodes` (705), `read_ynodes` (732), `read_sink_nodes` (753), `read_portal_traps` (786),
-     `read_portals` (816), and `vector_at` (911).
-   - The three reference oddities the file's own header names and the port must keep: `skip_tag11`
-     advances `h000C * 8` bytes of a section measured as `sub_length` (the two differ in every plane of
-     every map measured, 283 planes), `node_ref`/`trap_ref` answer `None` past their arrays instead of
+   - The three reference oddities the file's own header names are kept: `skip_tag11` advances
+     `h000C * 8` bytes of a section measured as `sub_length` (the two differ in every plane of every
+     map measured, 283 planes), `node_ref`/`trap_ref` answer `None` past their arrays instead of
      failing the import, and `read_plane` takes a length from byte **1** of a five-byte header.
-   - ASURA's own tests to port with it: a blob that is not a container refused by its first five bytes
-     (946), a record past the blob refused (971), a node id naming its array's range (994), a
+   - ASURA's tests in `map_data.rs`: 946, 971 and 994 are ported (`game/src/Terrain/MapData.rs`
+     tests at 1134, 1157, 1182), and 1201 imports map 148 from the real archive. **Not ported:** a
      trapezoid naming itself as its neighbour answering `None` (1025), the spawn points of the
-     reference's configured maps landing inside the graphs in the archive (1045), and a plane walking
-     to the position's trapezoid and stopping at a dead end (1146).
+     reference's configured maps landing inside the graphs in the archive (1045; only map 148's is
+     checked here), and a plane walking to the position's trapezoid and stopping at a dead end (1146).
    `import_graph` (pathfind.rs 1703-1744) and `PathGraphs::load` / `PathGraphs::import`
    (1507-1592) remain archive-import tools; `worldserver` instead reads the extracted dump through
    `PathGraphs::from_dump`.
@@ -497,12 +510,18 @@ keeps its traversal order, its tie-breaking and its quirks; the dump keeps its b
    intentionally partial: each bound map can path, while a hosted or custom map without a graph reports
    `NoGraph`. `worldserver` never opens `Gw.dat`.
 
+No subject is queued after these three. The owner names the next one once what already exists is
+fixed (owner, 2026-11-23). Candidates this ledger already records, not a queue: `0x808B`'s unread `createFlags` (3.2), `0x018B`'s error code (4.2), the seven
+`0x8084` armour colours neither tree reads (5, the creation conversation), the missing reference
+client (2), the title block's earning and persistence (5), the custom titles feature, which the owner
+names as unfinished (5), and ASURA's three unported `map_data.rs` tests (7b, step 4).
+
 ## 9. The world crate, file by file: what "ported" means here
 
-`ASURA/crates/asura-world/src` is 36 files, 19,000-odd lines. Every one of them has a verdict, because
+`ASURA/crates/asura-world/src` is 35 files, 19,000-odd lines. Every one of them has a verdict, because
 a claim that the port is done is only as good as the ledger under it. "Ported as data" means the file's
-content is rows or a settings file here (rule 7's placement test: the world's data is rows, a setting
-is a file); "this tree's arrangement" means the behaviour is here and the file's own shape is not,
+content is a file of the world pack or a settings file here (rule 7: what a world is lives in its
+pack's files, a setting in its program's file); "this tree's arrangement" means the behaviour is here and the file's own shape is not,
 because the reference's structure is this tree's authority for how a thing is arranged.
 
 | ASURA file | lines | this tree | verdict |
@@ -510,7 +529,7 @@ because the reference's structure is this tree's authority for how a thing is ar
 | `default_equipment.rs` | 2,960 | `config/World/Vanilla/creation/equipment.json` | ported as data: 32 sets, 179 `ItemSpec`s, values checked against the file (map 0 / profession 1's first two items match field for field) |
 | `pathfind.rs` | 1,794 | `game/Terrain/Pathfind.rs` | ported, and wired: a walk is answered from the map's own graph |
 | `agent.rs` | 1,516 | `game/Agents/mod.rs`, the four handlers in `game/Handlers/MovementHandler.rs` | ported: `AgentState`, `Motion`, `Standing`, `densify`, the cadence, the tolerance and every handler |
-| `map_data.rs` | 1,196 | `game/Terrain/MapData.rs` | ported whole, importer included |
+| `map_data.rs` | 1,196 | `game/Terrain/MapData.rs` | ported whole, importer included; three of ASURA's six tests (1025, 1045, 1146) are not (7b) |
 | `lib.rs` | 1,164 | `game/World/`, `game/Agents/`, the tick | this tree's arrangement: `GameError` is an error string here, `mark_redirect`/`stamp_ms` are the redirect's own log line |
 | `pvp_items.rs` | 1,567 | `game/DataStores/PvpItems.rs` | ported as data: the same 387 `(id, params)` rows, streamed in the load |
 | `main.rs` | 727 | `worldserver/src/main.rs` | this tree's arrangement: the same stages in the reference's order, with the reference's stage numbers in the comments |
@@ -520,22 +539,22 @@ because the reference's structure is this tree's authority for how a thing is ar
 | `item.rs` | 561 | `answer_item_move`, `answer_equip_item`, `CLIENT_DROP_ITEM`, `CLIENT_UNEQUIP_ITEM` - `game/Handlers/ItemHandler.rs` | ported |
 | `instance.rs` | 528 | `game/Districts/` (`Districts`, `Peers`, `Instances`) | this tree's arrangement: a copy of a map is a district, and the population is `Peers` |
 | `creation.rs` | 519 | `confirm_creation`, `answer_creation_*` in `game/Handlers/CharacterHandler.rs` | ported |
-| `portals.rs` | 503 | `game/Maps/Portals.rs` | ported whole; the data is `map_arch` and `map_arrival` |
+| `portals.rs` | 503 | `game/Maps/Portals.rs` | ported whole; the data is each map's `portals.json` in the world pack (`game/src/Maps/Pack.rs`) |
 | `graph_dump.rs` | 473 | `game/Terrain/GraphDump.rs` | ported whole |
 | `gwdat.rs` | 431 | `game/Pack/Gwdat.rs` | ported whole |
 | `fa_compress.rs` | 402 | `game/Pack/FaCompress.rs` | ported whole |
 | `chat.rs` | 354 | `game/Chat/`, `config/Server/commands.json`, and `answer_chat_message` + `answer_line` in `game/Handlers/ChatHandler.rs` | ported: the channel rule, `alias_key`; the command table is now **data** (`0011`); `/maps` uses a shared map-list function, with chat output unchanged. The three text frames are **not** ASURA's - they are the measured ones (`0012-chat-text-is-sent.md`) |
 | `pathfind/directional.rs` | 320 | `game/Terrain/Pathfind/Directional.rs` | ported whole, its PROVISIONAL caveat kept |
 | `replay.rs` | 302 | nothing | ASURA's own capture-replay harness; this tree's equivalent is `recordings/` and the `--ignored` end-to-end tests |
-| `map_spawns.rs` | 264 | rows: `map_spawn` | ported as data (466 points, with the facing each states) |
-| `instance_table.rs` | 223 | `game/Maps/InstanceTable.rs` | ported; the content is every `map` row with an `instance_value` |
+| `map_spawns.rs` | 264 | each map's `spawns.json` in the world pack (`config/World/Vanilla/maps/`, `docs/decisions/0014-the-world-content-is-a-pack.md`) | ported as data (467 points, with the facing each states) |
+| `instance_table.rs` | 223 | `game/Maps/InstanceTable.rs` | ported; the content is every map record (`basic.json`) with an `instance_value` |
 | `cartography.rs` | 219 | `game/Maps/Cartography.rs` | ported: the grid's announcement and its slices |
 | `dispatch.rs` | 218 | the dispatch in `WorldSession` | ported: 22 arms, 37 messages |
 | `spawns.rs` | 197 | `PathGraphs` setting, `World.SpawnScatter` | ported as configuration |
 | `capture.rs` | 195 | nothing | ASURA's own capture reader (see `replay.rs`) |
 | `character_defaults.rs` | 186 | `World.Appearance` | ported as configuration |
 | `travel_targets.rs` | 166 | `game/Maps/TravelTargets.rs` | ported: the twenty aliases |
-| `catalogue.rs` | 153 | the `map` rows, `MapEntry::is_hostable` | ported as data and one predicate |
+| `catalogue.rs` | 153 | the world pack's map records (`game/src/Maps/Pack.rs`), `MapEntry::is_hostable` | ported as data and one predicate |
 | `agent_defaults.rs` | 133 | `World.Agent*` settings | ported as configuration |
 | `map.rs` | 113 | the four unasked messages of a load | ported |
 | `world.rs` | 93 | `game/World/` | ported |
@@ -631,9 +650,11 @@ The tick's default is also ASURA's own number now: **100 ms** (`ASURA/config/Ser
 **What is not ported, and why - all three are stops, not gaps:**
 
 - **NPCs and monsters.** ASURA creates exactly one agent per connection - the player's own
-  (`agent.rs:1219`, `handle_request_spawn`; `world_create_agent` has one caller). The agent-creation
-  stream for other bodies is not in the reference's capture for this build, so neither implementation
-  sends one (`docs/port/07-manual-test.md`, "What is not expected to work yet").
+  (`agent.rs:1219`, `handle_request_spawn`; `world_create_agent` has one caller). GWPS's trace holds no
+  agent but the player's either, so neither implementation sends one (`docs/port/07-manual-test.md`,
+  "What is not expected to work yet"). The retail client's captures under `recordings/client/raw/` do
+  record other agents being created (some 46 `0x0020` per login, struct layer): evidence with no ASURA
+  counterpart, which is the owner's to schedule.
 - **ASURA's seat reservation** (`travel.rs:419-431`, `placement::Placement::reserve`): its own
   deployment accounting - a world registry, leases and a heartbeat - which is the multi-process
   arrangement this tree's structure does not have. Its capacity counterpart here is the district

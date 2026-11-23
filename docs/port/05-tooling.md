@@ -20,6 +20,13 @@ Two consequences:
 - A tool that must depend on something external says so at the top of its own file, and says what
   happens without it.
 
+No Rust code in this tree names ASURA's tree or `research/` at run time; the mentions are citations in
+comments. What remains: `tools/client/sniff-capture.py` still honours the `ASURA_PY32` variable beside
+`KRYTA_PY32`, `tools/import-creation-inventory.py` defaults to `C:\Users\Apo\Documents\GitHub\ASURA`
+(the provenance run), and the `doc` of most rows in `config/World/Vanilla/vanilla-title-wire.json` (37 of
+45 tracks, 82 of 98 ranks) cites a capture under `research/`, which is gitignored and so is not in a
+clone.
+
 ## What is here now
 
 | tool | is | needs | ported from |
@@ -28,11 +35,19 @@ Two consequences:
 | `tools/client/keys.txt` | the key material the patch writes: `generator`, `prime`, `server_private`, `server_public` | - | ASURA `client-patcher/keys.txt`; the prime and `server_private` are the same values as `shared/src/Cryptography/Handshake.rs` |
 | `tools/client/hosts-redirect.py` | sends the client's seven baked-in names to this machine, or puts them back; recognises a block an earlier tool left | an elevated shell to write the hosts file | ASURA `client-patcher/hosts-redirect.py`, itself from GWPS `tools/hosts-gwps.ps1` |
 | `tools/adapt-protocol-table.py` | moved the ported message table into `game/src/Server/Protocol/Tables.rs`, once | nothing; it is the record of the move | ASURA `crates/asura-protocol/src/packets.rs` |
-| `tools/import-creation-inventory.py` | imported the bags, items and profession sets into `data/*.json`, once | a checkout of ASURA to read | ASURA `state/inventory/seed.rs` and `default_equipment.rs` |
+| `tools/import-creation-inventory.py` | imported the bags, items and profession sets into `config/World/Vanilla/creation/inventory.json` and `equipment.json`, once | a checkout of ASURA to read | ASURA `state/inventory/seed.rs` and `default_equipment.rs` |
+| `tools/split-protocol-table.py` | split the merged protocol table into `game/src/Server/Protocol/Tables.rs` (682 world rows) and `authserver/src/Protocol/Tables.rs` (100 login rows), once | nothing; it is the record of the move | this tree's own move |
+| `tools/extract-protocol-types.py` | moved the table's types into `shared/src/Packets/Types.rs`, once, after the split | nothing; it is the record of the move | this tree's own move |
+| `tools/repoint-table-names.py` | points each split table's name module at `shared::packets::types`; idempotent | nothing | this tree's own move |
+| `tools/recover-game-rules.py` | recovered the owner's ledger into `docs/game-rules.md`, as ASCII, from ASURA's history | a checkout of ASURA with its history | ASURA `git show f7c2f31:docs/36-game-rules-ledger.md` |
+| `tools/client/sniff-capture.py` | captures the live client's packets into a JSONL file (see "Capturing a client" below) | Py4GW_Stealth and a 32-bit Python; an elevated shell | ASURA `tools/sniff-capture.py` |
+| `tools/client/capture-fresh-character.ps1` | elevates, finds the one retail `Gw.exe`, and runs `sniff-capture.py --raw` into `recordings/client/raw/fresh-character-<stamp>.jsonl` while a character is created | 32-bit Python 3.13 under `%LOCALAPPDATA%`, Py4GW_Stealth (`PY4GW_STEALTH` or `%USERPROFILE%\Py4GW_Stealth`) | this tree's own |
+| `tools/client/title_patch.py` | the build 39167 hooks for the server-delivered title text that `patch-gw.py` applies | `pefile`, Visual Studio x86 C++ tools, nlohmann/json (`KRYTA_TITLE_JSON_INCLUDE`) | [title research](19-title-research.md) |
+| `tools/client/title-runtime.cpp` | the source of `KrytaTitles.dll`: the patched client fetches custom title text from Kryta (`/kryta/custom-titles.json`) | built by `patch-gw.py` | [title research](19-title-research.md) |
 | `tools/capture/read.py` | reads a capture back in the layer it declares - `--describe`, `--header`, `--limit`, `--assume-layer`, `--self-test` - and refuses a file that states no layer | nothing; it is Python 3 and standard library only | ASURA `tools/capture-read.py` |
 | `tools/capture/diff.py` | compares two captures message by message: agreement count, then the first divergences with both payloads; refuses a struct-layer file against a wire-layer one, because the two widen fields differently | nothing; standard library only | new; the comparison workflow `0012-chat-text-is-sent.md` used by hand |
 | `tools/capture/capture_file.py` | the one implementation of the layer rules both of the above use | nothing | ASURA `tools/capture-read.py`'s layer half |
-| `worldserver --bin kryta-cli` | the standalone operator client: `list` asks the world which operations it registers, `<operation> [--arg name=value]...` calls one, `help` prints the usage, and `init-credential <file>` creates and restricts the service credential. The port and credential come from `Control.Port`/`Control.CredentialFile` in `worldserver/worldserver.json`, so no plumbing is typed per call | a running world with `Control.Enable` and a credential file | new; the client ASURA's supervisor verbs are the precedent for |
+| `worldserver --bin kryta-cli` | the standalone operator client: `list` asks the world which operations it registers, `<operation> [--arg name=value]...` calls one, `help` prints the usage, and `init-credential <file>` creates and restricts the service credential. The port and credential come from `Control.Port`/`Control.CredentialFile` in `worldserver/worldserver.json` (another file with `-c`), or from `--port` and `--credential-file`, so no plumbing is typed per call | a running world with `Control.Enable` and a credential file | new; the client ASURA's supervisor verbs are the precedent for |
 
 ## Capturing the server
 
@@ -45,19 +60,22 @@ flushes when a connection ends and when the program stops, because the last fram
 a capture is for.
 
 ```powershell
-# in worldserver.json: "CaptureFile": { "value": "recordings/asura/world/session.jsonl" }
-python tools/capture/read.py recordings/asura/world/session.jsonl --describe
-python tools/capture/read.py recordings/asura/world/session.jsonl --header 0x005D
+# in worldserver.json: "CaptureFile": { "value": "logs/session.jsonl" }
+python tools/capture/read.py logs/session.jsonl --describe
+python tools/capture/read.py logs/session.jsonl --header 0x005D
 ```
+
+The path is the operator's: `logs/` is a scratch folder Git ignores. `recordings/asura/` holds ASURA's
+own captures, and no folder under `recordings/` is assigned to this server's yet
+(`recordings/README.md`).
 
 Proved against a live session on this machine: the end-to-end test's world, run with
 `AC_CAPTURE_FILE` set, wrote 564 records of a real creation-and-load conversation; the reader described
 the file (`tool: worldserver`, `layer: wire`, `header_len: 2`) and printed the load head `0x017C`, the
 inventory stream `0x0161`, the chat body `0x005D` and its tag `0x0061`. **That last pair is also how a
-fault was read rather than guessed**: the body's declared unit count is `0800` (8) where the assertion in
-`worldserver/tests/end_to_end.rs:951` expects 5, and `docs/decisions/0012-chat-text-is-sent.md` records
-the measured bytes as `5d00 0800 0108 0107 ...` - so the frame matches the measurement and the test's
-expectation is the thing to settle.
+fault was read rather than guessed**: the body's declared unit count is `0800` (8),
+`docs/decisions/0012-chat-text-is-sent.md` records the measured bytes as `5d00 0800 0108 0107 ...`, and
+the assertion in `worldserver/tests/end_to_end.rs:960-963` expects the same 8.
 
 `tools/capture/diff.py` was proved on the same pair: a capture against itself agrees on every one of its
 564 messages and answers zero; two runs of the same test agree on 551 of 564 and the first three
@@ -120,7 +138,7 @@ patchable client for debugging and automated research; its proposed role is reco
 ## The administration tool
 
 ```powershell
-copy tools\manage\manage.json.dist tools\manage\manage.json   # then state the two database strings
+copy tools\manage\manage.json.dist tools\manage\manage.json   # then state the three database strings
 cargo run -p kryta-management-service -- -c tools\manage\manage.json  # http://127.0.0.1:6602/
 ```
 
@@ -131,7 +149,7 @@ existing data through the nouns' own repositories, so what a page writes is what
 scope and ordered delivery record are canonical in `14-operator-surfaces.md`.
 
 The panel is layered, and each layer knows only the one below it. `web/` holds the shell every page is
-drawn into, the panel's stylesheet and the components a page is built from; `view/` holds the game's own
+drawn into, the panel's stylesheet and the components a page is built from; `view.rs` holds the game's own
 names for the numbers a row stores and the row shapes a page lists; `pages/` holds one module per
 destination; and `lib.rs` holds one routing table plus the two owners the panel asks - the supervisor for
 process lifecycle, the running world for operations. Its destinations follow the game's ownership, not
@@ -149,7 +167,7 @@ answers a `303` whose `Location` header the browser follows, so a form's outcome
 The stylesheet is one asset (`GET /static/style.css`) served from the program's own memory; there is no
 JavaScript except the three probes, and the pages work without it.
 
-`tools/supervisor/` is the fourth binary, and it is the one command that runs the stack: it reads
+`tools/supervisor/` is `kryta-supervisor`, and it is the one command that runs the stack: it reads
 `tools/supervisor/stack.json` - a service per row, with the program, its arguments and the port it
 binds, plus `control_port` and `console_service` - starts every service, waits for its READY handshake,
 and stops them all together on Ctrl+C. A service that dies on its own stops the rest and the command
@@ -200,10 +218,10 @@ cargo run -p kryta-supervisor -- restart world   # start one service again
 cargo run -p kryta-supervisor -- quit            # stop every service and exit
 ```
 
-The binaries it starts are `target/debug/<program>.exe`; one that is missing is built by the
-supervisor itself (`cargo build -p <program>`, with cargo's own output on the console), so the single
-command is enough from a fresh checkout, and a program that fails to build says so with cargo's reason
-rather than starting nothing.
+The binaries it starts are `target/debug/<program>.exe`; every one is built by the supervisor itself
+before it starts (`cargo build -p <program>`, with cargo's own output on the console), so the stack runs
+the code in the tree and the single command is enough from a fresh checkout, and a program that fails
+to build says so with cargo's reason rather than starting nothing.
 
 | page | is | state |
 |---|---|---|
@@ -212,18 +230,18 @@ rather than starting nothing.
 | `/accounts/{id}` | one account: identity, EULA state, activation and removal, the players it owns, with its section tabs (Account overview, Players, and the two account-wide areas) | done - Shared storage and Account unlocks are named as not recorded by this server yet; the Players tab opens `/players?account={id}` |
 | `/players` | every player (character) the server hosts, with the account that owns it, and the creation form whose account list says who will own the player | done - a player is created from the creation record lists and the pack's campaign spawn data, then its own page opens |
 | `/players?account={id}` | the same list, filtered to one account's players | done - the account page's Players tab and the creation form's account choice both use it |
-| `/players/{uuid}` | one player: campaign, profession pair, level, stored experience, gold, PvP, last outpost, position, appearance and the professions it has unlocked; its inventory and equipment (the item rows); the metric catalog, all values zero, and all 48 client title rows displayed at 1 point, including the `jumps`-derived `Jump Master`; its unlocked maps (R12); the account that owns it (linked); rename, level (1 to 20, R48) and removal | done - no metric is recorded yet, but every title row is visible for the later source to fill; removal deletes the row with its own items and unlocks |
+| `/players/{uuid}` | one player: campaign, profession pair, level, stored experience, gold, PvP, last outpost, position, appearance and the professions it has unlocked; its inventory and equipment (the item rows); the metric catalog, all values zero, and the 47 title rows the pack's `titles.json` names - its 45 vanilla tracks and the two custom ones, `Hog Jumper` (from `jumps`) and `Embiggener`; its unlocked maps (R12); the account that owns it (linked); rename, level (1 to 20, R48) and removal | done - no metric is recorded yet, but every title row is visible for the later source to fill; removal deletes the row with its own items and unlocks |
 | `/services` | the running supervisor's state and its named stop/restart controls | done against the existing loopback channel: `SupervisorStackFile` supplies its `control_port`; the manager cannot start a missing supervisor because it has no start protocol and must not become one |
 | `/console` | browser adapter for the live operation registry | done against the existing world endpoint: lists `world.operations` (asked after the page), submits named `name=value` arguments to `/v1/operations`, and displays the world's result or refusal; it does not dispatch commands itself |
 | `/status` | the running world's own answer to `world.status`, asked of its local control endpoint | done - one operation carried by the world's own queue (`docs/port/14-operator-surfaces.md`); a world that is unavailable or refuses is drawn differently from an empty answer, and `ControlPort`/`ControlCredentialFile` in `manage.json` configure it |
 | `/worlds` | the realm list and `data/realms.json` merged over it | done - read only, from the login's own reader |
-| `/content` | the world pack's maps with their entry points and the arrival points they state (R13/R21), the item definitions and profession sets a creation screen draws from, and the copies the world has open | done - read only for now: content is the pack (`0014-the-world-content-is-a-pack.md`), read through the same reader the world uses; editing it is roadmap step 6 and is not pretended |
+| `/content` | the world pack's maps with their entry points and the arrival points they state (R13/R21), the item definitions and profession sets a creation screen draws from, and the copies the world has open | done - read only for now: content is the pack (`docs/decisions/0014-the-world-content-is-a-pack.md`), read through the same reader the world uses; editing it is roadmap step 6 and is not pretended |
 | `/navigation` | the extracted path-graph cache: inspection, and one selected map dumped in from `MapArchiveFile` | done - the cache is an operator asset, not state the running world owns |
 | `/schema` | each database's own record of what its updater has applied, against the files on disk | done - read only; `changed` is the one to act on before a server refuses to start |
 | `/settings` | each program's own JSON, key by key, as the file states it | done - read only, passwords masked by the reader; `WorldConfigFile` and `AuthConfigFile` in `manage.json` say where the files are |
 | `/accounts?account=`, `/characters?account=`, `/players/{id}`, `/players/{id}/characters` | the panel's old addresses | redirect (`303` with its `Location`) into the hierarchy - the account by row id, the player by client id - so bookmarks keep working |
 
-Proved on this machine against the checked-in databases. Every page answered `200` in 10-110 ms, and the
+Proved on this machine against its own databases. Every page answered `200` in 10-110 ms, and the
 stylesheet (`GET /static/style.css`, 10.8 KB) is served once instead of being repeated inside every page.
 The hierarchy was exercised end to end: `POST /accounts/create` wrote an account and answered `303` to
 `/accounts/9`; `POST /players/create` created its player from the creation record lists and the pack's
@@ -240,7 +258,7 @@ page reads the pack itself. The probes answered without delaying their pages: `/
 `/console/operations` and `/status/data` reported that their owners were not running.
 
 `/status` was proved against a live world on this machine, three ways. With the world running and
-`Control.Enable` on, `kryta-cli 7878 worldserver/control.credential world.status` answered
+`Control.Enable` on, `kryta-cli --port 7878 --credential-file worldserver/control.credential world.status` answered
 `World 2: 265 map(s) loaded.` and the same operation through `kryta-cli` with a wrong 32-character
 credential answered `authentication failed` with exit 1; `GET /status` on the manager rendered
 `World 2: 265 map(s) loaded.` from the world's own queue; and with the world stopped the same page
@@ -312,8 +330,8 @@ copy carries the same records ASURA's did.
 **Py4GW_Stealth is a declared dependency of this tool and of nothing else here.** It is a separate
 project that injects into the client (`--py4gw-root`, or `PY4GW_STEALTH`); no program in this
 repository reads from it. A record is the client's message *struct*, not the packed frame -
-`docs/port/02-wire.md`, "Three kinds of capture", and the `layer` field in every
-capture's header say which one a file holds.
+`docs/port/02-wire.md`, "Three kinds of capture", says which one a file holds, and so does the `layer`
+field in the header of a capture this tool writes now; the older committed captures have no such field.
 
 ## Evidence
 
@@ -326,11 +344,13 @@ from, and that a document there is evidence rather than a rule.
 | borrowed | used for | status |
 |---|---|---|
 | `ASURA/crates/asura-protocol`, `crates/asura-world` | read for the protocol: the message table, the builders, the creation handlers | not a dependency: read, ported into `game/src/Server/Protocol/`, `Packets/` and `Creation/`, cited where a fact came from, and never called at run time |
-| `ASURA/tools/*` beyond the four above | their own milestones: test batteries, seed scripts, table generators | not used here; a tool this tree needs is ported before it is used |
+| `ASURA/tools/*` beyond those listed above | their own milestones: test batteries, seed scripts, table generators | not used here; a tool this tree needs is ported before it is used |
 
 ## Where a tool goes
 
-`tools/` is one directory per subject, not one file per script: `tools/client/` is everything about the
-client the server talks to, and `tools/import-*.py` are the one-way imports of another project's data.
+`tools/` is one directory per subject: `tools/client/` is everything about the client the server talks
+to, `tools/capture/` reads captures, and `tools/manage/`, `tools/management-service/` and
+`tools/supervisor/` are the three programs. The scripts at its top are one-time records of an import or
+a move (`import-*`, `adapt-*`, `split-*`, `extract-*`, `repoint-*`, `recover-*`), not tools to run again.
 A new tool states, at the top of its own file, what it reads, what it writes, and what it needs that
 this tree does not have.

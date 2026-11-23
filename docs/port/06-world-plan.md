@@ -7,9 +7,9 @@ the schema and the settings, and the order the chain allows.
 
 ## The source of functionality: the owner's game-rules ledger
 
-How the game works is described in **`docs/game-rules.md`** - the owner's own ledger: 58 asserted rules
-(R1-R58) and 220 evidenced facts, grouped by subject - travel, districts and instances; party, heroes and
-henchmen; items and commerce; quests and missions; characters, skills and movement; chat and social wire;
+How the game works is described in **`docs/game-rules.md`** - the owner's own ledger: 67 numbered rules
+(R1-R67, with R27b correcting R27) and 234 evidenced facts, grouped by subject - travel, districts and
+instances; party, heroes and henchmen; items and commerce; quests and missions; characters, skills and movement; chat and social wire;
 death, resurrection and morale; guilds and alliance; aggro and monster AI; titles and character slots;
 combat numbers and skill mechanics; merchants, traders, trade and crafting. It also holds what is
 contradicted, what is suspect, and what the sources do not answer.
@@ -17,12 +17,13 @@ contradicted, what is suspect, and what the sources do not answer.
 That file is authoritative for *what the game does*. It is not a port order and not an architecture: this
 file maps each subject to the noun that owns it and the order the chain forces.
 
-ASURA remains the mandatory counterpart for client-facing code under Rule 0. The other local projects
-are nevertheless valid packet-contract evidence: `docs/port/17-research-code-feature-inventory.md`
-records the code-derived feature paths found in their code. Their architecture, language and adapter do not
-cross into Kryta; their proven packets, ordering and client completion conditions can identify what a
-feature contract still needs. A source other than ASURA never authorizes an invented response: compare
-the counterpart or a capture and stop for the owner where Rule 0 requires it.
+ASURA was the source of truth until parity with it was reached. Since parity every local project is a
+source for the features it implements (`AGENTS.md`, Rule 0):
+`docs/port/17-research-code-feature-inventory.md` records the code-derived feature paths found in their
+code. Their architecture, language and adapter do not cross into Kryta; their proven packets, ordering
+and client completion conditions are what is ported, from the source whose protocol for the feature is
+the most complete. No source authorizes an invented response: where no project and no recording has
+something, stop for the owner.
 
 ## Feature delivery model
 
@@ -33,12 +34,13 @@ new feature is delivered in this order:
    current boundary in `docs/port/17-research-code-feature-inventory.md` and
    `docs/port/18-kryta-code-feature-inventory.md`. Record the client trigger, every packet and its
    order, required state change and accepted client result. Before client-facing implementation, open
-   ASURA's counterpart and use the parity audit. Captures test that client-visible behavior, but do not
-   replace a missing ASURA counterpart; stop for the owner where Rule 0 requires it.
+   the sources that implement it, port from the most complete one, and use the parity audit. Where no
+   project and no recording has it, stop for the owner (Rule 0).
 2. **Give the feature a Kryta-owned state and content model.** Accounts, characters, progress,
    inventory and other authoritative mutable world state are database rows owned by their nouns.
-   Shared editable definitions may be authored as validated JSON assets and imported into those rows,
-   or may be JSON settings when they are operator choices rather than world state. The classification
+   Shared editable definitions are content: JSON files read and validated at start-up and held in
+   memory, never imported into rows (`AGENTS.md` rule 7) - or JSON settings when they are operator
+   choices rather than world content. The classification
    test is `docs/port/04-configuration.md`; no feature inherits a research project's storage layout.
 3. **Add behaviour only above working mechanics.** Rust owns validation, authoritative state and
    packet construction. Lua, once its runtime and bindings exist, may author quest logic, events, NPC
@@ -75,7 +77,7 @@ operator command until that feature's contract and owning noun are selected.
 | chat and the social wire | the "Chat and social wire" section | `game/Chat/` | `Chat/` |
 | guilds, friends, alliance | the "Guilds, friends, and alliance" section | `game/Guilds/` | `Guilds/` |
 | titles and character slots | E22, E23 | `game/Characters/` | `Achievements/` (the reference's nearest) |
-| heroes as scripted behaviour | R23-R27, and ASURA `research/heroai-server-port.md` | `game/Heroes/` + `scripts/` | none - `Heroes/` is this tree's own noun |
+| heroes as scripted behaviour | R23-R27, and ASURA `docs/research/heroai-server-port.md` | `game/Heroes/` + `scripts/` | none - `Heroes/` is this tree's own noun |
 
 Content profiles and the Lua/Rust behaviour boundary are in `docs/port/11-content-and-behaviour.md`.
 
@@ -99,17 +101,17 @@ Two things the ledger settles before any stage starts:
 
 | step | what it is | ledger rows | wire | data | proves |
 |---|---|---|---|---|---|
-| 0 | **the world's settings** (done) - `game/World/WorldConfig.rs`, the World section of `worldserver.json`, logged at start-up | R5, R13, R15, R33, R34, R37, R53, R56 | - | a settings file per program, rows for the rest | the program logs each number it read, and a changed value changes behaviour |
+| 0 | **the world's settings** (done) - `game/World/WorldConfig.rs`, the World section of `worldserver.json`, logged at start-up | R5, R13, R15, R33, R34, R37, R53, R56 | - | a settings file per program; content is the pack, and rows hold what the world writes | the program logs each number it read, and a changed value changes behaviour |
 | 1 | **(done)** `game/Pack/` - the archive: the index (`Gwdat.rs`: the header, the file table and the table of contents, so a file id becomes an entry - this machine's `Gw.dat` holds 156,315 of them) and the decoder (`FaCompress.rs`, `FaCompress.c`'s `FaDecompress` with its six tables) | none: a client fact | - | - | a file id is read back out of the archive's own table and an id nobody put there answers `None`, and three real map blobs decode to exactly the size they announce and start with the RIFF signature `ffna` (`the_index_finds_the_blobs_the_map_catalogue_names`, `a_map_blob_decompresses_to_the_containers_own_signature`) |
-| 2 | **(in progress)** `game/Maps/` + the world pack - a map as a **definition**: id, type, name, spawn points, doorway arches, arrivals | R1, R13, R14, R21, R22, R29 | the load, measured message by message: `0x017C`, `0x0186`, `0x017D`, `0x019A`, the ping pair, `0x0144`+inventory on `0x8091`, the record block and the manifest, `0x0196`+`0x001E` on `0x8088`, the PvP halves and `0x0059`+`0x018E` on `0x8090` (`docs/port/02-wire.md`, "The load of a real map") | the world pack's per-map files, `config/World/Vanilla/maps/<campaign>/<area>/<kind>/<map id>/{basic,spawns,portals}.json`, read at start-up (`game/src/Maps/Pack.rs`, `docs/decisions/0014-the-world-content-is-a-pack.md`); the item stream from the character row's campaign and profession | the gameplay connection of a client naming map 148 loads it the way the reference's own trace did, message for message up to the end of the load (`an_outpost_connection_is_loaded_with_its_entry_point`), and the program itself answers it (`worldserver/tests/end_to_end.rs`, which spawns the binary and drives the same conversation, including a doorway crossing from 148 into 146); the map's own agent stream and the party stream still arrive with steps 6 and 7 |
-| 3 | **(in progress)** `game/Districts/` - an **instance**: one running copy, its lifecycle, its district number | R2, R3, R4, R5, R16, R32, R35-R40, R57, R58 | `CtoS 177 TravelMission` (9 bytes, district 0 = unset, E220, read and logged); the district counts (`0x800B` -> `0x001A`, one district in language 0, R16); the redirect a travel sends (`0x01A6` then `0x0099`'s twelve-byte form) is ported from `ASURA/crates/asura-world/src/travel.rs:480-518` | `instance` row in `kryta_world` (`0003-instances.sql`): map, district number, language, kind, opened at, empty since | the district a connection enters is the ledger's - named (R57), first with room (R22), next when full (R5, R16), refused when full (R58) - and `0x019A` reports it; a copy is a row, held 15 minutes after it empties (R37) and disposed by the world's tick (R40); the login answers the client's district list with the one district a world begins with |
+| 2 | **(in progress)** `game/Maps/` + the world pack - a map as a **definition**: id, type, name, spawn points, doorway arches, arrivals | R1, R13, R14, R21, R22, R29 | the load, measured message by message: `0x017C`, `0x0186`, `0x017D`, `0x019A`, the ping pair, `0x0144`+inventory on `0x8091`, the record block and the manifest, `0x0196` on `0x8088` (the ticker sends `0x001E`), the PvP halves and `0x0059`+`0x018E` on `0x8090` (`docs/port/02-wire.md`, "The load of a real map") | the world pack's per-map files, `config/World/Vanilla/maps/<campaign>/<area>/<kind>/<map id>/{basic,spawns,portals}.json`, read at start-up (`game/src/Maps/Pack.rs`, `docs/decisions/0014-the-world-content-is-a-pack.md`); the item stream from the character row's campaign and profession | the gameplay connection of a client naming map 148 loads it the way GWPS's own trace did, message for message up to the end of the load (`an_outpost_connection_is_loaded_with_its_entry_point`), and the program itself answers it (`worldserver/tests/end_to_end.rs`, which spawns the binary and drives the same conversation, including a doorway crossing from 148 into 146); the load sends the player's own agent and its four party frames, the map's other agents arrive with step 6, and the party as a travel unit with step 7 |
+| 3 | **(in progress)** `game/Districts/` - an **instance**: one running copy, its lifecycle, its district number | R2, R3, R4, R5, R16, R32, R35-R40, R57, R58 | `CtoS 177 TravelMission` (9 bytes, district 0 = unset, E220, read and logged); the district counts on the login connection (its `0x800B` -> its `0x001A`, one district in language 0, R16; ASURA answers neither); the redirect a travel sends (`0x01A6` then `0x0099`'s twelve-byte form) is ported from `ASURA/crates/asura-world/src/travel.rs:480-518` | `instance` row in `kryta_world` (`0003-instances.sql`): map, district number, language, kind, opened at, empty since | the district a connection enters is the ledger's - named (R57), first with room (R22), next when full (R5, R16), refused when full (R58) - and `0x019A` reports it; a copy is a row, held 15 minutes after it empties (R37) and disposed by the world's tick (R40); the login answers the client's district list with the one district a world begins with |
 | 4 | **the travel pipeline** (in progress) - the login records a travel when it answers `0x8029`, the world claims it once when the version message presents the token pair, and R13 places the character; a doorway crossing hands over the receiving map's arrival (world pack `portals.json`, keyed by the map it came from), and a map that states no arrival and no spawn list falls back to nothing - it refuses the load only when it has neither (`Standing::arrival`); the current load unlocks the map at arrival; the scope of travel gating remains unresolved in `docs/game-rules.md` | R9, R12, R13, R14, R21, R22, R47, R57 | `AUTH_CMSG_REQUEST_GAME_INSTANCE` (26 bytes, `map_id`/district/language its own), `AUTH_SMSG_GAME_SERVER_INFO` (42), the gameplay version message's token pair | `travel` row in `data/sql/base/db_auth/`, claimed once, carrying the crossing's landing as its four columns; the receiving map's own entry point or arrival; `character_unlock` rows, the starting one written at the confirm (R12); arrival writes the map unlock; R58's full-district refusal wire is not captured | the login's record decides the map and the district even when the version message names another map, and the connection is answered at a scattered point of it (`a_travel_record_decides_the_map_and_the_district`); the login's own answer records the row (`a_map_request_after_a_login_records_the_travel`), which a second claim cannot take; the character starts with one map unlocked (R12), and the load writes it when the rows are absent; a step through Ascalon City's arch crosses into Lakeside County and stands on that map's stated arrival (`a_step_through_ascalon_citys_arch_crosses_to_lakeside_county`) |
 | 5 | **(in progress)** `game/Terrain/` - the map parser, graph dump, path tables and pathfinder are present; `docs/port/01-structure.md` records their source and the archive checks | R34, R43 | movement messages | map blob | remaining parity and client acceptance follow `docs/port/09-parity-audit.md` |
-| 6 | `game/Agents/` + `game/Movement/` - what is in a map, and the player's own agent | R29-R31, R34, R43 | agent families | spawn rows, agent state | a spawn from the map's own table appears and moves; the frames it owes are listed, measured and in order, in `docs/port/02-wire.md` ("The measured order of the players answer, and what this tree sends"), and the agent's creation frame is built (`AgentPackets::world_create_agent`, 99 bytes, from the reference's own builder) - what remains is the map's content |
+| 6 | `game/Agents/` + `game/Movement/` - what is in a map, and the player's own agent | R29-R31, R34, R43 | agent families | the pack's spawn content, agent state | a spawn from the map's own content appears and moves. The player's own agent is created today (`AgentPackets::world_create_agent`, 99 bytes, ASURA's builder; `docs/port/02-wire.md`, "The players answer, frame for frame"). The stream that creates a map's other agents is sent by neither GWPS nor ASURA (`docs/port/09-parity-audit.md`, "What is not ported"); the retail client's captures under `recordings/client/raw/` record it (some 46 `0x0020` per login, struct layer), so this step has evidence and no ASURA counterpart - a stop for the owner under Rule 0 |
 | 7 | `game/Parties/` + `game/Heroes/` - the travel unit | R6-R11, R15, R17-R28, R45 | party messages | `party`, `party_member` rows; hero/henchman state | a party travels as one unit and a smaller cap truncates it leader-first |
-| 8 | **(in progress)** items: definitions and what a character holds | R45, R49, E9, E16-E20 | the creation stream's shapes, extended by capture | `item_template` rows (done - seeded at start-up, keyed on the whole definition) and `item_instance` rows (done - the confirm writes a character's starting items, each naming its template by id; the load draws them); loot as a setting (next) | a definition is a row, and a character's own items are rows: the rows draw the same item stream the creation set does, byte for byte (`a_creation_confirm_writes_a_character_row`, `a_travel_record_decides_the_map_and_the_district`) |
+| 8 | **(in progress)** items: definitions and what a character holds | R45, R49, E9, E16-E20 | the creation stream's shapes, extended by capture | item definitions (done - the world pack's `config/World/Vanilla/creation/*.json`, held in memory; nothing is seeded, and `item_template` is empty by design, `0013-content-is-the-pack.sql`) and `item_instance` rows (done - the confirm writes a character's starting items, each row carrying the whole item, `0005-item-instance-definition.sql`; the load draws them); loot as a setting (next) | a definition is content, and a character's own items are rows: the rows draw the same item stream the creation set does, byte for byte (`a_creation_confirm_writes_a_character_row`, `a_travel_record_decides_the_map_and_the_district`) |
 | 9 | skills, casting and combat | R43, R48, R50-R51, E10-E15, E19 | skill and combat messages | skill rows, effect state | a skill is cast on an agent and its effect is what the ledger says |
-| 10 | quests, chat, guilds, titles (chat is done: `game/Chat/`'s command table and `/maps`, and the connection's `0x8064` handler) | R52, R55-R56, E15, E21-E23 | their families | their rows | each per its own rows |
+| 10 | quests, chat, guilds, titles (chat is done: `game/Chat/`'s command table and `/maps`, and the connection's `0x8064` handler; titles are partial: `game/Characters/Titles.rs` sends the pack's stock title rows and the patched client fetches custom text, `docs/port/19-title-research.md`) | R52, R55-R56, E15, E21-E23 | their families | their rows | each per its own rows |
 | 11 | heroes and scripted behaviour | R23-R27 | - | content in `scripts/` and `modules/` | scripted behaviour out of tree |
 
 Steps 0-4 are the spine: without them a client can only sit in the creation instance, and each of them is
@@ -149,23 +151,26 @@ Everything above fits inside one noun. These cross a boundary and each has one a
 2. **Characters and their parts.** The character row is written at the creation confirm and read by the
    login's list (`docs/decisions/0007-character-schema.md`). Every later stage that adds a part - a bag, a
    skill, a quest state, a last outpost - adds a table or a column, never a second repository.
-3. **What is a row and what is a file.** Game data is rows; a setting is a file; what the client dictates
-   is a constant (`docs/port/04-configuration.md`, "three kinds of data"). A port asks which of the three
-   the data is - never where another tree happened to keep it.
+3. **What is a row and what is a file.** What a world is - its content - is the world pack's files
+   (`config/World/Vanilla/`, `docs/decisions/0014-the-world-content-is-a-pack.md`); a setting is a
+   program's file; what a server writes is rows; what the client dictates is a constant
+   (`docs/port/04-configuration.md`, "Where each thing lives"). A port places its data by that table -
+   never by where another tree happened to keep it.
 
 ## What is already in place
 
 - The **message families** and the walk that frames anything (`shared/src/Packets/`, `docs/port/02-wire.md`).
 - The **socket layer** and the world listener (`game/Server/`), so a client can arrive.
 - The **creation flow**, which ends in a character row.
-- The **administration tool** (`tools/manage/`), where the world schema will be edited from: its
-  `/content` page is the map, spawn and item editor, and it arrives with stage 2.
+- The **administration tool** (`tools/manage/`): its `/content` page lists the world pack's maps, entry
+  points, arrivals and item definitions, read only; editing the pack is not built.
 - The **protocol table**, which already holds the rows of every family above - a row is not a noun, but it
   is the framing a noun needs.
 
 ## What this file does not decide
 
-- The world schema's table and column names: those arrive with `docs/decisions/0009-world-schema.md` and
-  stage 2, and follow the messages that read them.
+- The names of the tables and columns a later stage writes: those arrive with that stage. What a world
+  contains is not a schema at all - it is the pack's files
+  (`docs/decisions/0014-the-world-content-is-a-pack.md`, which supersedes `0009-world-schema.md`).
 - Which of the documents above is authoritative where two disagree: the client is the judge, and the
   disagreement is reported (`AGENTS.md`, rule 3).

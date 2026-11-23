@@ -26,8 +26,8 @@ sentence in `docs/port/04-configuration.md`.
 2. **One reader, in `common/src/Configuration/Json.rs`.** Not one per consumer: a file is parsed
    into `Document`, flattened to the reference's `dotted.key -> text` bag, and every typed getter,
    severity policy, environment override, `describe()` and masking above it is unchanged. A record
-   list - a file of rows, if one ever earns its place - is read as rows through the same `Document`,
-   never by a hand-written parse in the module that wants it.
+   list - a file of rows, such as the world list, the command rows and the creation files - is read
+   as rows through the same `Document`, never by a hand-written parse in the module that wants it.
 3. **Key names stay the reference's.** `RealmServerPort`, `Logger.network.trace`,
    `LoginDatabaseInfo` mean what they meant in the `.conf`. The change is the file format, not the
    vocabulary, so every document and call site still says the same word.
@@ -53,9 +53,9 @@ one-off experiment possible without editing a file a user shares.
 
 For a datum that also lives in the database, the rule is the second half of the requirement: a
 configuration file can *name* it, so a user can run a world without hand-editing rows. The realm
-list is the first case, and it is not implemented yet - `docs/port/04-configuration.md` carries it as
-the next piece with the precedence it will take (a file row overrides a database row of the same id,
-and the load reports which came from where).
+list is the first case: `data/realms.json` is merged over the `realmlist` table - a file row overrides
+a database row of the same id, a new id is added, and a field the file does not state keeps the
+table's value (`docs/port/04-configuration.md`).
 
 ## What stays in code
 

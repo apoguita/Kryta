@@ -1,8 +1,14 @@
 # Title research: what a title is, what the projects prove, and what remains
 
-Status: analysis only. This document records evidence across the research projects on
-this machine. It does not choose a schema, a packet sequence, a module boundary, or a
-configuration format. Those are later decisions and are not made here.
+Status: research, and the record of the title slice implemented in commit `7679ba1`. That
+slice reads `config/World/Vanilla/titles.json` and `vanilla-title-wire.json`
+(`game/src/Characters/Titles.rs`), sends the title messages during load
+(`game/src/Server/Packets/TitlePackets.rs`), answers a title's display and hide (`0x8058`, `0x8059`)
+with `0x00F4` to the player and its peers, keeps a metric catalog with every value at zero
+(`game/src/Characters/Metrics.rs`), and publishes custom title text at
+`GET /kryta/custom-titles.json` (`game/src/Portal/mod.rs`). `09-parity-audit.md` section 5
+records the packets as ported thin from the retail and Preforged recordings, and the custom text
+route as a feature with no source. Title earning and persistence are not implemented.
 
 The short finding: every project agrees a title is a **client-visible projection
 record**, not a raw metric. No project on disk implements a general metric layer from
@@ -11,6 +17,10 @@ a deprecated value, a measured title packet cluster, and a complete imported tit
 profile for one official character.
 
 ## Sources inspected
+
+A location under `research/` is relative to this repository. `ASURA/`, `_fork_asura_test/`,
+`Rurik/`, `Eden/`, `PreSearing/` and `WowWarband/` are under `C:\Users\Apo\Documents\GitHub\`;
+`Py4GW_Stealth/` and `Py4GW_Reforged/` are under `C:\Users\Apo\`.
 
 | project | location | title surface |
 |---|---|---|
@@ -60,8 +70,8 @@ Modern client builds use four server messages and two client messages:
 | `0x00F4` / 244 | `TITLE_RANK_DISPLAY` | player number, rank id |
 | `0x00F5` / 245 | `TITLE_UPDATE` | title id, new current points |
 | `0x00F6` / 246 | `TITLE_TRACK_INFO` | title id, flags, points, current rank id, current minimum, extra dword, next rank id, next minimum, rank count, max rank id, two encoded strings |
-| CtoS `0x0058` / 88 | `TITLE_DISPLAY` | title id |
-| CtoS `0x0059` / 89 | `TITLE_HIDE` | none |
+| CtoS `0x0058` / 88 (`0x8058` on the wire, with the client's direction bit) | `TITLE_DISPLAY` | title id |
+| CtoS `0x0059` / 89 (`0x8059` on the wire) | `TITLE_HIDE` | none |
 
 Rurik measured the modern `0x00F6` field map and the client's behaviour
 (`Rurik/studies/newopcodes/FINDINGS.md:1463-1477`,
@@ -299,8 +309,9 @@ Neither has a server metric layer.
 ## Client string experiment (2026-11-21)
 
 Build 39167, `F:\GW\GW1\Gw.exe`. The server sends the 48 rows; every metric is zero and
-the rows carry a display-only `1`. The extra title's manager label is `Jump Master`; its
-client rank name is `Jump`; its next rank is `Ace` at `10,000`.
+the rows carry a display-only `1`. The extra title's full name in this experiment was
+`Jump Master`; its client rank name is `Jump`; its next rank is `Ace` at `10,000`. The
+catalog now names that track `Hog Jumper`.
 
 What the client accepts:
 
@@ -360,19 +371,18 @@ separate experiments.
 
 ### Client builds on this machine
 
-**For regular play and vanilla title testing, launch `F:\GW\GW1\Gw.custom.exe`.**
-The stock client receives the short custom label `Jump`. The manager calls it
-`Jump Master`.
+**For regular play and vanilla title testing, launch `F:\GW\GW1\Gw.custom.exe`, with
+`KrytaTitles.dll` beside it.** The catalog and the manager's title rows name the custom
+track `Hog Jumper`; the wire carries the short rank name `Jump`, and the patched client's
+hooks substitute the full text it fetches from the portal.
 
 | Executable | Purpose and result |
 |---|---|
-| `Gw.custom.exe` | Regular Kryta client with the connection patch. SHA-256 `4937CBF715B48EF1ECB4729A0D0DCA1C9FB46C08ACE2F8545DE802618ECC1748`. |
-| `Gw.custom.connection-only.exe`, `Gw.custom.before-title.exe` | Backups. Both match `Gw.custom.exe` byte for byte. |
-| `Gw.custom.known-good.exe`, `Gw.custom.working-backup.exe` | Matching older backups. |
-| `Gw.custom.titleonly.exe` | Failed experiment to widen the title packet strings. Preserved for crash reproduction. |
-| `Gw.custom.title-probe.exe` | Retired rank-name experiment. The owner confirmed that it renders `Jump Master`. It retains the original hover. |
-| `Gw.custom.title-hover.exe` | Follow-up experiment for the custom hover sentence. It was built in Temp, passed offline checks, and has no in-game result yet. |
-| `Gw.custom.hog-jumper.exe` | Fixed-text proof of concept. The owner confirmed `Hog Jumper` and its custom hover in-game. |
+| `Gw.custom.exe` | Regular Kryta client: the connection patch plus the title lookup hooks, built by `tools/client/patch-gw.py`. SHA-256 `7B0D29239F06A38294240AA2590B22DBA69AEE6C9E359BDB0E3519174928BAB7`. |
+| `KrytaTitles.dll` | The x86 title helper `patch-gw.py` installs beside `Gw.custom.exe`. SHA-256 `5AAAA93733FDFBA63A59E8A444DFFFCCDCE05D1A03A6E116AD9D1DDF652C1269`. |
+| `Gw.custom.connection-only.exe`, `Gw.custom.before-title.exe` | The connection-only build from before the title hooks. Both are SHA-256 `4937CBF715B48EF1ECB4729A0D0DCA1C9FB46C08ACE2F8545DE802618ECC1748`. |
+| `Gw.custom.known-good.exe`, `Gw.custom.working-backup.exe` | Older backups, identical to each other: SHA-256 `497EDDA7A44E63F6A9B3DEEB245B95C632FF331150BF0ED7D8625DDF4977AE35`. |
+| `Gw.custom.titleonly.exe`, `Gw.custom.title-probe.exe`, `Gw.custom.title-hover.exe`, `Gw.custom.hog-jumper.exe` | Retired title experiments, no longer in `F:\GW\GW1`. `patch-gw.py --retire-title-probes` moves any of these four into a `retired-title-probes-*` folder there (`retired-title-probes-8huv14xe/`, whose permissions deny listing). The titleonly build widened the title packet strings and crashed; the title-probe build rendered `Jump Master` with the original hover; the title-hover build passed offline checks with no in-game result; the hog-jumper build was the fixed-text proof of concept, and the owner confirmed `Hog Jumper` and its custom hover in-game. |
 
 The first version of the client-only probe redirected the call
 at `0x0091E7E0` through a position-independent stub. When both Kryta's rank ID 10 and
@@ -439,8 +449,11 @@ gaps in the authored IDs do not inflate the client array.
 An offline harness mapped the official hooks at two relocated bases and
 ran them with the real HTTP runtime. It picked up edited text and a second
 custom track from the HTTP catalog without changing the image. The portal
-and gameplay tests cover the response and the stock packets. The integrated
-executable still needs a Hero Panel check.
+and gameplay tests cover the response and the stock packets. The owner
+confirms the Hero Panel displays the titles with the integrated executable
+(2026-11-23). The work is not finished: the title feature, including the
+injection (`KrytaTitles.dll`) and the patching (`tools/client/patch-gw.py`),
+is still open.
 
 ### Why vanilla descriptions are missing in Kryta
 
@@ -751,8 +764,9 @@ that ambiguity.
 
 1. Is `Account` a scope applied to a points/cartographer/missions shape, or is it a
    fourth shape as OpenTyria treats it?
-2. Which build's opcode numbering is the target: the 2022 preforged numbering
-   (242-245) or the modern Rurik/ASURA numbering (243-246)?
+2. Settled for this client: build 39167 uses the modern numbering (243-246), which is what ASURA's
+   table and this tree's slice use. The 2022 numbering (242-245) matters only when reading
+   Preforged's captures.
 3. For the target client, is the ninth track dword `title_mode_flags` (Dhuum/Reforged)
    or the unread word Rurik measured?
 4. Which raw metrics are authoritative server state, and which are client-reported

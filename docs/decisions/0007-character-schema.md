@@ -33,9 +33,8 @@ bitmaps, per-slot armour dyes, hero flags and inventory each arrive with the mes
 2. **The schema follows the messages.** The character list is the only reader today, and the blob it
    sends is `CharacterSettings_FromDbCharacter` (`GmChar.c`) - a 62-byte record of outpost, appearance,
    campaign, level, PvP flag, secondary profession, helm and up to five armour pieces. Every one of those
-   has a column here; the pieces do not, because this tree has no items yet, and a character wearing
-   nothing sends five empty slots.
-3. **`account_id` is what makes a list an account's.** The login asks for the characters of the account
+   has a column here; the pieces do not, because they are the character's item rows (`item_instance`).
+3. **`account_uuid` is what makes a list an account's.** The login asks for the characters of the account
    it just resolved; the column is the join.
 
 ## What it costs
@@ -44,10 +43,10 @@ bitmaps, per-slot armour dyes, hero flags and inventory each arrive with the mes
   It is recorded for that reason.
 - A character's `uuid` is generated at the confirm and stored as text: the wire carries 16 bytes
   little-endian, and the text form is what a human reads in a query.
-- The armour pieces are not columns. When the item stream lands, they become a bag's worth of rows and
-  the settings block derives them, which is where the reference derives them too.
+- The armour pieces are not columns. They are a bag's worth of `item_instance` rows, written at the
+  confirm, and the settings block derives them, which is where the reference derives them too.
 
 ## What it does not decide
 
-How a character enters a map: that needs a map with geometry, and the pack reader (`game/Pack/`) is not
-built.
+How a character enters a map: that is the entry rule in `game/src/Agents/Entry.rs`, over the world
+pack's spawn points and arrivals.

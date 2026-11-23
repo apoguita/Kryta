@@ -7,7 +7,8 @@ line it should have printed is the thing to report.
 ## Before the first run
 
 ```powershell
-# the client, patched and pointed at this machine (docs/port/05-tooling.md)
+# the client, patched and pointed at this machine (docs/port/05-tooling.md); the patcher also builds
+# KrytaTitles.dll, which needs Visual Studio's x86 tools and nlohmann/json, or --title-runtime
 python tools/client/patch-gw.py "F:\GW\GW1\Gw.exe" tools/client/keys.txt --output "F:\GW\GW1\Gw.custom.exe"
 python tools/client/hosts-redirect.py status
 ```
@@ -21,9 +22,10 @@ The databases are the ones the programs are configured for: `kryta_login`, `kryt
 `kryta_characters` on `127.0.0.1:5432` (the connection strings are in each program's own JSON, which is
 not committed when it holds a password).
 
-Starting from nothing: the programs create their own tables. The migrations in `data/sql/base/` are the
-schema and the seeds - the world's own file seeds the maps and their spawn points, and the world program
-then seeds the item templates from the creation record - so a fresh machine only needs the database
+Starting from nothing: the programs create their own tables. The migrations in `data/sql/base/` are
+schema only; the maps, their spawn points and the item definitions are the world pack under
+`config/World/Vanilla/`, read at start-up and never seeded
+(`docs/decisions/0014-the-world-content-is-a-pack.md`) - so a fresh machine only needs the database
 server, a role that may create its databases and the three databases themselves (empty is enough). The
 world's fresh start-up is proven by `cargo test -p worldserver --test fresh_world -- --ignored`; it
 makes and drops a database of its own and needs the role to have `CREATEDB`.
@@ -33,15 +35,16 @@ makes and drops a database of its own and needs the role to have `CREATEDB`.
 One command, from the repository root:
 
 ```powershell
-cargo run -p kryta-supervisor            # both programs; Ctrl+C stops them together
+cargo run -p kryta-supervisor            # auth, world and manage; Ctrl+C stops them together
 ```
 
-The supervisor prints each program's output under its own name (`auth | ...`, `world | ...`), waits for
-both READY lines, says `the stack is up: auth on 6112, world on 6113`, and stops everything on Ctrl+C.
-Each program is built before it starts (`cargo build -p <program>`), so the stack always runs the code
-that is in the tree and never a binary left over from an earlier build - a tree that has not changed
+The supervisor starts the three services `tools/supervisor/stack.json` lists, waits for each READY line,
+says `the stack is up: auth on 6112, world on 6113, manage on 6602`, and stops everything on Ctrl+C. It
+prints its own lifecycle lines and a service's standard error; a service's standard output is shown only
+with `--logs`, and every program logs to its own files (`docs/port/05-tooling.md`). Each program is
+built before it starts (`cargo build -p <program>`), so the stack always runs the code that is in the tree and never a binary left over from an earlier build - a tree that has not changed
 builds in a fraction of a second. `cargo run -p kryta-supervisor -- --check` starts, waits
-for both READY lines, stops and reports - the way to know the stack can come up without leaving it
+for every READY line, stops and reports - the way to know the stack can come up without leaving it
 running. The list it starts is `tools/supervisor/stack.json`.
 
 The same programs by hand, each in its own window, if that is preferred:
@@ -49,13 +52,13 @@ The same programs by hand, each in its own window, if that is preferred:
 ```powershell
 cargo run -p authserver  -- -c authserver/authserver.json
 cargo run -p worldserver -- -c worldserver/worldserver.json
-cargo run -p kryta-manage -- -c tools/manage/manage.json   # optional: http://127.0.0.1:6602/
+cargo run -p kryta-management-service -- -c tools/manage/manage.json   # optional: http://127.0.0.1:6602/
 ```
 
 The login program must end with `READY: listening on 0.0.0.0:6112` and the world program with
-`READY: listening on 127.0.0.1:6113 as world 2` - it takes about twelve seconds to get there, because
-it imports a path graph for each of the 145 map records its rows describe (`Path graphs from ...: 144 of
-145 map(s)`, `Doorways: 28 arch(es) on 11 map(s)`); both also print a status line every 30 seconds - the
+`READY: listening on 127.0.0.1:6113 as world 2` - before that it reads the world pack's 265 map records
+(`Map pack ...: N map record(s), ...`), binds the path graphs it has (`Path graphs from ...: B of N hosted
+map(s) bound`) and states its doorways (`Doorways: A arch(es) on M map(s)`); both also print a status line every `StatusInterval` seconds (5 for the login and 30 for the world in the shipped files) - the
 world's says `status: up N s, ... A connection(s) accepted, L live, M map(s) hosted, I instance(s) open`,
 the login's `status: up N s, ... A connection(s) accepted, L live` - and that line is the first thing to
 read when something seems stuck: `accepted` says something reached the port, `live` says something is
@@ -68,7 +71,7 @@ being served.
 | 1 | launch the client (`Gw.custom.exe -authsrv 127.0.0.1 -portal 127.0.0.1`) | `Connection from ...: Auth connection`, the exchange, then `the login` with the five-message answer |
 | 2 | type an account that exists (`user1@example.com`) | `1 character(s) listed: ...` (or `0` for a fresh account) |
 | 3 | open the world map on the character screen | `the district list asked (transaction N, territory T); answered with one district in language 0 (R16)` |
-| 4 | click a character and enter | `the client asks to travel to map M (...)` from the world map, then the login's `told to dial 127.0.0.1:6113 as world 2`, and the world's `the travel record is claimed - map 148, district 1, language 0` |
+| 4 | click a character and enter | the login's `the travel to map M (district D, language L) of account ... is recorded for world 2`, then its `told to dial 127.0.0.1:6113 as world 2`, and the world's `the travel record is claimed - map 148, district 1, language 0` |
 | 5 | create a character (the creation screen) | `the character '...' was created as ...`, `the character's N starting item row(s) are written`, `map 148 ('Ascalon City (pre-Searing)') is unlocked for the new character (R12)` |
 | 6 | the outpost loads | `Ascalon City (pre-Searing) (148) is loading - 7 message(s), 337 bytes`, then on the client's asks: `the ping pair`, `the inventory and the map's record`, `the character stands at X, Y (plane 0) on map 148` (one frame, then the ticks), `the player and the load's last message`, `map 148 is loaded - the character '...' is in it`; and the map the character arrives in is added to its unlocks: `map 148 'Ascalon City (pre-Searing)' is unlocked - the character arrived in it (R12)` - the server never refuses a load for an unlock, because the walk sets the bit (R12, `ASURA/crates/asura-world/src/player.rs:442-471`) |
 | 7 | stand still in the outpost | a `0x001E` tick every `World.SimulationTickMs` milliseconds (100 in the distributed configuration; visible with `Network.Trace` off as nothing, on as trace lines; the status line's `up` time climbing) |
@@ -76,7 +79,7 @@ being served.
 | 9 | walk into the walled arch at the edge of Ascalon City (the doorway that leads to Lakeside County) | `the character crossed the doorway of map 148 at (x, y) -> (x, y): crossing to 146 (arrival at (6602.0, 4485.0) facing -2.28)`, the redirect, and then the client reconnects into Lakeside County: `Lakeside County (146) is loading - 16 message(s), 1182 bytes`, `the character stands at 6602.00, 4485.00 (plane 0) on map 146`, `map 146 'Lakeside County' is unlocked - the character arrived in it (R12)` |
 | 10 | drag an item in the inventory | `the item's new place answered with 1 message(s), 11 bytes`; the item stays where you put it |
 | 11 | equip an item | the same placement answer, into the equipped bag's slot for that kind of item |
-| 12 | destroy an item | `the item's removal answered with 1 message(s), 8 bytes`; the item is gone |
+| 12 | drop one of a stack on the ground (`0x802C`) | `N of item I dropped; R left in the bag, and nothing is sent.` - the count is written to the row and the client is told nothing, as ASURA does (`item.rs:187-246`). Destroying an item (`0x8069`) has no handler here or in ASURA: it logs `... which this world does not answer yet` |
 | 13 | say something on the all channel (`!hello`) | `... spoke "hello" on channel 3` and `a spoken line answered with 2 message(s), 25 bytes`; the client's chat box is the judge, and it has rendered: the owner typed a line and read it back on a live client (`0012`). The pair is the twenty-byte body `5d 00 | 08 00 | 0108 0107 | hello | 01 00` and the five-byte tag `61 00 | player u16 | channel` |
 | 14 | type `/maps`, then `/stuck`, then `/tp ascalon` | `/maps` sends the alias table's chat half and logs the table - the owner's client rendered the list; `/stuck` is answered with `the agent's position` (16 bytes, `0x002C`); `/tp ascalon` says `You are already here.` when the character is in map 148 |
 | 15 | type `/tp kamadan` | the result depends on the world's loaded map catalogue and the reference alias rule; record the server's response and whether the client completes the travel |
@@ -87,9 +90,10 @@ being served.
 
 ## What is not expected to work yet, and why
 
-These are the plan's known gaps, each waiting on a capture rather than on work:
+These are the plan's known gaps:
 
-- **NPCs and monsters in the outpost**: the map population is not supplied yet. Connected players
+- **NPCs and monsters in the outpost**: the map population is not supplied yet - ASURA sends none, so
+  there is no counterpart to port, though the retail captures record the stream. Connected players
   are introduced to each other as described in step 16; client rendering still needs verification.
 - **The map view's contents**: the grid that sizes its world map is sent (`0x008B`, `0x008A`) with
   nothing explored, and the map's own art and areas come from the client's archive.
@@ -106,8 +110,7 @@ The world half of this journey is also played automatically against the *program
 `cargo test -p worldserver --test end_to_end -- --ignored --nocapture`: it starts the real
 `worldserver`, performs the creation screen, loads map 148, asks for the items, the spawn point and the
 players, clicks a point twenty units away and reads the walk it is answered with (`0x0029`, the
-finder's own first waypoint - skipped when map 148 has no entry in the configured path-graph cache), drags, equips and destroys an
-item, speaks a line and types the chat commands, sends the travel
+finder's own first waypoint - skipped when map 148 has no entry in the configured path-graph cache), drags and equips an item and drops one of a stack, speaks a line and types the chat commands, sends the travel
 request and reads the redirect's eight frames - the same wire steps 5 to 16 do with a client.
 The login half is `cargo test -p authserver --test end_to_end -- --ignored --nocapture`, which starts
 the real `authserver` and performs the client's file check, version message, key exchange and portal

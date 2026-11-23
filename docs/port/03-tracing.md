@@ -50,20 +50,22 @@ never reached us", which is the question that could not be answered before.
 
 ## Optional traces
 
-Both are off by default, both are one key, and both need their own logger - the bytes and the
-statements are written at debug, and a switch that silently does nothing is worse than no switch. If
-one is on and its logger is not, the program says so and names the line to add.
+There are three, each one key, and each needs its own logger - the bytes, the statements and the keys
+are written at debug, and a switch that silently does nothing is worse than no switch. If one is on and
+its logger is not, the program says so and names the line to add. The code's default for each key is
+off, and `worldserver.json.dist` ships all three off; `authserver.json.dist` ships all three **on**,
+with their loggers, so a login run from the shipped file traces by default.
 
-| what | key | logger line to add | what it prints |
+| what | key | logger to add, under `Logger` | what it prints |
 |---|---|---|---|
-| every byte of every connection | `Network.Trace = 1` | `Logger.network.trace = 6,Console Auth` | `trace ADDRESS in  4 bytes: 00 04 0C 00` and the outgoing side, plus a close line with the totals |
-| every database statement | `Database.Trace = 1` | `Logger.sql.trace = 6,Console Auth` | `query [database] SELECT ...` and `rows [database] 1`, `batch`, `execute`, `affected` |
-| every key the configuration held | `Log.EffectiveConfig = 1` | `Logger.server.loading = 6,Console Auth` | `> Config: LoginDatabaseInfo = 127.0.0.1;5432;kryta;********;kryta_login` - a connection string's password is masked, because a log line gets pasted into issue reports |
+| every byte of every connection | `"Network": { "Trace": true }` | `"network.trace": [6, "Console Auth"]` | `trace ADDRESS in  4 bytes: 00 04 0C 00` and the outgoing side, plus a close line with the totals |
+| every database statement | `"Database": { "Trace": true }` | `"sql.trace": [6, "Console Auth"]` | `query [database] SELECT ...` and `rows [database] 1`, `batch`, `execute`, `affected` |
+| every key the configuration held | `"Log": { "EffectiveConfig": true }` | `"server.loading": [6, "Console Auth"]` | `> Config: LoginDatabaseInfo = 127.0.0.1;5432;kryta;********;kryta_login` - a connection string's password is masked, because a log line gets pasted into issue reports |
 
-**A routine reply is a `Trace` line, not an `Info` one.** The table above is what this server reports at
-`Info`: events - a load, a chat line, a transfer, a refusal, the world's own heartbeat. Two kinds of
-frame are not events and are written at `Trace` (level 6): below the console appender's `Info` (level 4)
-and below the default log file's `Debug` (level 5), so neither prints them:
+**A routine reply is a `Trace` line, not a `Debug` one.** A connection's events - a load, a chat line, a
+transfer, a refusal - are `Debug` lines (the next section), and the world's own heartbeat is `Info`. Two
+kinds of frame are not events and are written at `Trace` (level 6): below the console appender's `Info`
+(level 4) and below the default log file's `Debug` (level 5), so neither prints them:
 
 | routine line | why it is not `Info` |
 |---|---|
@@ -71,8 +73,9 @@ and below the default log file's `Debug` (level 5), so neither prints them:
 | `... the walk ...`, `... the walk the report asked for ...`, `... the stop ...`, `... the stopping point ...` | the acknowledgement of a movement report; a walking player sends one every step |
 | `... message X ... again - sighting N; ...` | a client retrying a message this world does not answer. Its **first** sighting is an `Info` line, once per header per connection (`WorldSession::report_unanswered`), because the line reports a gap to fill; the repeats are the count |
 
-To see them, give the world logger level `6` (`Trace`) in `worldserver.json`, for example
-`"server.worldserver": [6, "Console"]` under `Logger`, and they appear beside everything else. Nothing
+To see them, give both the world logger and the appender that should carry them level `6` (`Trace`) in
+`worldserver.json`, for example `"server.worldserver": [6, "Console"]` under `Logger` and level `6` in
+`Appender.Console`, and they appear beside everything else. Nothing
 else changes: the capture (`CaptureFile`, `05-tooling.md`) records every frame regardless of the log
 level, so a session that needs the frames asks the capture, not the log.
 
@@ -86,17 +89,20 @@ a startup that worked until the statements are visible.
 **A line about one connection is a `Debug` line.** At a thousand players, `Info` has to mean what an
 operator can read: the server's own state and its problems. So the lines below that describe what one
 connection did - a load, an item move, a chat line, a travel, a refusal, the entry position, the ping -
-are written at `Debug`. The console appender (`Info`) does not print them; `Server.log` (level 5,
-`Debug`) does; and the stack's console shows neither, because it is not a log viewer.
+are written at `Debug`, on the `server.worldserver` logger. A line passes the logger's level before any
+appender sees it, and `worldserver.json.dist` sets `Logger.server` - which `server.worldserver`
+inherits - to `4` (`Info`), so with the shipped file neither the console nor `Server.log` (level 5,
+`Debug`) receives them; and the stack's console shows nothing either way, because it is not a log
+viewer.
 
 What stays at `Info` is the world's own state: the startup stages, `READY: listening on`, the status
 heartbeat, the world-list refresh, an instance disposed, the creation tables, and every `Warn` or
 `Error`. Those are the lines a person watches a server with, and there are a handful per minute, not per
 connection.
 
-To watch one connection's detail live, give the world's console appender level `5` (`Debug`) - or `6`
-for the traces in the table above - in `worldserver.json`'s `Appender.Console`; to keep the record
-without the screen, read `Server.log`.
+To keep one connection's detail in `Server.log`, raise the logger to `5` (`Debug`) - or `6` for the
+traces in the table above - in `worldserver.json`'s `Logger` (`"server.worldserver": [5, "Console
+Server"]`); to watch it live as well, raise `Appender.Console` to the same level.
 
 ## What reaches a screen
 
@@ -120,7 +126,8 @@ request.
 
 ## The front door
 
-A gameplay connection is not a login, so it says different things. Both are on by default:
+A gameplay connection is not a login, so it says different things. The auth program writes these at
+`Info`, `Warn` or `Error`, so they print without any switch:
 
 | line | means |
 |---|---|
@@ -143,10 +150,10 @@ client got inside the game:
 | `... the character-creation instance is opened, 8 bytes (load head and creation start).` | the unasked block went out and the creation screen may appear |
 | `... 'name' (M) is loading - N message(s), B bytes: ... (district D, language L).` | an outpost or explorable load went out, and D/L are the district and language `0x019A` reports - the district the copy the connection entered holds (R22, R57); the map is named the way the working implementation names it, `MapEntry::label` |
 | `... the ping pair` / `... the inventory and the map's record` / `... the entry position` / `... the player and the load's last message` | the four answers of a measured load, each logged with what it carried - the last one ends with the load's own message |
-| `... a ping on the loaded map, N bytes.` | the client is awake on a loaded map; the reference answers it with nothing, and so does this |
+| `... the ping reply answered with 1 message(s), 6 bytes.` | the client pinged (`0x800D`) on a loaded map and was answered with `0x000D` carrying `World.PingValue`, as ASURA's `handle_ping_request` answers it |
 | `... item N is not the character's, so its move to bag B slot S is refused.` | a drag that names an item the character does not hold: nothing is written, and the client is told nothing |
-| `... the client asks to travel to map M (territory T, district D, language L, flag F); the redirect's own wire is not captured yet, so the connection stays where it is.` | a door or the world map asked for a travel; the request is read (E220's nine bytes) and the answer it needs is the one piece of this path without a capture |
-| the world sends `0x001E` every `World.SimulationTickMs` (105 ms by default) once a map is loaded | the simulation's tick; its absence is a client whose world time is frozen |
+| `... the travel to map M is recorded for world W; ...` then `... the character '...' travels to map M ('...'); the client is told to dial HOST:PORT with token 0x...` | the world map or a doorway asked for a travel (`0x80B1`) and was answered with ASURA's redirect frames off a hand-off row; a request that cannot be served or handed off says why and the connection stays where it is |
+| the world sends `0x001E` every `World.SimulationTickMs` (100 ms by default) once a map is loaded | the simulation's tick; its absence is a client whose world time is frozen |
 | `status: up N s, listening on ADDRESS:PORT as world W, K connection(s) accepted, L live, M map(s) hosted, I instance(s) open: ...` | the world's own heartbeat, once per `StatusInterval`: what it hosts and which copies are open, answerable from the log alone; `live` is what is being served now |
 | `World list refreshed: world W at ADDRESS:PORT online` / `... offline` | the `RealmsStateUpdateDelay` pass found the realmlist changed since the last refresh: a world came back online or was marked offline, and the front door follows. An unchanged refresh says nothing |
 | `... was empty for H s and is disposed (R37, R40).` | the instance tick found a copy that had nobody inside past the hold, and its row is deleted - the count in the world's status line drops |
@@ -190,5 +197,6 @@ capture says what the client received and when.
 
 Read a capture knowing which layer it holds. `recordings/` has three kinds, only two of which are the
 wire, and a struct dump is two or more bytes wider than the frame - `docs/port/02-wire.md`, "Three
-kinds of capture", is the rule, and every capture's own header names its `layer` and `header_len`.
+kinds of capture", is the rule. A capture this tree's `worldserver` or the current sniffer writes names
+its `layer` and `header_len` in its header; most committed ones predate that and need `--assume-layer`.
 

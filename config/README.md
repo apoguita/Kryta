@@ -8,8 +8,8 @@ world or a service is a file here, named by a setting that only says where the f
 
 | folder | holds | who reads it |
 |---|---|---|
-| `Server/` | what a machine chooses for itself and what its services answer - the chat command surface, and later whatever else belongs to the server rather than to the world | `worldserver`, at start-up, through `worldserver.json` |
-| `World/` | the packs: the map catalogue, entry lists, doorways, and the creation screen's content. `Vanilla` is the faithful base - the client's own vocabulary and the values a faithful world runs on | `worldserver`, at start-up, through `worldserver.json` |
+| `Server/` | what a machine chooses for itself and what its services answer - the chat command surface, the first game account, and later whatever else belongs to the server rather than to the world | `worldserver` (`commands.json`, through `CommandsFile`) and `authserver` (`admin.json`, through `AdminAccountFile`), at start-up |
+| `World/` | the packs: the map catalogue, entry lists, doorways, the creation screen's content, the title catalogue and the campaign start maps. `Vanilla` is the faithful base - the client's own vocabulary and the values a faithful world runs on | `worldserver`, at start-up, through `WorldPack` in `worldserver.json`; `authserver` reads the pack's `titles.json` through the same `WorldPack` (`Portal.TitleWorldConfig`); the panel (`tools/manage`) reads the pack named there, including `character_spawn.json` |
 
 **Every start reads these files, and nothing seeds a database.** Edit a file, restart the program, and
 the change is live - maps, spawns, items, every feature - with no database step. A database row is for
@@ -25,8 +25,8 @@ Two consequences, and they are the point of the split:
   so this folder holds only what the programs actually load today.
 
 `data/` is not this folder, and the difference is where the content came from. `data/sql/` is the
-schema and the rows a world seeds from; `data/path-graphs.bin` is extracted from the client's archive.
-Those are the archive's and the database's. Everything in `config/` is a value this tree states,
+schema only; `data/path-graphs.bin` is extracted from the client's archive; `data/realms.json` is the
+login's world list, merged over the `realmlist` table (`docs/port/04-configuration.md`). Everything in `config/` is a value this tree states,
 readable and editable by hand.
 
 Evidence and acceptance are not here. A file answers *what the value is*; the document that records

@@ -8,6 +8,18 @@ into Rust while following AzerothCore's server structure and segmentation, as me
 WowWarband. The goal is AzerothCore's arrangement serving Guild Wars, not ASURA's arrangement
 under a different name.
 
+The copies live in `research/`, which `.gitignore` excludes: a fresh clone of Kryta has no
+`research/` folder, and nothing in the build reads it. The two authority checkouts AGENTS.md names,
+`C:\Users\Apo\Documents\GitHub\ASURA` and `C:\Users\Apo\Documents\GitHub\WowWarband`, are the ones
+to open and cite; `research/ASURA/` and `research/WowWarband/` are snapshots of them. Today both
+pairs are at the same commit: ASURA `ca9f532a54f55f51e80076b656f489fc9f734f4c`, WowWarband
+`30a36ec4d56dacee0ac89d7b54d5551093e7c08f`.
+
+A relative citation such as `Eden/...` or `Rurik/...` in `docs/game-rules.md` names the original
+checkout under `C:\Users\Apo\Documents\GitHub\` (`Eden`, `Rurik`). The copies under `research/`
+carry the same sources: `research/Rurik/` is at the original's commit
+(`0710df3b5cb068362c61120820753e59a36dd149`), and `research/Eden/` omits only the build output.
+
 The projects in this folder include servers and clients, at different stages, with different designs.
 Their documentation can conflict. Read a statement in its original project and revision as evidence
 about that project, not as a current Kryta decision or proof of Kryta's implementation.
@@ -15,8 +27,8 @@ about that project, not as a current Kryta decision or proof of Kryta's implemen
 | Question | Source to use |
 |---|---|
 | Server structure, services, ownership and segmentation | AzerothCore as measured from WowWarband, with Kryta's recorded decisions for deviations; see `docs/port/01-structure.md` and `docs/decisions/`. ASURA's architecture is not Kryta's design authority. |
-| Client-facing protocol and behaviour | ASURA's corresponding implementation under Rule 0 in `AGENTS.md`; consult `docs/port/09-parity-audit.md` and cite the source. The other projects' designs do not override that rule. |
-| What the client actually does | The running client and recordings are evidence; report a disagreement with the port. Interpret each capture by its layer as described in `docs/port/02-wire.md`. |
+| Client-facing protocol and behaviour | The project or live recording that carries the most complete packet contract for the feature (Rule 0 in `AGENTS.md`). ASURA was the source of truth until parity with it was reached and is now one source among the others; `docs/port/09-parity-audit.md` records its port. Cite the source. |
+| What the client actually does | The game client and Eden are the client sources (owner, 2026-11-23): Eden is a reverse-engineered game client and can be used for testing too. The running client and recordings are evidence; report a disagreement with the port. Interpret each capture by its layer as described in `docs/port/02-wire.md`. |
 | Guild Wars rules and owner decisions | `docs/game-rules.md` and the applicable active Kryta documents; trace facts to their stated evidence. |
 | Other implementations, prototypes and historical documents | Research and leads, not automatic authority for Kryta's structure, behaviour, current status or implementation. Resolve conflicts against the applicable sources above and ask the owner when the rules require it. |
 
@@ -49,9 +61,9 @@ For every candidate function, make one contract record containing:
 
 A declared table row, a no-op handler, or a feature-list bullet is not a contract record. Conversely,
 a complete sequence remains relevant even when its source used a different adapter or server design.
-For client-facing implementation, Rule 0 still requires opening ASURA's counterpart first. If ASURA
-has no counterpart, retain the packet record, obtain or compare a capture, and ask the owner rather
-than inventing a Kryta response. `docs/port/17-research-code-feature-inventory.md` is the canonical
+For client-facing implementation, Rule 0 requires opening the sources that implement the feature and
+porting from the one whose contract is the most complete. If no project and no recording has it, say
+so and ask the owner rather than inventing a Kryta response. `docs/port/17-research-code-feature-inventory.md` is the canonical
 code-derived feature inventory; `docs/port/16-packet-completeness-research.md` records the source
 survey and the contract-comparison method.
 
@@ -65,7 +77,7 @@ HEAD before citing a file because a checkout can change.
 | Source | Local path | Origin and role | Initial revision |
 |---|---|---|---|
 | WowWarband / AzerothCore | `research/WowWarband/` | [WowWarband](https://github.com/apoguita/WowWarband); [AzerothCore reference](https://github.com/mod-playerbots/azerothcore-wotlk). Server infrastructure and design authority. | `30a36ec4d56dacee0ac89d7b54d5551093e7c08f` |
-| ASURA | `research/ASURA/` | [ASURA](https://github.com/apoguita/ASURA), Kryta's previous server and protocol authority under AGENTS.md. | `ca9f532a54f55f51e80076b656f489fc9f734f4c` |
+| ASURA | `research/ASURA/` | [ASURA](https://github.com/apoguita/ASURA), the server Kryta was ported from; the source of truth until parity, one source among the others since. | `ca9f532a54f55f51e80076b656f489fc9f734f4c` |
 | Superjack fork | `research/ASURA_testfork/` | [ASURA_testfork](https://github.com/aeratemark/ASURA_testfork), including its [milestones](https://github.com/aeratemark/ASURA_testfork/blob/main/MILESTONES.md). | `eff172b7e5b6f149c3b953c482e26e4f04dd5489` |
 | Preforged | `research/preforged-source/` and `research/preforged/` | [preforged](https://github.com/CmonMeow/preforged). Source, headers, documentation, tests, config and third-party files were extracted to `preforged-source/`. The Git repository is in `preforged/`, but its working tree is incomplete. | `9183090ac02047ea8fcb2bb8bdc2b665dee4f75c` |
 | OpenTyria | `research/OpenTyria/` | [OpenTyria](https://github.com/ldufr/OpenTyria). | `53acb8e984784d0e219e4e4ade6a4925562e3fe6` |
@@ -75,6 +87,7 @@ HEAD before citing a file because a checkout can change.
 | Entice | `research/entice/` | Extracted from `Downloads/entice-repos.zip`: several related repositories described in its [project documentation](https://github.com/entice/entice), including client, server logic, web and entity projects. | ZIP SHA-256 `E919661DA870D4B5AEEDF49E9FCBCE870EB72E638F91ECF5DAF6FDFDE32073EB`; individual revisions not established. |
 | GameRevision GWLP:R | `research/GameRevision-GWLP-R-4208ffa/` | Extracted from `Downloads/GameRevision-GWLP-R-4208ffa.zip`; its README identifies [GWLP-R](https://github.com/GameRevision/GWLP-R) as a Java Guild Wars server emulator and names Entice as its successor. | ZIP SHA-256 `D1A3FC25AB746D46685C0CC3834D951816441D342A7E4EECFCE3641FDBC99F41`; `4208ffa` appears in the archive name. |
 | Preservation | `research/preservation-main/` | Extracted from `Downloads/preservation-main.zip`; a Go Guild Wars server source tree containing protocol and pathing material. The archive does not establish its repository URL or revision. | ZIP SHA-256 `B7E2597D13DFE886682AD3B0BB00B510E25008F95EAFC524302756CA047A92C1`. |
+| GWPS (PreSearing) | `C:\Users\Apo\Documents\GitHub\PreSearing` only; no copy under `research/` | [GWPS](https://github.com/apoguita/GWPS), a C server for Pre-Searing Ascalon forked from [apoguita/OpenTyria](https://github.com/apoguita/OpenTyria) (its `upstream` remote). The checkout holds `code/OpenTyria/`, `portal/`, `docs/`, `tools/`, `data/` (`gwdat-maps.csv`, `packet-catalog.csv`), `db/` and `captures/`, with an ignored `Gw.dat`, `captures/` and `db/database.db`. The server whose traces are `recordings/gwps/`. | `d246a2a811191644d02d1ad7c285a6615622153f` |
 | Offline prototype | `research/prototype-offline-20261007-v1-apoguita-en/` | Extracted from `C:\Users\Apo\Downloads\prototype-offline-20261007-v1-apoguita-en.zip`. | ZIP SHA-256 `A97AA8C2320C30B8F6B7310FE0ECE7D81F412B5EC85441E5A8A5D1989B47AD6B` |
 
 The existing Git checkouts were cloned locally, not moved. Local clones contain tracked Git

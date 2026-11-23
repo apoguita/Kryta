@@ -2,8 +2,8 @@
 
 This is the canonical scope, roadmap and delivery record for Kryta's operator surfaces. The owner clarified that
 research projects are studied for their ideas, workflows and limitations: no code from those tools is
-selected for reuse. AzerothCore remains the design authority and ASURA remains the authority for
-client-visible behaviour under Rule 0. Those repository rules are not displaced by this research.
+selected for reuse. AzerothCore remains the design authority, and client-visible behaviour is
+ported from a source under Rule 0. Those repository rules are not displaced by this research.
 
 ## 1. Settled direction
 
@@ -25,7 +25,7 @@ world operations belong to worldserver and process control to the supervisor (`0
 GM commands are a way to call the API, not a separate implementation. Callers supply the information
 the function needs; a caller without a player session can specify a target where the operation supports
 it. No particular command is granted a new caller, argument or client-visible behaviour by this plan.
-Preserve ASURA behaviour and update `09-parity-audit.md` when a client-facing change requires it.
+Preserve the ported behaviour and update `09-parity-audit.md` when a client-facing change requires it.
 
 The supervisor owns service processes, their lifecycle and readiness. World operations belong to the
 running world; an application asks the appropriate owner to act, and does not become another process
@@ -61,14 +61,19 @@ repositories; their APIs, session invalidation and targeted disconnect remain to
   `kryta-cli`, and the local control endpoint; its two lifecycle rows, `server exit` and `server
   restart`, ask the world to stop and set the exit code the supervisor reads.
 - `tools/manage` is the panel's implementation, layered as `web/` (the shell, its stylesheet, the
-  components and HTTP helpers), `view/` (the game's names for the numbers a row stores), `pages/` (one
-  module per destination) and one routing table in `lib.rs`. It is arranged around the game's own
+  components and HTTP helpers), `view.rs` (the game's names for the numbers a row stores), `pages/`
+  (one module per destination), `navigation.rs` (the path-graph cache reader) and one routing table in
+  `lib.rs`. It is arranged around the game's own
   hierarchy: the server hosts Accounts; an account owns its Players (the characters); a player page
   owns its own data - progress (level, stored experience, gold), position, inventory and equipment
   (the item rows), titles, and unlocked maps. Accounts are created, edited, permanently removed and
-  activated/deactivated through `game::accounts`; players are created from the creation record lists
-  and renamed, levelled (1 to 20, R48) and removed through `game::characters`. The settings, worlds,
-  schema and content pages read; the content page reads the world pack the way the world does. A page
+  activated/deactivated through `game::accounts`, and an account's recorded EULA acceptance is set or
+  cleared (`POST /accounts/{id}/eula`); players are created from the creation record lists and
+  renamed, levelled (1 to 20, R48) and removed through `game::characters`. The settings, worlds,
+  schema and content pages read; the content page reads the world pack the way the world does. The
+  Navigation page inspects the extracted path-graph cache and replaces one selected map in it from the
+  configured `MapArchiveFile` (`POST /navigation/dump`); the same two actions answer JSON at
+  `GET /api/navigation/maps` and `POST /api/navigation/dump`. `GET /health` answers `ok`. A page
   never waits for another process: the supervisor's status, the world's registered operations and the
   world's own status are probed after the page has answered.
 - Lua integration, API bindings and script-defined commands are planned, not implemented. Existing
@@ -84,7 +89,7 @@ administration command catalog. The Configuration Manager is the operator's fron
 configuration-file editor: it owns navigation and will connect the existing supervisor, operator API,
 configuration reader and asset readers without duplicating any of them.
 
-| surface | actual state at `465df58` | boundary |
+| surface | actual state at `7679ba1` | boundary |
 |---|---|---|
 | Operator API | landed: the loopback `/v1/operations` endpoint invokes the shared registry | it is not yet a remote public API or an authorization system |
 | Standalone CLI | landed: `kryta-cli` uses the world endpoint and registry | it does not own world operations |
@@ -131,7 +136,7 @@ validation, queueing, execution, and its answer. Both probes report an unavailab
 rather than simulating success or delaying the page.
 
 **Validation.** `cargo test -p kryta-manage` passes the layout, component, view-label, name and redirect
-tests; `cargo check --workspace` and `cargo test -p game --lib` pass. A live run with the checked-in
+tests; `cargo check --workspace` and `cargo test -p game --lib` pass. A live run with this machine's
 `manage.json` reached the login, character and world databases and served every page in 10-110 ms. The
 write paths were exercised end to end on a throwaway account: create account (303 to `/accounts/9`),
 create its player from the creation lists and the pack's campaign spawn (303 to `/players/{uuid}`), read
@@ -140,19 +145,20 @@ player with its items and unlocks, remove the account - each answer a `303` with
 account and player were then removed. The old addresses were exercised too: `/players/2` and
 `/accounts?account=2` redirect to `/accounts/2`, and `/characters?account=<portal id>` redirects to
 `/players?account=2` or `/players/{uuid}`. The probes were exercised without a running world and
-reported their owners unavailable instead of delaying their pages. The credential-reading blocker the
-earlier run recorded does not apply here: the panel read `worldserver/control.credential` and served the
-world-status page, which reported the refused connection as unavailable, not as an empty result.
+reported their owners unavailable instead of delaying their pages. The panel read
+`worldserver/control.credential` and served the world-status page, which reported the refused
+connection as unavailable, not as an empty result.
 
-## 3. The API contract to design
+## 3. The API contract: what has landed and what is still to design
 
-**The contract exists now.** `game/src/Chat/Operations.rs` registers an operation as a name, a help
+**The contract exists.** `game/src/Chat/Operations.rs` registers an operation as a name, a help
 line and its declared positional values; a call is an `Invocation` (`operation`, `Arguments`, `Caller`
 with its kind and vouched-for name) and an answer is the operation's text or a `Refusal` carrying a
 stable code (`unknown_operation`, `invalid_arguments`, `refused`) and the message a person reads. The
 registry refuses a duplicate name, checks the value count against the declaration before the world is
-touched, and `config/Server/commands.json` rows bind a typed name to a registration (`operation`) or to one of
-the closed chat operations (`execution`), with `surfaces` deciding who may type it. A door never holds
+touched, and every `config/Server/commands.json` row binds a typed name to a registration by its
+`operation` key - the chat operations (`chat.transfer`, `chat.maps`, `chat.stuck`) are registrations
+like any other - with `surfaces` deciding who may type it. A door never holds
 a command: the console resolves a line through the rows and the control endpoint resolves JSON through
 the registration (`docs/port/05-tooling.md` records the live proof of each refusal code).
 
@@ -166,7 +172,7 @@ A function can be called directly by a supported caller without inventing a seco
 The contract must specify, before implementation:
 
 - Inputs, types, parsing, argument validation and help metadata, including multi-argument operations.
-  Preserve the parsing and refusals of existing client commands where ASURA dictates them. **Part
+  Preserve the parsing and refusals of existing client commands as they were ported. **Part
   landed**: values are positional strings, validated against the registration, with the help line
   stored on the registration; richer types are still to design.
 - Caller identity, permissions and target context: the running world, a map, a specific instance or
@@ -176,7 +182,7 @@ The contract must specify, before implementation:
   `Caller` (kind and name) supplied by the adapter, never by the caller's own words; permissions and
   target context are still to design.
 - Results and errors in a form callers can use and display; client frames and existing text remain
-  subject to ASURA. Define how progress and completion are reported for longer operations. **Part
+  subject to Rule 0. Define how progress and completion are reported for longer operations. **Part
   landed**: a success text and a coded refusal, which is what the console prints and the endpoint
   returns as JSON; progress for long operations is still to design.
 - World-thread ownership, queue bounds, timeouts and shutdown behaviour; avoid blocking the world tick
@@ -192,10 +198,10 @@ The contract must specify, before implementation:
   API access is desirable but optional for the first delivery. Section 8 evaluates the portal and the
   reference's remote access interface and proposes the host and process boundaries. **Landed**: a
   loopback JSON endpoint with a service credential, `POST /v1/operations`; the supervisor's process
-  control is still separate and still unbuilt.
+  control is a separate loopback channel (`tools/supervisor/src/Control.rs`).
 
-The existing `commands.json` reader limits rows to one argument string and uses enum matching; both are
-current limitations, not the desired final function registry. Whether every API function has a command
+The `commands.json` reader resolves each row to a registration; values are positional strings checked
+against that registration, and richer input types remain to design. Whether every API function has a command
 name, and how non-command callers discover functions, are design questions rather than enforced rules.
 
 ## 4. CLI, GM commands and access
@@ -205,8 +211,8 @@ from authorized in-game chat. These are entry points to the same operations, not
 the design must account for target context and report when an operation cannot be completed. Preserve
 ASURA's existing client-facing command behavior under Rule 0. The local world console is informed by
 AzerothCore's `CliRunnable`, `CliHandler` and world command queue. The supervisor's process control is
-a separate responsibility. The embedded console starts only on an interactive terminal. There is no
-API connection for a separate CLI yet.
+a separate responsibility. The embedded console starts only on an interactive terminal. The standalone
+`kryta-cli` calls the world's `POST /v1/operations` endpoint.
 
 A command's availability to a caller and the caller's authorization are distinct facts. The plan must
 not reject a row merely because it is console-enabled and also has a chat permission. Decide the
@@ -252,11 +258,12 @@ saving alone does not restart a service. The design must cover:
   restart are explicit actions; verify the destination and outcome, and do not silently reseed over edits.
 - Applying changes by the necessary supported mechanism (reload or restart). Where an operation
   affects players, broadcast the event to all players in chat. Define affected operations, notice
-  timing and failure behaviour; client-visible messages remain subject to ASURA and the parity audit.
+  timing and failure behaviour; client-visible messages remain subject to Rule 0 and the parity audit.
 - Using the supervisor for process control and the world API for running-world operations. Define
   browser request protections.
 
-The existing web-based `tools/manage` is a candidate starting point. The manager must be accessible
+`tools/manage` is the panel, and `kryta-management-service` serves it as the stack's `manage`
+service on port 6602 (`tools/supervisor/stack.json.dist`). The manager must be accessible
 from the server computer and remotely through a browser. Hosting, network exposure and profile
 packaging remain to be designed; the manager is part of the server stack.
 
@@ -290,8 +297,8 @@ tree's language and lineage.
 - **A supervisor control channel** (`crates/asura-supervisor/src/control.rs`): a loopback line
   protocol whose verbs are `status`, `stop <service>`, `stop`, `restart <service>`, `quit`, plus
   `deploy-world <old> <new>` (`:3-4`), with a `request()` client at `:113` so the CLI is a thin
-  client of a running supervisor instead of a second owner of the processes. This is exactly what
-  this tree's supervisor lacks.
+  client of a running supervisor instead of a second owner of the processes. This tree's supervisor
+  has the same verbs except `deploy-world` (`tools/supervisor/src/Control.rs`).
 - **A `tools/` directory of 37 files** - 19 Python, 16 PowerShell, two SQL seeds: capture
   (`sniff-capture.py`), reading
   (`capture-read.py` - layer-aware, `--describe`, `--self-test`, refuses a file that does not state
@@ -390,8 +397,8 @@ stubbed.
   allowed command names checked before dispatch (`entitysystem/systems/CommandSystem.java:86`), and a
   command reply colour documented as "Command reply" (`DarkOrange_DarkOrange`).
 - **A map table**: 728 rows of `(map id, type flag, map file id, name)`
-  (`default_data.sql:464`) - a map id to archive file id table, which this tree's map rows and the
-  archive index already cover.
+  (`default_data.sql:464`) - a map id to archive file id table, which this tree's map records
+  (`basic.json` in the world pack) and the archive index already cover.
 - **Annotated packet classes** (216 outbound, 17 inbound) with per-field javadoc, and a reflection
   codec.
 - Verdict: **idea only, as corroboration.** Its registry is the same shape as the reference's RBAC
@@ -480,7 +487,8 @@ first-party files), Python 3, and ES modules; it runs.
 
 ### WowWarband / the reference
 
-Already `AGENTS.md`'s design authority; its four surfaces are section 1 above. Its command scripts
+Already `AGENTS.md`'s design authority; its console, its remote command endpoint and its world command
+queue are in section 8, "Reference and existing boundaries". Its command scripts
 (`src/server/scripts/Commands/`, 55 `cs_*.cpp` files) are the vocabulary a console should grow into,
 and `cs_server.cpp` is the shape a server-level console group takes (`server
 exit|restart|shutdown|idlerestart|idleshutdown`, `server set loglevel|motd|closed|security`,
@@ -515,7 +523,9 @@ online players. Account deletion retains player rows; their policy needs an expl
 changing it. Metrics are not recorded by this server yet; the player page lists the metric catalog
 with every value at zero. The player page and world read names, rank thresholds
 and display test points from the configured `WorldPack`'s `titles.json`. The
-catalog defines `Hog Jumper` for the `jumps` metric at 1/10,000. The standard
+catalog defines two custom tracks: 48 `Hog Jumper` for the `jumps` metric at 1/10,000,
+and 49 `Embiggener` for `Minipets Embiggened`. The portal publishes their text at
+`GET /kryta/custom-titles.json` (`game/src/Portal/mod.rs`). The standard
 client receives the short rank name `Jump`. The fixed-text probe displayed
 the full name and description in-game. The title messages are evidenced at E23 and
 E156-E158; no metric source or database row exists yet.
@@ -550,7 +560,8 @@ administrator authentication.
   requirement to copy SOAP's protocol or credentials into the manager.
 - `tools/manage/src/lib.rs` (`run`) starts Kryta's existing HTTP manager with its own settings, and
   its routing table names every address. `tools/supervisor/stack.json.dist` lists auth, world and the
-  manager, and `tools/supervisor/src/main.rs:185-200,212` owns child processes and stack shutdown. The
+  manager, and `tools/supervisor/src/main.rs` (`start`, `restart`, `stop_all`) owns child processes
+  and stack shutdown. The
   manager's current local token mechanism is not the planned administrator login or a remote security
   model.
 - `docs/decisions/0008-administration-tool.md` records the current separate, loopback-only tool.
@@ -569,7 +580,7 @@ input specification and required context. Command names and aliases in `config/S
 to those registrations; reject duplicate names and unknown mappings during validation. Add an operation
 by registering its implementation, without adding a dispatcher match arm or changing other callers.
 The command adapter owns command-line parsing; API calls carry structured input. Neither changes the
-existing client command parser or frames until that subject is ported against ASURA.
+existing client command parser or frames until that subject is ported from its source.
 
 An invocation contains an operation name, structured arguments, authenticated caller identity and
 caller type, plus any context required by the operation. Identity is supplied by a trusted adapter,
@@ -593,8 +604,8 @@ Expose a separate, local-only HTTP/JSON control interface in worldserver, analog
 the reference's worldserver SOAP endpoint. The manager calls it for world operations; the standalone
 CLI uses the same control contract. A separate local supervisor control interface handles only service
 status and lifecycle. Its control path is not implemented by the world or by spawning a second watcher.
-The exact endpoint names, schemas, connection limits and settings are specified with the first slice
-below and refined in the implementation's own documentation; no default port is established here.
+The endpoint, its schema and its settings are the first slice below; the settings and their defaults
+(`Control.Port` 7878, loopback only) are in `04-configuration.md`.
 
 The manager authenticates administrators and presents authenticated requests to the control interfaces.
 Local process-to-process authentication must be independently enforced; loopback alone is not identity.
@@ -638,9 +649,9 @@ implementation stage. Direct remote API and CLI access remains a later extension
 The standalone CLI, supervisor operations, administrator login and remote browser access follow as
 separate slices. Chat and Lua adapters use the same operation contract when their own prerequisites
 are satisfied. Before modifying a client-facing handler or exposing new in-game behavior, read the
-matching ASURA implementation, `docs/game-rules.md` for the subject and `09-parity-audit.md`; port the
+sources that implement it, `docs/game-rules.md` for the subject and `09-parity-audit.md`; port the
 whole applicable behavior or stop where Rule 0 requires an owner decision. The current command and
-chat implementation must be compared with ASURA before changing client-facing behavior; this plan does
+chat implementation must be compared with its source before changing client-facing behavior; this plan does
 not establish its correctness or live-client status.
 
 ## 9. Delivery plan and proof
@@ -689,7 +700,7 @@ blocking the API and settings manager on playback or a map renderer.
    `CaptureFile` records the wire in both directions (`game/Server/Capture.rs`),
    `tools/capture/read.py` reads a capture in the layer it declares, and `tools/capture/diff.py`
    compares two captures message by message, refusing a pair whose layers differ. Reading and
-   comparison are therefore done; replay that sends inputs remains open (section 7, fork 4).
+   comparison are therefore done; replay that sends inputs remains open.
 
 ## 10. Remaining design work
 
@@ -700,8 +711,8 @@ blocking the API and settings manager on playback or a map renderer.
   `admin` / `admin` and full operator access are the owner's direction. Finer privileges are future work.
 - **Console and standalone CLI: landed** (`eb66d88`): the embedded console over the one registry, the
   standalone `kryta-cli` with `help`/`list`/`<operation> [--arg name=value]`, the supervisor's control
-  channel, and the exit-code contract. Still open: in-game chat invoking an operation by that path, and
-  target selection for operations on players, maps, districts and instances.
+  channel, and the exit-code contract. Still open: target selection for operations on players, maps,
+  districts and instances.
 - Configuration Manager monitoring is next: service failures and the existing service logs need a
   read-only view. Server-settings editing, generic JSON asset management, and their acceptance workflow
   follow. Remote browser hosting and access remain a separate design question; the existing portal is
@@ -711,5 +722,6 @@ blocking the API and settings manager on playback or a map renderer.
 - Profile storage and selection, map visualization, recording comparison and replay scope; `11` and
   `12` keep the related open questions.
 
-No research code has been selected for reuse. No new API, manager, transport, permission schema or
-client-visible behaviour is implemented or approved by this document.
+No research code has been selected for reuse. What has landed is marked **landed** above. Nothing else
+in this document - remote transport, administrator login, a permission schema, or any new
+client-visible behaviour - is implemented or approved by it.
