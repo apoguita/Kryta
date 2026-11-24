@@ -1,4 +1,4 @@
-{"record":"capture","tool":"asura-world","started_at":"1793160480.672050000Z"}
+{"record":"capture","tool":"asura-world","started_at":"1793160480.672050000Z","sanitised":true,"notes":"cleaned 2026-11-24: the client's computer info and hash messages (0x0A, 0x0B) have no payload, the 16-byte identifier in the players request (0x90) is zeroed, name-header payloads are dropped, and every UTF-16 run of three or more letters is zeroed; each record's 'redacted' and 'masked' fields say what was removed, offsets preserved"}
 {"seq":1,"t":17.844,"direction":"StoC","header":380,"size":6,"data":"7c013f3f0000"}
 {"seq":2,"t":17.844,"direction":"StoC","header":390,"size":2,"data":"8601"}
 {"seq":3,"t":17.844,"direction":"StoC","header":381,"size":22,"data":"7d0109004100730075007200610020004f006e006500"}
@@ -7,8 +7,8 @@
 {"seq":6,"t":17.859,"direction":"StoC","header":12,"size":2,"data":"0c00"}
 {"seq":7,"t":17.953,"direction":"StoC","header":30,"size":6,"data":"1e005d000000"}
 {"seq":8,"t":18.048,"direction":"StoC","header":30,"size":6,"data":"1e005f000000"}
-{"seq":9,"t":18.057,"direction":"CToS","header":32778,"size":140,"data":"0a80e90c067454ad1c45a1c0b795315b0fcf0a00000000000000654a000047656e75696e65496e74656c71060000140000001bff00002090000002100000bf730000ff0d0000120041004d004400200052006100640065006f006e00200052005800200036003800300030000f00330032002e0030002e00320031003000340035002e003100360030003100"}
-{"seq":10,"t":18.057,"direction":"CToS","header":32779,"size":88,"data":"0b80e90c067454ad1c45a1c0b795315b0fcf00000000010000001bff0000140000000700570069006e0064006f00770073001200470077002f00330039003100310032002e00300020002800570069006e00330032002900"}
+{"seq":9,"t":18.057,"direction":"CToS","header":32778,"size":140,"data":null,"redacted":"client-identity","masked":[]}
+{"seq":10,"t":18.057,"direction":"CToS","header":32779,"size":88,"data":null,"redacted":"client-identity","masked":[]}
 {"seq":11,"t":18.058,"direction":"CToS","header":32777,"size":10,"data":"09801000000000000000"}
 {"seq":12,"t":18.058,"direction":"CToS","header":32913,"size":4,"data":"91800000"}
 {"seq":13,"t":18.058,"direction":"StoC","header":324,"size":5,"data":"4401010000"}
@@ -69,7 +69,7 @@
 {"seq":68,"t":18.453,"direction":"StoC","header":30,"size":6,"data":"1e005d000000"}
 {"seq":69,"t":18.547,"direction":"StoC","header":30,"size":6,"data":"1e005e000000"}
 {"seq":70,"t":18.655,"direction":"StoC","header":30,"size":6,"data":"1e006b000000"}
-{"seq":71,"t":18.704,"direction":"CToS","header":32912,"size":19,"data":"9080f5e6066671a98745b8fc3aa6b3c8552501"}
+{"seq":71,"t":18.704,"direction":"CToS","header":32912,"size":19,"data":"90800000000000000000000000000000000001","masked":[[2,16]],"redacted":null}
 {"seq":72,"t":18.705,"direction":"StoC","header":29,"size":4,"data":"1d000000"}
 {"seq":73,"t":18.705,"direction":"StoC","header":24,"size":36,"data":"18000800ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}
 {"seq":74,"t":18.705,"direction":"StoC","header":26,"size":17,"data":"1a0001000381000824020130250003b824"}

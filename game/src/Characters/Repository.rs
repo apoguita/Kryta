@@ -539,6 +539,72 @@ impl DatabaseCharacters {
         }
     }
 
+    /// The preferences blob the character last uploaded, or `None` when it never uploaded one.
+    ///
+    /// The read a load makes: `GAME_SMSG_PREFERENCES_BLOB` (`0x00B5`) carries the blob back
+    /// (`data/sql/base/db_characters/0007-character-preferences.sql`). The bytes travel as hex text
+    /// because the pool binds text, integers and flags only, as `game/src/Accounts/mod.rs` does for
+    /// the account's own blob.
+    pub fn preferences(&self, uuid: &str) -> Result<Option<Vec<u8>>, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "SELECT encode(\"preferences\", 'hex') FROM \"characters\" WHERE \"uuid\" = $1",
+                vec![Param::Text(uuid.to_string())],
+            ),
+            Err(_) => {
+                return Err(
+                    "the character database pool is poisoned; no preferences can be read"
+                        .to_string(),
+                );
+            }
+        };
+        let rows = match reply.recv() {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(error)) => return Err(format!("the preferences cannot be read: {error}")),
+            Err(_) => {
+                return Err(
+                    "the character database answered no query: it is shutting down".to_string(),
+                );
+            }
+        };
+        let Some(row) = rows.first() else {
+            return Ok(None);
+        };
+        let hex: Option<String> = row
+            .try_get(0)
+            .map_err(|error| format!("column preferences: {error}"))?;
+        hex.map(|hex| decode_hex(&hex)).transpose()
+    }
+
+    /// Keep the preferences blob the client uploaded for this character (`0x0045`).
+    ///
+    /// `false` means no row matched, which the caller can only report: the client is told nothing
+    /// either way (`recordings/client/feature/preferences/weapon-sets-toggle-20261124.jsonl` seq 476-483, where only world
+    /// updates follow the upload).
+    pub fn record_preferences(&self, uuid: &str, preferences: &[u8]) -> Result<bool, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "UPDATE \"characters\" SET \"preferences\" = decode($1::text, 'hex') \
+                 WHERE \"uuid\" = $2 RETURNING 1",
+                vec![
+                    Param::Text(encode_hex(preferences)),
+                    Param::Text(uuid.to_string()),
+                ],
+            ),
+            Err(_) => {
+                return Err(
+                    "the character database pool is poisoned; the preferences were not recorded"
+                        .to_string(),
+                );
+            }
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Err(error)) => Err(format!("the preferences were not recorded: {error}")),
+            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+        }
+    }
+
     /// One query, and the characters it answered.
     fn read(&self, sql: &str, params: Vec<Param>) -> Vec<Character> {
         let reply = match self.pool.lock() {
@@ -1108,6 +1174,32 @@ fn dwords(text: &str) -> Vec<u32> {
         .collect()
 }
 
+/// Bytes as lowercase hex, the form `decode(..., 'hex')` reads.
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        text.push_str(&format!("{byte:02x}"));
+    }
+    text
+}
+
+/// Hex text, as `encode(..., 'hex')` writes it, back to bytes.
+fn decode_hex(text: &str) -> Result<Vec<u8>, String> {
+    if text.len() % 2 != 0 {
+        return Err(format!(
+            "the preferences column is {} hex digits, an odd number",
+            text.len()
+        ));
+    }
+    (0..text.len())
+        .step_by(2)
+        .map(|at| {
+            u8::from_str_radix(&text[at..at + 2], 16)
+                .map_err(|error| format!("the preferences column is not hex: {error}"))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1188,6 +1280,65 @@ mod tests {
             listed.iter().find(|character| character.name == "Listed One").map(|character| character.settings.last_outpost),
             Some(148),
             "the row now says the character is in map 148"
+        );
+
+        {
+            let mut pool = pool.lock().unwrap();
+            pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid])
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn the_preferences_blob_survives_the_hex_round_trip() {
+        let blob: Vec<u8> = (0..=255u8).collect();
+        assert_eq!(decode_hex(&encode_hex(&blob)).unwrap(), blob);
+        assert_eq!(encode_hex(&[0x05, 0x00, 0x3c]), "05003c");
+        assert!(decode_hex("abc").is_err());
+        assert!(decode_hex("zz").is_err());
+    }
+
+    #[test]
+    #[ignore = "needs the character database"]
+    fn a_characters_preferences_are_stored_and_read_back() {
+        let _serial = database::updater::apply::test_lock("characters");
+        let Some(source) = source() else {
+            panic!("the character database is not reachable");
+        };
+        let account = "00000000-0000-0000-0000-00000000C10E";
+        let uuid = "00000000-0000-0000-0000-0000000000AB";
+        let pool = Arc::clone(&source.pool);
+        {
+            let mut pool = pool.lock().unwrap();
+            pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid])
+                .unwrap();
+            pool.query_with(
+                "INSERT INTO \"characters\" (\"uuid\", \"account_uuid\", \"name\", \"appearance\", \"primary_profession\", \"unlocked_professions\", \"campaign\", \"level\") \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                &[&uuid, &account, &"Prefs One", &0xABCDEFi64, &1i64, &2i64, &0i64, &1i64],
+            )
+            .unwrap();
+        }
+
+        assert_eq!(
+            source.preferences(uuid).expect("read"),
+            None,
+            "a character that never uploaded has no blob"
+        );
+        // The blob the retail client uploaded with two weapon sets unticked
+        // (`recordings/client/feature/preferences/weapon-sets-travel-20261124.jsonl` seq 466).
+        let blob = decode_hex(
+            "050066110008c03c0000100000040024000010000004730000760100007712000c0000000000000000000000406000000000",
+        )
+        .unwrap();
+        assert_eq!(blob.len(), 50);
+        assert!(source.record_preferences(uuid, &blob).expect("stored"));
+        assert_eq!(source.preferences(uuid).expect("read"), Some(blob));
+        assert!(
+            !source
+                .record_preferences("00000000-0000-0000-0000-0000000000AC", &[1])
+                .expect("answered"),
+            "a character that is not there is not written"
         );
 
         {

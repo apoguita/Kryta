@@ -155,6 +155,10 @@ const CLIENT_ITEM_MOVE: u16 = 0x8072;
 /// no handler for `GAME_CMSG_ITEM_DESTROY` (`0x8069`).
 const CLIENT_DROP_ITEM: u16 = 0x802C;
 const CLIENT_UNEQUIP_ITEM: u16 = 0x804F;
+/// The client's per-character preferences (`0x0045`, on the wire `0x8045`): a `u16` count and that
+/// many bytes, the packet table's `Array8(256)`. The client names the sender
+/// `CharMsgSendOrderStorePrefs` (`research/Eden/docs/re/configuration.md` 7.1).
+const CLIENT_STORE_PREFERENCES: u16 = 0x8045;
 const CLIENT_PING_REPLY: u16 = 0x8009;
 const CLIENT_HEARTBEAT: u16 = 0x800C;
 const CLIENT_DISCONNECT: u16 = 0x8008;
@@ -1221,6 +1225,14 @@ impl WorldSession {
             // (`ASURA/crates/asura-world/src/item.rs:555`).
             (CLIENT_UNEQUIP_ITEM, Phase::Loading(_) | Phase::Loaded(_)) => {
                 self.answer_unequip_item(peer);
+            }
+            // The client's per-character preferences changed (a weapon set was ticked, say): the
+            // whole blob is kept on the character's row, and **nothing is sent back** - on the
+            // retail server only world updates follow the upload
+            // (`recordings/client/feature/preferences/weapon-sets-toggle-20261124.jsonl` seq 476-483). The next load
+            // hands the blob back in `0x00B5` (`Player::load_block`).
+            (CLIENT_STORE_PREFERENCES, Phase::Loading(load) | Phase::Loaded(load)) => {
+                self.answer_store_preferences(peer, message, load.sheet);
             }
             // The client wears one of its items: the slot its kind is worn in, in the equipped
             // bag, with whatever was worn there taken off to the first free carrying slot - and

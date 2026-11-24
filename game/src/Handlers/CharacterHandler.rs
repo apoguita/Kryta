@@ -44,6 +44,74 @@ impl Creation {
     }
 }
 
+/// The blob a `0x8045` carries: the bytes after the header and the `u16` count, or `None` when the
+/// count runs past the message or past the 256 bytes the message declares.
+///
+/// Measured on the retail client, where the capture holds the client's own struct - the header, the
+/// count as a dword, then the bytes: `45000000 32000000 0500661100...` is a count of 50 and a blob
+/// that begins `05 00 66 11` (`recordings/client/feature/preferences/weapon-sets-toggle-20261124.jsonl` seq 476). On the
+/// wire the count is the `u16` every `Array8` carries.
+pub(crate) fn preferences_of(message: &[u8]) -> Option<&[u8]> {
+    let count = usize::from(u16::from_le_bytes(message.get(2..4)?.try_into().ok()?));
+    if count > character_packets::PREFERENCES_BYTES {
+        return None;
+    }
+    message.get(4..4 + count)
+}
+
+impl WorldSession {
+    /// `0x8045`: keep the character's preferences blob, and answer nothing.
+    pub(crate) fn answer_store_preferences(
+        &self,
+        peer: &str,
+        message: &[u8],
+        sheet: &crate::characters::CharacterSheet,
+    ) {
+        let Some(preferences) = preferences_of(message) else {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: a preferences upload of {} bytes cannot be read; not stored.",
+                    message.len()
+                ),
+            );
+            return;
+        };
+        let Some(characters) = self.characters() else {
+            self.say(
+                LogLevel::Debug,
+                format!(
+                    "Gameplay connection from {peer}: {} bytes of preferences arrived with no character database; not stored.",
+                    preferences.len()
+                ),
+            );
+            return;
+        };
+        let uuid = crate::characters::uuid_text(&sheet.uuid);
+        match characters.record_preferences(&uuid, preferences) {
+            Ok(true) => self.say(
+                LogLevel::Info,
+                format!(
+                    "Gameplay connection from {peer}: stored {} bytes of preferences for '{}'.",
+                    preferences.len(),
+                    sheet.name
+                ),
+            ),
+            Ok(false) => self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: a preferences upload for '{}' matched no character row.",
+                    sheet.name
+                ),
+            ),
+            Err(error) => self.say(
+                LogLevel::Error,
+                format!("Gameplay connection from {peer}: the preferences could not be stored: {error}"),
+            ),
+        }
+    }
+}
+
 /// The player-data block a creation screen is drawn from, in GWPS's order.
 ///
 /// Reference: `GameSrv_HandleCharCreationRequestPlayer` - the player-data start, the inventory stream,
@@ -391,5 +459,30 @@ impl WorldSession {
             }
 
         }
+    }
+}
+
+#[cfg(test)]
+mod preferences_tests {
+    use super::preferences_of;
+
+    #[test]
+    fn a_preferences_upload_is_its_counted_bytes() {
+        // On the wire: the header, a `u16` count, the bytes. The blob is the one the retail client
+        // uploaded with its weapon sets unticked
+        // (`recordings/client/feature/preferences/weapon-sets-toggle-20261124.jsonl` seq 476), which begins `05 00 66 11`.
+        let mut message = vec![0x45, 0x80, 50, 0];
+        message.extend([0x05, 0x00, 0x66, 0x11]);
+        message.extend([0u8; 46]);
+        let blob = preferences_of(&message).expect("a whole upload");
+        assert_eq!(blob.len(), 50);
+        assert_eq!(&blob[..4], &[0x05, 0x00, 0x66, 0x11]);
+
+        // A count past the message, or past the 256 bytes the message declares, is not read.
+        assert_eq!(preferences_of(&message[..30]), None);
+        assert_eq!(preferences_of(&[0x45, 0x80, 0x01, 0x01]), None);
+        assert_eq!(preferences_of(&[0x45, 0x80]), None);
+        // An empty upload is an empty blob.
+        assert_eq!(preferences_of(&[0x45, 0x80, 0, 0]), Some(&[][..]));
     }
 }

@@ -33,7 +33,7 @@ Each of those contains the **kind**, and every kind has an optional **subject** 
 | `login/` | the auth session: handshake, login batch, character list |
 | `world/` | one world process's message trace, one file per run |
 | `session/` | a whole client session (login -> travel -> maps -> exit) |
-| `feature/<subject>/` | one subject per recording: `movement`, `items`, `travel`, `chat`, `maps`, `character_creation` |
+| `feature/<subject>/` | one subject per recording: `movement`, `items`, `travel`, `chat`, `maps`, `character_creation`, `preferences` |
 | `raw/` | `client/` only: unfiltered sniffer captures not yet sorted into a kind (login, title, fresh character, the Northlands) |
 
 ## Naming: the subject first, the date only to disambiguate
@@ -62,20 +62,25 @@ movement-sniff.log                                the client-side movement sniff
 - The three `.log` recordings (`gwps/world/load-stream.log`, `gwps/session/login-travel-session.log`,
   `client/feature/movement/movement-sniff.log`) match the repository's `*.log` ignore rule, so they are
   not committed and are absent from a fresh clone; the copies are in ASURA's `recordings/`.
-- **Never edit a recording.** A re-record is a new file.
+- **Never edit a recording.** A re-record is a new file. The one exception is the cleaning of
+  2026-11-24, on the owner's word: every recording was cleaned in place of the client's computer
+  info and hash messages (`0x0A`, `0x0B`), the 16-byte identifier in the players request (`0x90`),
+  name-header payloads and leftover UTF-16 text. A cleaned record says what was removed in its
+  `redacted` and `masked` fields, offsets preserved, and its file's header says so in `notes`.
 - When a new recording collides with an undated one, the old one is renamed to the dated form and
   `index.jsonl` is updated - the date appears exactly when it earns its place.
 - The full time, timezone, build and tool live in `index.jsonl`; the filename only carries what a
   human needs.
 - Client-side captures must be **sanitised** before they land here (the capture tool masks names
-  and account data, offsets preserved); the index says what was sanitised. **The six files under
-  `client/raw/` break this rule**: each one's header says `"sanitised":false` and
-  `RAW: contains names/UUIDs -- do not commit`, and all six are committed.
+  and account data, offsets preserved); the index says what was sanitised. The files under
+  `client/raw/` were captured with `--raw` and cleaned afterwards on 2026-11-24, so their headers now
+  say `"sanitised":true`. The versions committed before that date were not clean, and they remain in
+  this repository's Git history.
 
 ## The index
 
 `index.jsonl` is one JSON line per indexed recording - the way to search at thousands of files. It
-does not cover the folder: it holds 19 lines (7 `asura`, 10 `client`, 2 `gwps`) for 55 recordings, so
+does not cover the folder: it holds 21 lines (7 `asura`, 12 `client`, 2 `gwps`) for 57 recordings, so
 a file without a line is read from its own header and its folder:
 
 ```json

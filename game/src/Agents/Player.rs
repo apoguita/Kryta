@@ -105,6 +105,7 @@ impl Player {
         load_ms: u32,
         unlocked: &[u32],
         titles: &crate::characters::titles::VanillaTitles,
+        preferences: Option<&[u8]>,
     ) -> Vec<Vec<u8>> {
         let agent = self.agent;
         let player = self.player;
@@ -162,6 +163,15 @@ impl Player {
         frames.push(character_packets::skillbar_update(
             agent, &[0u32; 8], &[0u32; 8], 1,
         ));
+        // The character's own preferences, when it has uploaded some (`0x8045`), directly before
+        // the unlocked skills: that is where the retail server sends them on every load
+        // (`recordings/client/session/login-to-spawn-20261124-180308.jsonl` seq 1253, between the
+        // exploration grid's `0x008A` at 1252 and `0x00DB` at 1254). A character that never
+        // uploaded is sent nothing here, as before; what the retail server sends such a character
+        // is not recorded (`docs/port/09-parity-audit.md`, row `0x00B5`).
+        if let Some(preferences) = preferences {
+            frames.push(character_packets::preferences_blob(preferences));
+        }
         frames.push(character_packets::update_unlocked_skills(&[]));
         frames.push(character_packets::character_update_factions(&progress));
         frames.push(misc_packets::char_visibility_flags(
@@ -243,5 +253,61 @@ impl Player {
             titles.initial_display_rank(),
         ));
         frames
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn player() -> Player {
+        Player {
+            agent: 1,
+            player: 1,
+            position: (0.0, 0.0),
+            plane: 0,
+            direction: (1.0, 0.0),
+            appearance: 0,
+            equipped: [0; 9],
+            gold: 0,
+            profession: 1,
+            unlocked_professions: 2,
+            level: 1,
+            name: "Prefs One".to_string(),
+        }
+    }
+
+    fn headers(frames: &[Vec<u8>]) -> Vec<u16> {
+        frames
+            .iter()
+            .map(|frame| u16::from_le_bytes([frame[0], frame[1]]))
+            .collect()
+    }
+
+    #[test]
+    fn the_preferences_go_directly_before_the_unlocked_skills() {
+        // The retail order: `0x00B5` at seq 1253, `0x00DB` at seq 1254
+        // (`recordings/client/session/login-to-spawn-20261124-180308.jsonl`).
+        let settings = crate::world::world_config::WorldConfig::default();
+        let titles = crate::characters::titles::VanillaTitles::load(
+            "../config/World/Vanilla/titles.json",
+        )
+        .expect("the titles file");
+        let blob = [0x05u8, 0x00, 0x66, 0x11];
+        let with = player().load_block(&settings, 0, &[], &titles, Some(&blob));
+        let sent = headers(&with);
+        let at = sent
+            .iter()
+            .position(|&header| header == character_packets::PREFERENCES_BLOB)
+            .expect("the block carries the preferences");
+        assert_eq!(sent[at + 1], character_packets::UPDATE_UNLOCKED_SKILLS);
+        assert_eq!(with[at], character_packets::preferences_blob(&blob));
+
+        // A character that never uploaded is sent the block without it, and nothing else moves.
+        let without = player().load_block(&settings, 0, &[], &titles, None);
+        assert!(!headers(&without).contains(&character_packets::PREFERENCES_BLOB));
+        let mut expected = with.clone();
+        expected.remove(at);
+        assert_eq!(without, expected);
     }
 }

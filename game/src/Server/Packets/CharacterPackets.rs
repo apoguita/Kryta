@@ -116,6 +116,25 @@ pub fn player_update_unlocked_professions(agent: u32, unlocked: u32) -> Vec<u8> 
     frame(PLAYER_UPDATE_UNLOCKED_PROFESSIONS, &body)
 }
 
+/// `GAME_SMSG_PREFERENCES_BLOB`: the character's own preferences, as the client last uploaded them.
+pub const PREFERENCES_BLOB: u16 = 0x00B5;
+
+/// The most bytes a preferences blob holds: the packet table's own `Array8(256)` for `0x00B5` and for
+/// the client's `0x8045` (`game/src/Server/Protocol/Tables.rs`).
+pub const PREFERENCES_BYTES: usize = 256;
+
+/// `0x00B5`: a `u16` count and that many bytes - the blob a character's `0x8045` stored, handed back
+/// on a load. Measured on the retail client: a count of 50 and the 50 bytes the client had uploaded
+/// (`recordings/client/session/login-to-spawn-20261124-180308.jsonl` seq 1253, where the capture
+/// holds the client's struct: the header, the count as a dword, then the bytes).
+pub fn preferences_blob(preferences: &[u8]) -> Vec<u8> {
+    let preferences = &preferences[..preferences.len().min(PREFERENCES_BYTES)];
+    let mut body = Vec::with_capacity(2 + preferences.len());
+    body.extend_from_slice(&(preferences.len() as u16).to_le_bytes());
+    body.extend_from_slice(preferences);
+    frame(PREFERENCES_BLOB, &body)
+}
+
 /// `0x00DB`: a counted list of skill ids.
 pub fn update_unlocked_skills(skills: &[u32]) -> Vec<u8> {
     frame(UPDATE_UNLOCKED_SKILLS, &dwords(skills))
@@ -231,6 +250,18 @@ mod tests {
             player_update_unlocked_professions(1, CREATION_UNLOCKED_PROFESSIONS),
             vec![0xB6, 0x00, 1, 0, 0, 0, 2, 0, 0, 0]
         );
+    }
+
+    #[test]
+    fn the_preferences_blob_is_a_counted_byte_string() {
+        // The 50 bytes the retail server sends a character with every per-character setting at its
+        // usual state (`recordings/client/session/login-to-spawn-20261124-180308.jsonl` seq 1253).
+        let blob: Vec<u8> = (0..50u8).collect();
+        let frame = preferences_blob(&blob);
+        assert_eq!(&frame[..4], &[0xB5, 0x00, 50, 0]);
+        assert_eq!(&frame[4..], &blob[..]);
+        // The message declares 256 bytes; a longer blob is cut to what it can carry.
+        assert_eq!(preferences_blob(&[7u8; 300]).len(), 4 + PREFERENCES_BYTES);
     }
 
     #[test]

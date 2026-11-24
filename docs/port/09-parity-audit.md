@@ -72,7 +72,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | the reference client (a test double that speaks the wire) | `client/reference_client.rs` (17 KB) | nothing | **missing**: no test proves a whole conversation against an independent speaker |
 | the trace of every byte | `client/trace.rs` | `shared/src/Network/` trace + logs | ported thin |
 
-## 3. Client -> server: the 37 messages ASURA's code handles, and 2 of this tree's
+## 3. Client -> server: the 37 messages ASURA's code handles, and 3 of this tree's
 
 ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which the table marks
 `Observed` (`dispatch.rs:73`), so its code handles 37.
@@ -97,7 +97,7 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 | `0x8035` | `AUTH_CMSG_ASK_SERVER_RESPONSE` | `lib.rs` | `session.rs` | ported |
 | `0x8038` | `AUTH_CMSG_PORTAL_ACCOUNT_LOGIN` | `lib.rs:572-680` | `session.rs` `answer_login`: the named character is recorded, or the account's first | ported |
 
-### 3.2 The game connection (22, and 2 of this tree's)
+### 3.2 The game connection (22, and 3 of this tree's)
 
 | header | message | ASURA handler | this tree | verdict |
 |---|---|---|---|---|
@@ -111,6 +111,7 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 | `0x803D` | `GAME_CMSG_POSITION_UPDATE` (26) | `agent.rs:887`, then `dispatch.rs:44-54` | `answer_position_update`, then `cross_portal` | ported (the doorway its step crosses is judged since round 18) |
 | `0x803E` | `GAME_CMSG_MOVE_TO_COORD` (14) | `agent.rs:710` | `answer_move_to_coord` | ported |
 | `0x8047` | `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` | `agent.rs:1117`, then `dispatch.rs:60-68` | `answer_last_position`, then `cross_portal` | ported (a taken correction crosses a doorway like a step) |
+| `0x8045` | the character's preferences (262; unnamed in the table, `CharMsgSendOrderStorePrefs` in the client, `research/Eden/docs/re/configuration.md` 7.1) | none: the row only. No research project handles it | `CLIENT_STORE_PREFERENCES` -> `answer_store_preferences` (`game/src/Handlers/CharacterHandler.rs`): the counted blob is kept on `characters.preferences` (`data/sql/base/db_characters/0007-character-preferences.sql`) and nothing is sent back | ported from retail recordings of 2026-11-24: two uploads of 50 bytes differing in one byte, with only world updates after each (`recordings/client/feature/preferences/weapon-sets-toggle-20261124.jsonl` seq 476, 696), and an upload whose bytes the next load returns (`recordings/client/feature/preferences/weapon-sets-travel-20261124.jsonl` seq 466, 1608). |
 | `0x804F` | `GAME_CMSG_UNEQUIP_ITEM` (6) | `item.rs:555`, `handle_unequip_item` | `CLIENT_UNEQUIP_ITEM`: ASURA's answer, a log line and nothing on the wire | ported |
 | `0x8058` | `GAME_CMSG_TITLE_DISPLAY` (6) | none: the row only (`packets.rs:422`) | `WorldSession.rs:1577`: the selectable rank, `0x00F4` to the player and its peers | ported thin, from the retail and Preforged recordings (section 5, the title block) |
 | `0x8059` | `GAME_CMSG_TITLE_HIDE` (2) | none: the row only (`packets.rs:423`) | `WorldSession.rs:1577`: rank zero, `0x00F4` to the player and its peers | ported thin, from the retail and Preforged recordings (section 5, the title block) |
@@ -126,10 +127,10 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 | `0x80B1` | `GAME_CMSG_PARTY_TRAVEL` (9) | `travel.rs:279`, `handle_party_travel` | `answer_party_travel` and `begin_transfer` | ported |
 | `0x80C1` | `GAME_CMSG_TRAVEL_INIT` (10) | `travel.rs:147`, `handle_travel_init` (`dispatch.rs:73`) | `answer_travel_init` | ported - **missing until round 17**, and it starts no transfer in either tree |
 
-**Score: 37 of ASURA's ported or ported thin (15 auth + 22 game), 0 missing; 2 more ported thin from
-recordings (`0x8058`, `0x8059`).**
+**Score: 37 of ASURA's ported or ported thin (15 auth + 22 game), 0 missing; 3 more from recordings
+(`0x8045` ported, `0x8058` and `0x8059` ported thin).**
 
-## 4. Server -> client: the 87 messages ASURA emits, and 3 of this tree's
+## 4. Server -> client: the 87 messages ASURA emits, and 4 of this tree's
 
 ### 4.1 The auth connection (8)
 
@@ -144,7 +145,7 @@ recordings (`0x8058`, `0x8059`).**
 | `0x0014` | `AUTH_SMSG_FRIEND_STREAM_END` | `messages.rs:524` | `login_reply::friend_stream_end` | ported |
 | `0x0016` | `AUTH_SMSG_ACCOUNT_SETTINGS` (2058) | `messages.rs:572`; the blob chosen as in aeratemark's fork, `research/Kryta-aeratemark/authserver/src/Server/session.rs:244-284`, `1234-1246` | `login_reply::account_settings_frame`, carrying the account's stored upload, or the committed 591-byte block when it has none (`session.rs` `settings_for_login`; `docs/evidence/ui-settings-persistence.md`) | ported |
 
-### 4.2 The game connection (79, and 3 of this tree's)
+### 4.2 The game connection (79, and 4 of this tree's)
 
 | header | message | ASURA builder | this tree | verdict |
 |---|---|---|---|---|
@@ -186,6 +187,7 @@ recordings (`0x8058`, `0x8059`).**
 | `0x00A2` | agent property, float | `agent_property_update_float` | same | ported |
 | `0x00B0` | a player's party size | `player_update_party_size` | `party_packets::player_update_party_size` | ported |
 | `0x00B1` | a player's party | `player_update_party` | `party_packets::player_update_party` | ported |
+| `0x00B5` | `GAME_SMSG_PREFERENCES_BLOB` (262) | none: ASURA does not send it (`docs/evidence/ui-settings-persistence.md` 3), and no research project does | `character_packets::preferences_blob`, in `Player::load_block` directly before `0x00DB`, carrying the blob the character's `0x8045` stored | **ported thin**, from retail recordings: the message sits between `0x008A` and `0x00DB` in a load and carries a count and that many bytes (`recordings/client/session/login-to-spawn-20261124-180308.jsonl` seq 1252-1254), and they are the bytes the client last uploaded (`recordings/client/feature/preferences/weapon-sets-travel-20261124.jsonl` seq 466, 1608). Thin in two ways. **A character that has never uploaded is sent no `0x00B5`**, where retail sends one on every recorded load: what retail sends a new character is not recorded - the only blob seen with every setting at its usual state is the 50 bytes of seq 1253, the same 50 Rurik recorded on another account (`research/Rurik/studies/newopcodes/FINDINGS.md:1846`). And this tree's exploration grid (`0x008B`, `0x008A`) is sent earlier in the load than retail's, so `0x00B5` follows `0x00DA` here and `0x008A` there |
 | `0x00B6` | unlocked professions | `player_update_unlocked_professions` | same | ported |
 | `0x00B7` | profession | `player_update_profession` | same | ported |
 | `0x00DA` | skillbar (79) | `skillbar_update` | eight empty slots and eight zero masks, as ASURA sends them | ported |
@@ -228,8 +230,8 @@ recordings (`0x8058`, `0x8059`).**
 | `0x01D3` | party create | `party_create` | same | ported |
 | `0x01D4` | party member stream end | `party_member_stream_end` | same | ported |
 
-**Score: 79 of ASURA's ported or ported thin, 0 missing; 3 more ported thin from recordings
-(`0x00F3`, `0x00F4`, `0x00F6`).**
+**Score: 79 of ASURA's ported or ported thin, 0 missing; 4 more ported thin from recordings
+(`0x00B5`, `0x00F3`, `0x00F4`, `0x00F6`).**
 
 ### 4.3 Builders ASURA has that no message above covers
 
@@ -268,11 +270,11 @@ sniffer's; this tree has both forms of each movement builder (`agent_packets`, 4
 | ... this tree handles as ASURA does | **35** |
 | ... this tree handles, ported thin | **2** (`0x8029`, `0x808B`) |
 | ... this tree does not handle | **0** |
-| messages this tree handles that ASURA does not | **3**: `0x8058` and `0x8059` (from recordings, 3.2), and the district-count query `0x800B` on the auth connection, answered with that connection's `0x001A` (`authserver/src/Server/session.rs`, `QUERY_INSTANCE_COUNT`; in no table of section 3 or 4) |
+| messages this tree handles that ASURA does not | **4**: `0x8045`, `0x8058` and `0x8059` (from recordings, 3.2), and the district-count query `0x800B` on the auth connection, answered with that connection's `0x001A` (`authserver/src/Server/session.rs`, `QUERY_INSTANCE_COUNT`; in no table of section 3 or 4) |
 | messages ASURA emits (server -> client) | 87 |
 | ... this tree emits | **87** (8 auth, 79 game), one of them ported thin (`0x018B`) |
 | ... this tree does not emit | **0** |
-| messages this tree emits that ASURA does not have | 4: the district-count answer on the auth connection, and `0x00F3`, `0x00F4`, `0x00F6` (from recordings) |
+| messages this tree emits that ASURA does not have | 5: the district-count answer on the auth connection, and `0x00B5`, `0x00F3`, `0x00F4`, `0x00F6` (from recordings) |
 | sequences | **13**: the 11 of ASURA's ported, none ported thin and none missing; the title block, ported thin from recordings; and the custom title text, which has no source |
 | the packet table | identical, 782 rows (682 game + 100 auth) |
 | `ASURA/crates/asura-world/src` | 35 files | all 35 have a verdict in 9: 28 ported (code or data), 4 this tree's arrangement, 3 ASURA's own harness |

@@ -1,4 +1,4 @@
-{"record":"capture","tool":"asura-world","started_at":"1793433731.144411900Z"}
+{"record":"capture","tool":"asura-world","started_at":"1793433731.144411900Z","sanitised":true,"notes":"cleaned 2026-11-24: the client's computer info and hash messages (0x0A, 0x0B) have no payload, the 16-byte identifier in the players request (0x90) is zeroed, name-header payloads are dropped, and every UTF-16 run of three or more letters is zeroed; each record's 'redacted' and 'masked' fields say what was removed, offsets preserved"}
 {"seq":1,"t":15.692,"direction":"StoC","header":380,"size":6,"data":"7c013f3f0000"}
 {"seq":2,"t":15.692,"direction":"StoC","header":390,"size":2,"data":"8601"}
 {"seq":3,"t":15.692,"direction":"StoC","header":381,"size":22,"data":"7d0109004100730075007200610020004f006e006500"}
@@ -18,8 +18,8 @@
 {"seq":17,"t":15.694,"direction":"StoC","header":12,"size":2,"data":"0c00"}
 {"seq":18,"t":15.804,"direction":"StoC","header":30,"size":6,"data":"1e006f000000"}
 {"seq":19,"t":15.898,"direction":"StoC","header":30,"size":6,"data":"1e005d000000"}
-{"seq":20,"t":15.906,"direction":"CToS","header":32778,"size":140,"data":"0a80e08ccb49ff56a946b839ae79dabb150c0a00000000000000654a000047656e75696e65496e74656c71060000140000001bff00002090000002100000bf730000ff0d0000120041004d004400200052006100640065006f006e00200052005800200036003800300030000f00330032002e0030002e00320031003000340035002e003100360030003100"}
-{"seq":21,"t":15.906,"direction":"CToS","header":32779,"size":88,"data":"0b80e08ccb49ff56a946b839ae79dabb150c00000000010000001bff0000140000000700570069006e0064006f00770073001200470077002f00330039003100310032002e00300020002800570069006e00330032002900"}
+{"seq":20,"t":15.906,"direction":"CToS","header":32778,"size":140,"data":null,"redacted":"client-identity","masked":[]}
+{"seq":21,"t":15.906,"direction":"CToS","header":32779,"size":88,"data":null,"redacted":"client-identity","masked":[]}
 {"seq":22,"t":15.906,"direction":"CToS","header":32768,"size":6,"data":"008000000000"}
 {"seq":23,"t":15.906,"direction":"CToS","header":32768,"size":6,"data":"008000000000"}
 {"seq":24,"t":15.906,"direction":"CToS","header":32768,"size":6,"data":"008000000000"}
@@ -132,7 +132,7 @@
 {"seq":131,"t":16.499,"direction":"StoC","header":30,"size":6,"data":"1e005d000000"}
 {"seq":132,"t":16.594,"direction":"StoC","header":30,"size":6,"data":"1e005e000000"}
 {"seq":133,"t":16.702,"direction":"StoC","header":30,"size":6,"data":"1e006c000000"}
-{"seq":134,"t":16.711,"direction":"CToS","header":32912,"size":19,"data":"9080f5e6066671a98745b8fc3aa6b3c8552501"}
+{"seq":134,"t":16.711,"direction":"CToS","header":32912,"size":19,"data":"90800000000000000000000000000000000001","masked":[[2,16]],"redacted":null}
 {"seq":135,"t":16.714,"direction":"StoC","header":29,"size":4,"data":"1d000000"}
 {"seq":136,"t":16.714,"direction":"StoC","header":24,"size":36,"data":"18000800ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}
 {"seq":137,"t":16.714,"direction":"StoC","header":26,"size":17,"data":"1a0001000381000824020130250003b824"}
@@ -871,7 +871,7 @@
 {"seq":870,"t":33.413,"direction":"StoC","header":30,"size":6,"data":"1e006c000000"}
 {"seq":871,"t":33.509,"direction":"StoC","header":12,"size":2,"data":"0c00"}
 {"seq":872,"t":33.510,"direction":"StoC","header":30,"size":6,"data":"1e005f000000"}
-{"seq":873,"t":33.574,"direction":"CToS","header":32912,"size":19,"data":"9080f5e6066671a98745b8fc3aa6b3c8552501"}
+{"seq":873,"t":33.574,"direction":"CToS","header":32912,"size":19,"data":"90800000000000000000000000000000000001","masked":[[2,16]],"redacted":null}
 {"seq":874,"t":33.575,"direction":"StoC","header":29,"size":4,"data":"1d000000"}
 {"seq":875,"t":33.575,"direction":"StoC","header":24,"size":36,"data":"18000800ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}
 {"seq":876,"t":33.575,"direction":"StoC","header":26,"size":17,"data":"1a0001000381000824020130250003b824"}
@@ -1513,7 +1513,7 @@
 {"seq":1512,"t":41.598,"direction":"StoC","header":30,"size":6,"data":"1e005e000000"}
 {"seq":1513,"t":41.708,"direction":"StoC","header":30,"size":6,"data":"1e006e000000"}
 {"seq":1514,"t":41.801,"direction":"StoC","header":30,"size":6,"data":"1e005d000000"}
-{"seq":1515,"t":41.834,"direction":"CToS","header":32912,"size":19,"data":"9080f5e6066671a98745b8fc3aa6b3c8552501"}
+{"seq":1515,"t":41.834,"direction":"CToS","header":32912,"size":19,"data":"90800000000000000000000000000000000001","masked":[[2,16]],"redacted":null}
 {"seq":1516,"t":41.836,"direction":"StoC","header":29,"size":4,"data":"1d000000"}
 {"seq":1517,"t":41.836,"direction":"StoC","header":24,"size":36,"data":"18000800ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}
 {"seq":1518,"t":41.836,"direction":"StoC","header":26,"size":17,"data":"1a0001000381000824020130250003b824"}
@@ -2196,7 +2196,7 @@
 {"seq":2195,"t":53.011,"direction":"StoC","header":30,"size":6,"data":"1e006c000000"}
 {"seq":2196,"t":53.103,"direction":"StoC","header":30,"size":6,"data":"1e005c000000"}
 {"seq":2197,"t":53.210,"direction":"StoC","header":30,"size":6,"data":"1e006b000000"}
-{"seq":2198,"t":53.263,"direction":"CToS","header":32912,"size":19,"data":"9080f5e6066671a98745b8fc3aa6b3c8552501"}
+{"seq":2198,"t":53.263,"direction":"CToS","header":32912,"size":19,"data":"90800000000000000000000000000000000001","masked":[[2,16]],"redacted":null}
 {"seq":2199,"t":53.264,"direction":"StoC","header":29,"size":4,"data":"1d000000"}
 {"seq":2200,"t":53.264,"direction":"StoC","header":24,"size":36,"data":"18000800ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}
 {"seq":2201,"t":53.264,"direction":"StoC","header":26,"size":17,"data":"1a0001000381000824020130250003b824"}
@@ -2677,8 +2677,8 @@
 {"seq":2676,"t":65.794,"direction":"StoC","header":12,"size":2,"data":"0c00"}
 {"seq":2677,"t":65.794,"direction":"StoC","header":30,"size":6,"data":"1e005d000000"}
 {"seq":2678,"t":65.904,"direction":"StoC","header":30,"size":6,"data":"1e006d000000"}
-{"seq":2679,"t":65.995,"direction":"CToS","header":32778,"size":140,"data":"0a80abee0ed2cd7ba14d9816abf90a993a2c0a00000000000000654a000047656e75696e65496e74656c71060000140000001bff00002090000002100000bf730000ff0d0000120041004d004400200052006100640065006f006e00200052005800200036003800300030000f00330032002e0030002e00320031003000340035002e003100360030003100"}
-{"seq":2680,"t":65.995,"direction":"CToS","header":32779,"size":88,"data":"0b80abee0ed2cd7ba14d9816abf90a993a2c00000000010000001bff0000140000000700570069006e0064006f00770073001200470077002f00330039003100310032002e00300020002800570069006e00330032002900"}
+{"seq":2679,"t":65.995,"direction":"CToS","header":32778,"size":140,"data":null,"redacted":"client-identity","masked":[]}
+{"seq":2680,"t":65.995,"direction":"CToS","header":32779,"size":88,"data":null,"redacted":"client-identity","masked":[]}
 {"seq":2681,"t":65.995,"direction":"CToS","header":32768,"size":6,"data":"008000000000"}
 {"seq":2682,"t":65.995,"direction":"CToS","header":32768,"size":6,"data":"008000000000"}
 {"seq":2683,"t":65.995,"direction":"CToS","header":32768,"size":6,"data":"008000000000"}
@@ -2792,7 +2792,7 @@
 {"seq":2791,"t":66.595,"direction":"StoC","header":30,"size":6,"data":"1e005b000000"}
 {"seq":2792,"t":66.703,"direction":"StoC","header":30,"size":6,"data":"1e006c000000"}
 {"seq":2793,"t":66.793,"direction":"StoC","header":30,"size":6,"data":"1e005a000000"}
-{"seq":2794,"t":66.806,"direction":"CToS","header":32912,"size":19,"data":"9080f5e6066671a98745b8fc3aa6b3c8552501"}
+{"seq":2794,"t":66.806,"direction":"CToS","header":32912,"size":19,"data":"90800000000000000000000000000000000001","masked":[[2,16]],"redacted":null}
 {"seq":2795,"t":66.807,"direction":"StoC","header":29,"size":4,"data":"1d000000"}
 {"seq":2796,"t":66.807,"direction":"StoC","header":24,"size":36,"data":"18000800ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}
 {"seq":2797,"t":66.807,"direction":"StoC","header":26,"size":17,"data":"1a0001000381000824020130250003b824"}
@@ -3524,7 +3524,7 @@
 {"seq":3523,"t":82.801,"direction":"StoC","header":30,"size":6,"data":"1e005d000000"}
 {"seq":3524,"t":82.893,"direction":"StoC","header":12,"size":2,"data":"0c00"}
 {"seq":3525,"t":82.909,"direction":"StoC","header":30,"size":6,"data":"1e006b000000"}
-{"seq":3526,"t":82.957,"direction":"CToS","header":32912,"size":19,"data":"9080f5e6066671a98745b8fc3aa6b3c8552501"}
+{"seq":3526,"t":82.957,"direction":"CToS","header":32912,"size":19,"data":"90800000000000000000000000000000000001","masked":[[2,16]],"redacted":null}
 {"seq":3527,"t":82.958,"direction":"StoC","header":29,"size":4,"data":"1d000000"}
 {"seq":3528,"t":82.958,"direction":"StoC","header":24,"size":36,"data":"18000800ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}
 {"seq":3529,"t":82.958,"direction":"StoC","header":26,"size":17,"data":"1a0001000381000824020130250003b824"}

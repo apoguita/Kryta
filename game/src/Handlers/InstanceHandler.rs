@@ -15,7 +15,7 @@ use shared::cryptography::AuthCrypt;
 use shared::network::socket::SessionIo;
 
 use crate::agents::player::{PLAYER_TEAM_TOKEN, UNLOCKED_MAP_ZEROS};
-use crate::server::packets::{item_packets, misc_packets, title_packets};
+use crate::server::packets::{character_packets, item_packets, misc_packets, title_packets};
 use crate::server::world_session::{Connection, MapLoad, WorldSession};
 
 impl WorldSession {
@@ -217,11 +217,33 @@ impl WorldSession {
                 PLAYER_TEAM_TOKEN,
             ));
         }
+        // The preferences the character last uploaded (`0x8045`), which the block hands back in
+        // `0x00B5`. A read that fails costs the load nothing: the block is then sent without it.
+        let preferences = match self.characters() {
+            Some(characters) if !map.is_creation() => {
+                match characters.preferences(&crate::characters::uuid_text(&sheet.uuid)) {
+                    Ok(preferences) => preferences.filter(|bytes| {
+                        !bytes.is_empty() && bytes.len() <= character_packets::PREFERENCES_BYTES
+                    }),
+                    Err(error) => {
+                        self.say(
+                            LogLevel::Warn,
+                            format!(
+                                "Gameplay connection from {peer}: the character's preferences cannot be read ({error}); the load is sent without them."
+                            ),
+                        );
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
         frames.extend(told.load_block(
             &self.world.settings(),
             load_ms,
             &unlocked,
             self.world.titles(),
+            preferences.as_deref(),
         ));
         // Send peer selections after this load has defined the corresponding ranks.
         frames.extend(
