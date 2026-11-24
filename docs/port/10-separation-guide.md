@@ -60,9 +60,9 @@ remaining deviation is described accurately in its decision record.
 
 **What exists (2026-11-14, after the families moved).** `game/src/Server/WorldSession.rs` holds what a
 connection is: the seed exchange, the version message, the travel row's claim, the head block, the read
-loop, the outbox and the district it gives back. Five message families are in `game/src/Handlers/`
-(item, movement, travel, chat, character), the load's answers are `game/Agents/Player.rs`'s, and where a
-character enters a map is
+loop, the outbox and the district it gives back. Seven handler files are in `game/src/Handlers/` (item, movement, travel, chat, character, the
+three asks of a map load, and the title display), the frames of the load's answers are
+`game/Agents/Player.rs`'s, and where a character enters a map is
 `game/Agents/Entry.rs`'s. What is still the session's and should not be is the map's clock
 (`step_map`, which calls `Agent::advance` and `Portals::crossed` and decides when to advance and what
 to do with the result) - the third item's subject.

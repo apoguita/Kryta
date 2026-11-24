@@ -6,7 +6,7 @@
 //! that data - a compact, versioned, little-endian file a world can load at start-up so a server
 //! machine needs a few megabytes instead of a 3.6 GB client archive.
 //!
-//! It deliberately carries **exactly** what the reference's A\* consumes (`GmPaths.c`): every plane,
+//! It deliberately carries **exactly** what OpenTyria's A\* consumes (`GmPaths.c`): every plane,
 //! its trapezoids with their neighbour and portal ids, its x/y split nodes and sink nodes, and its
 //! portals with the paired portal on the other plane. A lossy form - the community's `.pmap` files,
 //! for instance - keeps trapezoids and adjacency but drops the portals and the node tree, which the
@@ -54,7 +54,7 @@ pub struct DumpedGraph {
     /// is known - the world resolves the map id from its own catalogue by [`Self::map_file_id`].
     pub map_id: i32,
     /// The `Gw.dat` blob id: the real key of a graph, because several maps share one blob
-    /// (146/148, 160/163, 161/165 and 162/166 in the reference's catalogue all do).
+    /// (146/148, 160/163, 161/165 and 162/166 in OpenTyria's catalogue all do).
     pub map_file_id: u32,
     /// The map's planes and the trapezoid counter they share.
     pub data: PathStaticData,

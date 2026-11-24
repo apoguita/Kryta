@@ -55,13 +55,13 @@ pub struct Position {
 
 /// The version byte pair `CharacterSettings` starts with.
 ///
-/// Evidence: `ASURA`'s `character_settings`, which records the reference's own constant 6 in the first
+/// Evidence: `ASURA`'s `character_settings`, which records GWPS's own constant 6 in the first
 /// two bytes and zero in the next four (`last_time_played`).
 pub const CHARACTER_SETTINGS_VERSION: u16 = 6;
 
 /// How many bytes the block is, whatever the character wears.
 ///
-/// The reference sends `sizeof(CharacterSettings)`: five piece slots are always present, and a character
+/// GWPS sends `sizeof(CharacterSettings)`: five piece slots are always present, and a character
 /// wearing nothing sends five empty ones. A shorter block is a client reading pieces that are not there.
 pub const CHARACTER_SETTINGS_LEN: usize = 62;
 
@@ -73,7 +73,7 @@ pub const PIECE_SLOTS: usize = 5;
 pub struct ArmourPiece {
     /// The `Gw.dat` file id of the piece's model.
     pub file_id: u16,
-    /// Four nibbles of dye colour, packed as the reference packs them.
+    /// Four nibbles of dye colour, packed as GWPS packs them.
     pub colors: u16,
 }
 

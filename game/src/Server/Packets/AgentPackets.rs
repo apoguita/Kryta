@@ -6,7 +6,7 @@
 //! agent properties. One file per family, as this tree does it.
 //!
 //! Every layout here is this client's, measured; each names where its bytes came from. The creation
-//! frame (`GAME_SMSG_WORLD_CREATE_AGENT`, 99 bytes) is ported from the reference's own builder as
+//! frame (`GAME_SMSG_WORLD_CREATE_AGENT`, 99 bytes) is ported from GWPS's own builder as
 //! `ASURA` transcribes it; the map's content - which agents a map has - arrives with plan step 6.
 
 /// `GAME_SMSG_AGENT_PROPERTY_UPDATE_INT`: one integer property of one agent.
@@ -37,13 +37,12 @@ pub const AGENT_MOVE_TO_POINT: u16 = 0x0029;
 pub const AGENT_UPDATE_SPEED: u16 = 0x002B;
 /// `GAME_SMSG_WORLD_REMOVE_AGENT` (`0x0021`): an agent has left the map.
 pub const WORLD_REMOVE_AGENT: u16 = 0x0021;
-/// `GAME_SMSG_WORLD_UPDATE_CONTROLLED_AGENT` (`0x0022`): which agent this client drives.
 /// `GAME_SMSG_AGENT_UPDATE_POSITION` (`0x002C`): where an agent is, sent to everyone else.
 pub const AGENT_UPDATE_POSITION: u16 = 0x002C;
 
 /// The property an agent's energy is reported through.
 ///
-/// Evidence: `ASURA`'s `agent.rs`, which records the reference's own numbers: energy 41, health 42,
+/// Evidence: `ASURA`'s `agent.rs`, which records GWPS's own numbers: energy 41, health 42,
 /// and 64 for the third property the creation screen is sent.
 pub const AGENT_PROPERTY_ENERGY: u32 = 41;
 /// The property an agent's health is reported through.
@@ -70,9 +69,9 @@ pub const AGENT_TYPE_LIVING: u8 = 1;
 /// One agent, in the field order `GAME_SMSG_WORLD_CREATE_AGENT` writes it.
 ///
 /// Source: `ASURA`'s `crates/asura-protocol/src/game/mod.rs`, its `CreateAgent` struct and
-/// `world_create_agent` builder, which transcribe the reference's `GameSrv_BuildCreateAgentMsg`
+/// `world_create_agent` builder, which transcribe GWPS's `GameSrv_BuildCreateAgentMsg`
 /// field for field. The one field that differs between a player and an item on the ground is
-/// `agent_type`; the rest is what the reference fills from its `GmAgent`.
+/// `agent_type`; the rest is what GWPS fills from its `GmAgent`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CreateAgent {
     /// The id the rest of the stream refers to this body by.
@@ -95,10 +94,10 @@ pub struct CreateAgent {
 
 /// `0x0020`: one agent created, 99 bytes fixed - the frame that puts a body in a map.
 ///
-/// The field order and the five constants are the reference's own (`GameSrv_BuildCreateAgentMsg` as
+/// The field order and the five constants are GWPS's own (`GameSrv_BuildCreateAgentMsg` as
 /// ASURA transcribes it): the byte after the type is 5, the byte after the direction is 1, the float
-/// after the speed is 1.0, and the dword after it is `0x41400000` - "12.0 reinterpreted", as the
-/// reference writes it. The two `f32::INFINITY` pairs are what it sends for the unmodelled vectors.
+/// after the speed is 1.0, and the dword after it is `0x41400000` - "12.0 reinterpreted", as
+/// GWPS writes it. The two `f32::INFINITY` pairs are what it sends for the unmodelled vectors.
 /// They are carried as measured rather than reasoned about.
 pub fn world_create_agent(agent: &CreateAgent) -> Vec<u8> {
     let mut body = Vec::with_capacity(97);
@@ -432,7 +431,7 @@ mod tests {
 
     #[test]
     fn an_agent_is_the_reference_s_ninety_nine_bytes() {
-        // The reference's `GameSrv_BuildCreateAgentMsg` order, constant by constant: the id and the
+        // GWPS's `GameSrv_BuildCreateAgentMsg` order, constant by constant: the id and the
         // model, the type and the 5, the position, the plane, the direction, the 1 and the speed,
         // the 1.0, the 0x41400000, the team, five zero dwords, the two zero floats, the infinite
         // vectors, and the closing words.

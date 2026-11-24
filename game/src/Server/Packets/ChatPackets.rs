@@ -5,7 +5,7 @@
 //! layouts and these channel numbers are this client's. They come from the GameServer the working
 //! implementation ports (`research/OpenTyria/code/OpenTyria/GmChat.c`, `GmChat.h:3-20`) and from the
 //! measured wire in `research/Rurik/studies/chat/FINDINGS.md`, and `docs/decisions/0012-chat-text-is-sent.md`
-//! records why a measurement outranks the guessed table this file used to carry.
+//! records why the measurement is what this file carries.
 //!
 //! **A line is a pair, never a lone body.** One or more `0x005D` body fragments, then exactly one commit
 //! tag: `0x0061 [sender player id, channel]` for a player's line, `0x005E [subject player id, channel]`
@@ -48,7 +48,7 @@ pub const LITERAL_END: u16 = 0x0001;
 /// `TERM_FINAL` (`GmText.c:3`): the other end-of-run code, which a literal run never carries.
 pub const TERM_FINAL: u16 = 0x0000;
 
-/// Whether a player's text may be echoed: the reference refuses a line that carries either terminator.
+/// Whether a player's text may be echoed: GWPS refuses a line that carries either terminator.
 ///
 /// Reference: `GmText_ValidateUserMessage` (`research/OpenTyria/code/OpenTyria/GmText.c:32-41`) - a
 /// `0x0000` or `0x0001` in what a player typed would end the literal run early and have the client read
@@ -66,7 +66,7 @@ pub const CHANNEL_EMOTE: u8 = 6;
 /// `Channel_Warning` (`GmChat.h:11`): the middle-of-the-screen panel that draws the `TxtError` frame and
 /// does not parse `<c>` tags.
 pub const CHANNEL_WARNING: u8 = 7;
-/// `Channel_Global` (`GmChat.h:14`): the channel the reference answers a command on
+/// `Channel_Global` (`GmChat.h:14`): the channel GWPS answers a command on
 /// (`GmChat.c:140`, `GameSrv_SendInvalidCommand`).
 pub const CHANNEL_GLOBAL: u8 = 10;
 /// `Channel_Group` (`GmChat.h:15`): the channel `#` speaks on.

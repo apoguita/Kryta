@@ -4,9 +4,9 @@
 //! `Standing::at_spawn` (`:460-476`, a point of the map's own list and the angle it states),
 //! `arrival`/`resume` (`:478-545`, an outpost takes a scattered point, any other map resumes where
 //! the character left it and stands on the map's first point otherwise), and the doorway's own
-//! landing for a crossing (`travel.rs:319-338`, `portals::arrival`). It lived in the connection
-//! (`WorldSession::entry_point`) until 2026-11-14; the frames it feeds are unchanged, and the rule is
-//! the same text moved.
+//! landing for a crossing (`travel.rs:319-338`, `portals::arrival`). The connection calls it
+//! (`WorldSession::entry_point`) when a load begins, and the point it answers is what the load's
+//! frames place the character at.
 //!
 //! This is a rule over data, not a message: the caller supplies the map, its spawn points, the landing
 //! a crossing states, the position the character was saved at and how far an entry may scatter

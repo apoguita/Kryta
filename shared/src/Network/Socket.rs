@@ -176,7 +176,7 @@ impl SessionIo {
     }
 }
 
-/// Bytes as the trace prints them: two lowercase hex digits each, space separated.
+/// Bytes as the trace prints them: two uppercase hex digits each, space separated.
 pub fn hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 3);
     for (index, byte) in bytes.iter().enumerate() {

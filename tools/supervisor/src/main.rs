@@ -1,8 +1,9 @@
 //! The stack: one command that starts this machine's programs and stops them together.
 //!
 //! What it runs is data, not code: `stack.json` lists the services - a program, its arguments and
-//! the port it binds - and the supervisor starts each one, prints its output under its own name,
-//! waits for its READY line, and keeps them alive together. Ctrl+C stops them all; a service that
+//! the port it binds - and the supervisor builds and starts each one, reads its standard output
+//! (printed under its own name with `--logs`, otherwise kept as a tail for a failure), waits for
+//! its READY line, and keeps them alive together. Ctrl+C stops them all; a service that
 //! dies on its own stops the rest and the supervisor answers that service's exit code.
 //!
 //! It also owns the control channel (`Control.rs`): a loopback line protocol with `status`,
@@ -58,7 +59,7 @@ struct Service {
     program: String,
     /// Its arguments, verbatim.
     args: Vec<String>,
-    /// The port it binds, for the up-report.
+    /// The port it binds: claimed before the service starts ([`take_port`]) and named in the up-report.
     port: u16,
     /// Whether it inherits the terminal's standard input: the one service whose console is the
     /// operator's. Every other service is given no input at all, so two programs cannot read one
@@ -118,10 +119,11 @@ fn exe_of(program: &str) -> std::path::PathBuf {
     root.join("target").join("debug").join(name)
 }
 
-/// Build a service's program before it starts, so the one command always runs the code that is in the
-/// tree - not a binary left over from the last build. Cargo is incremental: a tree that has not
-/// changed builds in a fraction of a second, and a tree that has changed says so instead of being
-/// quietly ignored. The build is cargo's own, printing its own progress to this console.
+/// Run `cargo build -p <program>` before a service starts, then answer whether its binary exists.
+/// Cargo is incremental: a tree that has not changed builds in a fraction of a second. The build is
+/// cargo's own, printing its own progress and errors to this console. The build's exit status is not
+/// what is checked: when the build fails and a binary from an earlier build is still on disk, this
+/// answers `Ok` and that earlier binary is started; only a missing binary is an error.
 fn ensure_built(program: &str) -> Result<(), String> {
     let exe = exe_of(program);
     if !exe.exists() {
@@ -381,7 +383,7 @@ fn state_all(state: &control::State, services: &[Service], value: &str) {
     }
 }
 
-/// Start every service and wait for the ones that have not said READY yet.
+/// Wait for the already-started services that have not said READY yet.
 ///
 /// Answers whether each one's READY line was seen. A service's standard error is printed whatever the
 /// mode - it carries nothing but problems - and its standard output only with `--logs` or from the tail

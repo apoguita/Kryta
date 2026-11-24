@@ -101,7 +101,7 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 
 | header | message | ASURA handler | this tree | verdict |
 |---|---|---|---|---|
-| `0x8008` | `GAME_CMSG_DISCONNECT` | `dispatch.rs:86` | ends the connection on the creation screen (`WorldSession.rs:1037`); on a loaded map it reaches `report_unanswered` (`:1688-1692`) | **ported thin**: the loaded-map loop has no arm for it (`docs/port/21-code-assessment.md`, 2) |
+| `0x8008` | `GAME_CMSG_DISCONNECT` | `dispatch.rs:86` | ends the connection, in every phase (`WorldSession::dispatch`) | ported |
 | `0x8009` | `GAME_CMSG_PING_REPLY` | `dispatch.rs:119`, discarded | discarded | ported |
 | `0x800C` | `GAME_CMSG_HEARTBEAT` | `dispatch.rs:122`, discarded | discarded | ported |
 | `0x800D` | `GAME_CMSG_PING_REQUEST` | `connection.rs:579-587`, `handle_ping_request` | `0x000D` and `World.PingValue` | ported |
@@ -264,8 +264,8 @@ sniffer's; this tree has both forms of each movement builder (`agent_packets`, 4
 | | count |
 |---|---|
 | messages ASURA's code handles (client -> server) | 37: 36 marked `Handled`, plus `0x80C1` |
-| ... this tree handles as ASURA does | **34** |
-| ... this tree handles, ported thin | **3** (`0x8008`, `0x8029`, `0x808B`) |
+| ... this tree handles as ASURA does | **35** |
+| ... this tree handles, ported thin | **2** (`0x8029`, `0x808B`) |
 | ... this tree does not handle | **0** |
 | messages this tree handles that ASURA does not | **3**: `0x8058` and `0x8059` (from recordings, 3.2), and the district-count query `0x800B` on the auth connection, answered with that connection's `0x001A` (`authserver/src/Server/session.rs`, `QUERY_INSTANCE_COUNT`; in no table of section 3 or 4) |
 | messages ASURA emits (server -> client) | 87 |
@@ -539,7 +539,7 @@ because the reference's structure is this tree's authority for how a thing is ar
 | `item.rs` | 561 | `answer_item_move`, `answer_equip_item`, `CLIENT_DROP_ITEM`, `CLIENT_UNEQUIP_ITEM` - `game/Handlers/ItemHandler.rs` | ported |
 | `instance.rs` | 528 | `game/Districts/` (`Districts`, `Peers`, `Instances`) | this tree's arrangement: a copy of a map is a district, and the population is `Peers` |
 | `creation.rs` | 519 | `confirm_creation`, `answer_creation_*` in `game/Handlers/CharacterHandler.rs` | ported |
-| `portals.rs` | 503 | `game/Maps/Portals.rs` | ported whole; the data is each map's `portals.json` in the world pack (`game/src/Maps/Pack.rs`) |
+| `portals.rs` | 503 | `game/Maps/Portals.rs` | **ported thin**: the wall test, the point box, `Crossed` and the `crossed` lookup are here; `Arrival` is in `Maps/mod.rs` and the file read in `Maps/Pack.rs`; `arrival_for`, `arrival_at` and the two arrival lookups are not ported (the file's own header lists each). The data is each map's `portals.json` in the world pack |
 | `graph_dump.rs` | 473 | `game/Terrain/GraphDump.rs` | ported whole |
 | `gwdat.rs` | 431 | `game/Pack/Gwdat.rs` | ported whole |
 | `fa_compress.rs` | 402 | `game/Pack/FaCompress.rs` | ported whole |

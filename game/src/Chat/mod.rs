@@ -2,13 +2,13 @@
 //!
 //! What a player types into a chat line arrives as `GAME_CMSG_SEND_CHAT_MESSAGE` (`0x8064`); the first
 //! unit of its text is the marker that decides what happens - `!` speaks on the all channel, `#` on the
-//! group channel, `$` on trade, `/` starts a command, and the reference drops `@`, `%` and `"` and
+//! group channel, `$` on trade, `/` starts a command, and GWPS drops `@`, `%` and `"` and
 //! refuses the rest (`GmChat.c`, as the working implementation ports it at
 //! `ASURA/crates/asura-world/src/chat.rs:193-353`). The connection reads that frame; this module holds
 //! the alias rule and the answer `/maps` prints.
 //!
 //! **The command surface is a file, not this module.** Which names exist, what each takes and which
-//! operation it runs are rows in `config/Server/commands.json`, read by [`commands::Table`]; the reference's own
+//! operation it runs are rows in `config/Server/commands.json`, read by [`commands::Table`]; GWPS's own
 //! two dispatch points - `GameSrv_TryHandleGmCommand` (`GmCommands.c`, which owns `/tp`, `/teleport` and
 //! `/maps`) and `GameSrv_HandleChatCommand` (`GmChat.c`, which owns `/stuck`) - are that file's rows, and
 //! Rust keeps only the operations they name (`docs/decisions/0011-the-command-surface-is-content.md`).
@@ -22,18 +22,18 @@ pub mod operations;
 use crate::maps::travel_targets::{TRAVEL_TARGETS, TravelTarget};
 use crate::world::MapEntry;
 
-/// What `/maps` produces: the lines the reference would put on the chat channel, and the table it puts
-/// in its log. Two shapes, because the reference has two.
+/// What `/maps` produces: the lines GWPS would put on the chat channel, and the table it puts
+/// in its log. Two shapes, because GWPS has two.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MappedMaps {
-    /// The chat half, wrapped the way the reference wraps it. Printed, never sent
+    /// The chat half, wrapped the way GWPS wraps it. Printed, never sent
     /// (`chat.rs:288-324`).
     pub chat: Vec<String>,
     /// The table the log gets: the alias count in the header, then every alias.
     pub table: Vec<String>,
 }
 
-/// How a map alias is compared: lower case, runs of spaces collapsed. The reference's own rule for
+/// How a map alias is compared: lower case, runs of spaces collapsed. GWPS's own rule for
 /// `/tp` (`GmCommand_ToAscii`), as the working implementation writes it (`chat.rs:115-120`).
 pub fn alias_key(text: &str) -> String {
     text.to_lowercase()
@@ -42,11 +42,11 @@ pub fn alias_key(text: &str) -> String {
         .join(" ")
 }
 
-/// The reference's `/tp` lookup: normalise the argument, find it in its table.
+/// GWPS's `/tp` lookup: normalise the argument, find it in its table.
 ///
 /// `GmCommand_ToAscii` refuses anything that is not printable ASCII, which is why a non-ASCII argument is
 /// an unknown map name rather than a fuzzy match; and the table is exact, so `lakesidecounty` is not
-/// `lakeside county` even though the reference's own comment says otherwise (`chat.rs:169-182`).
+/// `lakeside county` even though GWPS's own comment says otherwise (`chat.rs:169-182`).
 pub fn travel_target(argument: &str) -> Option<&'static TravelTarget> {
     let wanted = alias_key(argument);
     if wanted.is_empty() {
@@ -57,15 +57,15 @@ pub fn travel_target(argument: &str) -> Option<&'static TravelTarget> {
         .find(|target| target.alias == wanted)
 }
 
-/// The reference's `/maps`, line for line (`GmCommand_ListTargets`), as the working implementation
+/// GWPS's `/maps`, line for line (`GmCommand_ListTargets`), as the working implementation
 /// prints it (`chat.rs:41-102`).
 ///
 /// It produces two things and they are **not the same text**:
 ///
 /// * the **chat** side is one alias per map - the first in the table, because that is the one to type -
-///   comma-separated and wrapped inside one chat fragment, then the reference's fixed
+///   comma-separated and wrapped inside one chat fragment, then GWPS's fixed
 ///   "`Use: /tp <name>, e.g. /tp lakeside county`";
-/// * the **table** side is **every alias**, one row each, with the map it names, in the reference's own
+/// * the **table** side is **every alias**, one row each, with the map it names, in GWPS's own
 ///   column widths and in its table order.
 ///
 /// The header's count is the **alias** count, not the map count, and the loop below prints a row per
@@ -75,7 +75,7 @@ pub fn travel_target(argument: &str) -> Option<&'static TravelTarget> {
 pub fn maps_answer(maps: &[MapEntry]) -> MappedMaps {
     let hosted: Vec<u32> = maps.iter().map(|map| map.id).collect();
 
-    // The rows, in the reference's table order: one per alias.
+    // The rows, in GWPS's table order: one per alias.
     let mut rows: Vec<(String, u32, String)> = Vec::new();
     let mut chat: Vec<String> = Vec::new();
     let mut seen: Vec<u32> = Vec::new();
@@ -108,7 +108,7 @@ pub fn maps_answer(maps: &[MapEntry]) -> MappedMaps {
         rows.push((alias, map.id, map.name.clone()));
     }
 
-    // The chat line, split the way the reference splits it: `100 <= used + needed` starts a continuation
+    // The chat line, split the way GWPS splits it: `100 <= used + needed` starts a continuation
     // line indented by six spaces, each entry followed by a comma.
     let mut lines: Vec<String> = Vec::new();
     let mut current = String::from("Maps:");
@@ -120,7 +120,7 @@ pub fn maps_answer(maps: &[MapEntry]) -> MappedMaps {
         current.push_str(&format!(" {alias},"));
     }
     lines.push(current);
-    // The reference's own sentence, literal: it names `lakeside county` whatever is in the table.
+    // GWPS's own sentence, literal: it names `lakeside county` whatever is in the table.
     lines.push("Use: /tp <name>, e.g. /tp lakeside county".to_string());
 
     // The table the log gets: the alias count in the header, then every alias.

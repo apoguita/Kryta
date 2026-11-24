@@ -11,7 +11,7 @@
 pub const PING_REQUEST: u16 = 0x000C;
 /// `GAME_SMSG_PING_REPLY` (`0x000D`): one dword - the tick it answers.
 pub const PING_REPLY: u16 = 0x000D;
-/// `GAME_SMSG_WORLD_SIMULATION_TICK` (`0x001E`): one dword - the tick the simulation is on.
+/// `GAME_SMSG_WORLD_SIMULATION_TICK` (`0x001E`): one dword - the milliseconds since the last tick.
 pub const WORLD_SIMULATION_TICK: u16 = 0x001E;
 /// `GAME_SMSG_HARD_MODE_UNLOCKED` (`0x0070`): one byte.
 pub const HARD_MODE_UNLOCKED: u16 = 0x0070;
@@ -70,14 +70,15 @@ pub fn ping_request() -> Vec<u8> {
     frame(PING_REQUEST, &[])
 }
 
-/// `0x000D`: the dword the reference answers the ping with.
+/// `0x000D`: the dword GWPS answers the ping with.
 ///
 /// Source: the same trace - `SEND 0x000D 6 bytes : 0D 00 14 00 00 00` (20).
 pub fn ping_reply(tick: u32) -> Vec<u8> {
     frame(PING_REPLY, &tick.to_le_bytes())
 }
 
-/// `0x001E`: the simulation tick. The reference sent 500 once the entry point was sent.
+/// `0x001E`: the simulation tick - the milliseconds since the last one. GWPS sent 500 once the
+/// entry point was sent.
 ///
 /// Source: `recordings/gwps/world/load-stream.log` - `SEND 0x001E 6 bytes : 1E 00 F4 01 00 00`.
 pub fn world_simulation_tick(tick: u32) -> Vec<u8> {
@@ -94,7 +95,7 @@ pub fn hard_mode_unlocked(unlocked: u8) -> Vec<u8> {
 /// `GAME_SMSG_TRANSFER_GAME_SERVER_INFO` (`0x01A6`): where the client should reconnect, and with what.
 ///
 /// `ASURA/crates/asura-protocol/src/game/mod.rs:839`, `transfer_game_server_info`, a faithful port of
-/// the reference's own struct (`GameMsg.h:659`): the host as a Winsock `sockaddr_in` - family `2` little
+/// GWPS's own struct (`GameMsg.h:659`): the host as a Winsock `sockaddr_in` - family `2` little
 /// endian, the port **big** endian, four address bytes and sixteen zero - then the world's id, a region,
 /// the player token, whether the destination is an explorable, and the map id last. Fifty-two bytes
 /// before the header. The working implementation's notes on the two shapes that failed: the captured
@@ -232,7 +233,8 @@ pub fn world_update_load_time(load_time: u32) -> Vec<u8> {
     frame(WORLD_UPDATE_LOAD_TIME, &load_time.to_le_bytes())
 }
 
-/// `0x006E`: the nine item ids the agent is drawn wearing - the equipped bag, in its own order.
+/// `0x006E`: the nine item ids the agent is drawn wearing, in the client's wire order - the position
+/// `creation::wire_slot` gives each kind, which is not its cell in the equipped bag.
 pub fn update_agent_visual_equipment(agent: u32, items: [u32; 9]) -> Vec<u8> {
     let mut body = Vec::with_capacity(4 + items.len() * 4);
     body.extend_from_slice(&agent.to_le_bytes());

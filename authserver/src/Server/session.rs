@@ -18,7 +18,7 @@
 //!    answer, one message at a time, what the client asks: its login, its EULA, its ask-response,
 //!    its player status, and its request for a map.
 //!
-//! The last of those is where the reference's auth service ends: the client asks for a map
+//! The last of those is where GWPS's auth service ends: the client asks for a map
 //! (`0x8029`) and is answered with an address (`0x0009`). What it does with that address is not this
 //! program's business - and is the open question `docs/port/02-wire.md` records, because the only
 //! measurement of it says the client dials the address it was launched with instead.
@@ -51,7 +51,7 @@ const DISCONNECT: u16 = 0x800D;
 /// UTF-16 string. **This is the message a character click sends**, and a server that does not answer it
 /// leaves the list unresponsive - the client waits on a request response that never comes.
 ///
-/// Reference: `AuthSrv_HandleChangePlayCharacter`, which finds the character by name on the account,
+/// GWPS: `AuthSrv_HandleChangePlayCharacter`, which finds the character by name on the account,
 /// records it on the session and answers the request. `ASURA/crates/asura-auth/src/lib.rs` carries the
 /// same handler; the header and the layout are the `AUTH_CMSG_CHANGE_PLAY_CHARACTER` row of
 /// `shared/src/Packets/Tables.rs`.
@@ -62,13 +62,13 @@ const CHANGE_PLAY_CHARACTER: u16 = 0x800A;
 const UPDATE_CHARACTER_SETTINGS: u16 = 0x8009;
 const SETTING_UPDATE_CONTENT: u16 = 0x8020;
 const SETTING_UPDATE_SIZE: u16 = 0x8021;
-/// The client's access key (`0x801C`): the reference decodes it, logs it and stores nothing, then
+/// The client's access key (`0x801C`): GWPS decodes it, logs it and stores nothing, then
 /// answers the request with status 0.
 const ADD_ACCESS_KEY: u16 = 0x801C;
 
 /// `AUTH_CMSG_HEARTBEAT` (`0x8000`): the client's own keep-alive, answered with the server's.
 const HEARTBEAT: u16 = 0x8000;
-/// `AUTH_CMSG_SEND_COMPUTER_INFO` (`0x8001`): the machine's name and user, which the reference stores
+/// `AUTH_CMSG_SEND_COMPUTER_INFO` (`0x8001`): the machine's name and user, which GWPS stores
 /// and answers with nothing.
 const COMPUTER_INFO: u16 = 0x8001;
 /// `AUTH_CMSG_SEND_COMPUTER_HASH` (`0x8002`): the message the client waits on before the login.
@@ -428,9 +428,9 @@ impl AuthSession {
         let key = handshake::derive_key(&self.master);
         let mut crypt = AuthCrypt::new(&key);
 
-        // The reference answers the seed with two messages before the client asks for anything: the
-        // session info and a heartbeat. A client that does not get them waits and then gives up -
-        // a run against a server that answered only the seed sat for forty seconds and reset.
+        // GWPS answers the seed with two messages before the client asks for anything: the
+        // session info and a heartbeat. A client that does not get them waits about forty seconds
+        // and then resets the connection.
         let mut salt = [0u8; 4];
         if getrandom::getrandom(&mut salt).is_err() {
             self.say(
@@ -548,7 +548,7 @@ impl AuthSession {
             PORTAL_ACCOUNT_LOGIN => self.answer_login(io, peer, body, crypt).await,
 
             ACCEPT_EULA => {
-                // Reference: the EULA handler records the version and sends nothing at all
+                // GWPS: the EULA handler records the version and sends nothing at all
                 // (`AuthSrv.c:1270-1275`); the client proceeds on its own. The column is what stops
                 // it asking again on the next login.
                 let version = body.first().copied().unwrap_or(0);
@@ -587,7 +587,7 @@ impl AuthSession {
             }
 
             ASK_SERVER_RESPONSE => {
-                // The reference answers with an ordinary request response, status 0:
+                // GWPS answers with an ordinary request response, status 0:
                 // `03 00 02 00 00 00 00 00 00 00` in the trace.
                 let request = request_id(body);
                 let answer =
@@ -597,8 +597,8 @@ impl AuthSession {
             }
 
             SET_PLAYER_STATUS => {
-                // Reference: nothing. The dword is 1 for "online", 0 for "offline", and the
-                // reference only logs it.
+                // GWPS: nothing. The dword is 1 for "online", 0 for "offline", and GWPS only
+                // logs it.
                 let status = request_id(body);
                 self.say(
                     LogLevel::Info,
@@ -641,7 +641,7 @@ impl AuthSession {
                     .await
             }
 
-            // A character was chosen. The reference finds it by name on the account and answers the
+            // A character was chosen. GWPS finds it by name on the account and answers the
             // request; nothing is sent to the world from here, because the travel request is what
             // carries the choice (`0x8029`).
             CHANGE_PLAY_CHARACTER => {
@@ -668,7 +668,7 @@ impl AuthSession {
                 let status = if found.unwrap_or(false) {
                     crate::server::login_reply::GM_ERROR_NONE
                 } else {
-                    // `GM_ERROR_NETWORK_ERROR`, which is what the reference answers a name it does not
+                    // `GM_ERROR_NETWORK_ERROR`, which is what GWPS answers a name it does not
                     // hold; a client that gets it stays on the list instead of hanging.
                     crate::server::login_reply::GM_ERROR_NETWORK_ERROR
                 };
@@ -687,7 +687,7 @@ impl AuthSession {
             // The settings uploads, which must be acknowledged: an unacknowledged one is a hang, and the
             // working implementation names exactly that as the reason it does not decode them
             // (`ASURA/crates/asura-auth/src/lib.rs:369-382`). Answering every request the client makes
-            // keeps that trap shut without having to understand the payload - and the reference stores
+            // keeps that trap shut without having to understand the payload - and GWPS stores
             // nothing of it either.
             UPDATE_CHARACTER_SETTINGS | SETTING_UPDATE_CONTENT | SETTING_UPDATE_SIZE => {
                 let request = request_id(body);
@@ -706,7 +706,7 @@ impl AuthSession {
                     .await
             }
 
-            // `AUTH_CMSG_ADD_ACCESS_KEY`: the reference decodes the key to a string, logs it and stores
+            // `AUTH_CMSG_ADD_ACCESS_KEY`: GWPS decodes the key to a string, logs it and stores
             // **nothing**; the working implementation counts the units instead, because a key in a log is
             // a secret in a log, and answers the request with status 0
             // (`ASURA/crates/asura-auth/src/lib.rs:384-406`). Parity means exactly that.
@@ -728,9 +728,8 @@ impl AuthSession {
             }
 
             DISCONNECT => {
-                // Reference: the disconnect handler ends the session. Seen in this tree's own log
-                // when a client's gameplay connection was refused: it said it was offline, then sent
-                // `0D 80 00 00 00 00`, and a table without this header stopped splitting the stream.
+                // GWPS: the disconnect handler ends the session. A client whose gameplay connection
+                // is refused says it is offline and then sends this: `0D 80 00 00 00 00`.
                 self.say(
                     LogLevel::Info,
                     format!("Connection from {peer}: the client is disconnecting."),
@@ -738,8 +737,8 @@ impl AuthSession {
                 false
             }
 
-            // `AUTH_CMSG_HEARTBEAT`: answered with the server's own heartbeat, tick 16 - the
-            // reference's constant (`ASURA/crates/asura-auth/src/lib.rs:307-312`).
+            // `AUTH_CMSG_HEARTBEAT`: answered with the server's own heartbeat, tick 16 -
+            // GWPS's constant (`ASURA/crates/asura-auth/src/lib.rs:307-312`).
             HEARTBEAT => {
                 let answer = crate::server::login_reply::heartbeat(16);
                 self.send(io, peer, crypt, &[answer], "a client heartbeat").await
@@ -748,7 +747,7 @@ impl AuthSession {
             // `AUTH_CMSG_SEND_COMPUTER_HASH`: the message the client waits on before it logs in, and
             // the working implementation answers it with the session info
             // (`ASURA/crates/asura-auth/src/lib.rs:256-275`). This tree sends that pair unasked the
-            // moment the seed is answered, because the reference's own trace shows it there
+            // moment the seed is answered, because GWPS's own trace shows it there
             // (`login_reply::greeting`), so the answer repeats the salt **already on the wire**: a
             // second salt would be one the client's cipher is not derived from.
             COMPUTER_HASH => match self.salt {
@@ -765,7 +764,7 @@ impl AuthSession {
                 None => true,
             },
 
-            // `AUTH_CMSG_SEND_COMPUTER_INFO`: the reported machine and user, which the reference
+            // `AUTH_CMSG_SEND_COMPUTER_INFO`: the reported machine and user, which GWPS
             // stores on the connection and answers with nothing
             // (`ASURA/crates/asura-auth/src/lib.rs:250-254`).
             COMPUTER_INFO => {
@@ -779,13 +778,13 @@ impl AuthSession {
                 true
             }
 
-            // `0x8023` carries nothing this server answers, as before.
+            // `0x8023` carries nothing this server answers.
             0x8023 => true,
 
             // `AUTH_CMSG_DELETE_CHARACTER`: the name must be one of **this account's** characters, then
             // the row goes and the request is answered with status 0; a name it does not know is 23 and
             // a delete that fails is 2 (`ASURA/crates/asura-auth/src/lib.rs:409-474`, and the
-            // reference's `AuthSrv_HandleDeleteCharacter`). The character list is **not** re-sent.
+            // GWPS's `AuthSrv_HandleDeleteCharacter`). The character list is **not** re-sent.
             DELETE_CHARACTER => {
                 let request = request_id(body);
                 let name = counted_name(body.get(4..).unwrap_or_default());
@@ -979,7 +978,7 @@ impl AuthSession {
         // `ASURA/crates/asura-auth/src/lib.rs:637-670` is the working implementation's own rule, and it
         // exists because of a measured fault: a session can name a character that no longer exists -
         // deleting one leaves its id behind, and every travel then names a ghost, which the world refuses
-        // ("the character named by the transfer is gone"). The reference falls back to the first
+        // ("the character named by the transfer is gone"). GWPS falls back to the first
         // character the same way when a session records none, because refusing to pick leaves the client
         // at character select with a travel it cannot complete.
         self.character_chosen = None;
@@ -1006,7 +1005,7 @@ impl AuthSession {
 
         // The EULA version this account accepted, which the account info carries back so the client
         // does not ask again (`AuthSrv_SendAccountInfo`; `ASURA/crates/asura-auth/src/lib.rs:610-629`
-        // reads it from the account row and sends it, and the reference's own hardcoded 24 is why its
+        // reads it from the account row and sends it, and GWPS's own hardcoded 24 is why its
         // clients are asked every login). A read that fails is 0: one extra page rather than a login.
         let eula_accepted = self
             .accounts
@@ -1034,7 +1033,7 @@ impl AuthSession {
     /// `AUTH_CMSG_REQUEST_GAME_INSTANCE` (`0x8029`): the client asks for a map, and this program
     /// answers with a world or with a refusal.
     ///
-    /// Reference: `AuthSrv_HandleRequestGameInstance`, which picks a live game server and answers
+    /// GWPS: `AuthSrv_HandleRequestGameInstance`, which picks a live game server and answers
     /// `0x0009` (an address and two tokens) followed by a request response. A request this program
     /// cannot place is answered with the response alone, status 2 - never with an address nothing is
     /// listening on, because that turns a describable error into a connect timeout.
@@ -1088,7 +1087,7 @@ impl AuthSession {
             // configuration opens the login and character databases only, and the world's map rows are
             // the world's. `None` is rule 3's own first branch - the client's own map, for the caller
             // to refuse - so the rule is whole and the datum is the decision named in
-            // `docs/port/09-parity-audit.md` §7a.
+            // `docs/port/09-parity-audit.md` section 7a.
             None,
             self.creation_map,
             self.fallback_outpost,
@@ -1217,14 +1216,9 @@ impl AuthSession {
     }
 }
 
-/// The first dword of a body: the request id a reply must echo, or the value `0x800E` carries.
-/// The counted UTF-16 name a message carries, from its `u16` count onward.
-///
-/// A counted string on this wire is a `u16` count of UTF-16 units and twice that many bytes, so it is
-/// walked rather than fixed: the count is what says how long the name is.
 /// How many units an access key's counted string holds.
 ///
-/// The reference decodes the same field into a string and logs it (`AuthSrv_HandleAddAccessKey`); this
+/// GWPS decodes the same field into a string and logs it (`AuthSrv_HandleAddAccessKey`); this
 /// tree only counts it, because it stores nothing and a key in a log is a secret in a log
 /// (`ASURA/crates/asura-auth/src/lib.rs:541-548`).
 fn access_key_units(body: &[u8]) -> usize {
@@ -1234,6 +1228,10 @@ fn access_key_units(body: &[u8]) -> usize {
     u16::from_le_bytes([body[4], body[5]]) as usize
 }
 
+/// The counted UTF-16 name a message carries, from its `u16` count onward.
+///
+/// A counted string on this wire is a `u16` count of UTF-16 units and twice that many bytes, so it is
+/// walked rather than fixed: the count is what says how long the name is.
 fn counted_name(bytes: &[u8]) -> String {
     let Some(count) = bytes.get(0..2) else {
         return String::new();
@@ -1249,6 +1247,7 @@ fn counted_name(bytes: &[u8]) -> String {
     String::from_utf16_lossy(&units)
 }
 
+/// The first dword of a body: the request id a reply must echo, or the value `0x800E` carries.
 fn request_id(body: &[u8]) -> u32 {
     if body.len() < 4 {
         return 0;

@@ -1,13 +1,13 @@
-//! The reference's table-driven arithmetic: `PathReciproc`, `PathSqrt` and the two tables they read.
+//! OpenTyria's table-driven arithmetic: `PathReciproc`, `PathSqrt` and the two tables they read.
 //!
-//! Copied from `ASURA/crates/asura-world/src/path_tables.rs`, which is generated from the reference's
+//! Copied from `ASURA/crates/asura-world/src/path_tables.rs`, which is generated from OpenTyria's
 //! `GmPaths.c`; the values were checked against that file entry for entry by script, because they are
-//! data read out of the reference and not something derivable from a format.
+//! data read out of OpenTyria and not something derivable from a format.
 //!
-//! `PathReciproc` and `PathSqrt` are table-driven in the reference: 256 entries of float bit patterns,
+//! `PathReciproc` and `PathSqrt` are table-driven in OpenTyria: 256 entries of float bit patterns,
 //! combined by integer arithmetic. The path search's costs come out of these tables, so a port that
 //! used the FPU's own division and square root would visit different trapezoids and return different
-//! waypoints - which is why the finder, when it lands, counts distance with [`path_sqrt`] and divides
+//! waypoints - which is why the finder (`Pathfind.rs`) counts distance with [`path_sqrt`] and divides
 //! with [`path_reciproc`] rather than with `/` and `.sqrt()`.
 
 /// `PathReciproc`'s `LookupTable` (`GmPaths.c`).
@@ -102,8 +102,8 @@ pub fn path_sqrt(value: f32) -> f32 {
 mod tests {
     use super::*;
 
-    /// The tables are the reference's own: 256 entries each, none of them zero, and the first entries are
-    /// the ones the reference's table starts with.
+    /// The tables are OpenTyria's own: 256 entries each, none of them zero, and the first entries are
+    /// the ones OpenTyria's table starts with.
     #[test]
     fn the_tables_are_the_references_own() {
         assert_eq!(RECIPROCAL.len(), 256);

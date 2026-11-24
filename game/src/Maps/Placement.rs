@@ -1,6 +1,6 @@
 //! Where a character enters, when the map a client names is not a place it can be put in.
 //!
-//! Reference: `AuthSrv_HandleRequestGameInstance` decides the destination with the character's own
+//! Source: OpenTyria's `AuthSrv_HandleRequestGameInstance` decides the destination with the character's own
 //! row, not with the client's number alone - a client has no business knowing which outpost its
 //! character stands in. The rule is ported whole from the working implementation's rule layer
 //! (`ASURA/crates/asura-rules/src/lib.rs`, 283 lines: `placement`, `name_is_acceptable`, `Requested`,
@@ -22,7 +22,7 @@
 //! is not in a catalogue the caller holds - an unknown map is left alone for the caller to refuse. The
 //! login program holds no world catalogue (its configuration opens the login and character databases
 //! only), so it passes `None`, which is rule 3's own first branch; giving it one is the decision named
-//! in `docs/port/09-parity-audit.md` §7a, and nothing here invents it.
+//! in `docs/port/09-parity-audit.md` section 7a, and nothing here invents it.
 //!
 //! `kinds` are the client's own map types (`game/World/mod.rs`, `map_kind`: 0 an outpost, 1 an
 //! explorable, 11 the creation instance), which ASURA reads from its `defaults.json` for the same

@@ -25,7 +25,7 @@
 //! | `"RealmServerPort": 6112` | `6112` |
 //! | `"Network": {"Trace": true}` | `1` for `Network.Trace` - the reference's own spelling of yes |
 //! | `"Appenders": ["Console", "Auth"]` | `Console,Auth` |
-//! | `"data": {"hex": "08 00 66 21"}` | `08 00 66 21`, and [`super::Config::bytes`] decodes it |
+//! | `"data": {"hex": "08 00 66 21"}` | `08 00 66 21`, and [`hex_bytes`] decodes it |
 //! | `"PidFile": null` | the key is absent, which is how a file says "not set" |
 //!
 //! Four names are **not** keys, because JSON has no comments and a shared file has to explain

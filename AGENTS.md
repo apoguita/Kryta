@@ -281,6 +281,7 @@ the client is the judge rather than a test.
 | titles: the research, the client builds, and the slice that is implemented | `docs/port/19-title-research.md` |
 | what is not settled: every open issue, in one list | `docs/port/20-open-issues.md` |
 | what the code is like: its style, its design, and where it is patched | `docs/port/21-code-assessment.md` |
+| the client DLL: how functionality is added to the client, and the direction for it | `docs/port/22-client-platform.md` |
 | how the game works: the owner's rules and the evidence for them | `docs/game-rules.md` |
 | every other source, its local copy, and which question goes to which | `docs/research-sources.md`, `research/` |
 | the captures, and the index over them | `recordings/`, `recordings/README.md`, `recordings/index.jsonl` |

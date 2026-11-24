@@ -7,11 +7,15 @@
 //! section 2): a handler reads the message, asks a noun for the decision, and answers - it does not
 //! hold the decision itself.
 //!
-//! Ported so far, four families: the item messages (`ItemHandler`, whose decisions are
+//! Ported so far, seven families: the creation screen (`CharacterHandler`, whose rows are
+//! `DatabaseCharacters` and whose block is `creation::player_data_block`), the item messages
+//! (`ItemHandler`, whose decisions are
 //! `characters::equip_place` and `DatabaseCharacters::move_item`), the four movement messages
 //! (`MovementHandler`, answered by `AgentState`, `pathfind` and `Maps::Portals`), the travel family
-//! (`TravelHandler`, answered by the travel row, `Portals` and `place_for_travel`) and a spoken line
-//! (`ChatHandler`, answered by `game/Chat/`).
+//! (`TravelHandler`, answered by the travel row, `Portals` and `place_for_travel`), a spoken line
+//! (`ChatHandler`, answered by `game/Chat/`), the three asks of a map load (`InstanceHandler`,
+//! whose frames are `agents::Player`'s) and the displayed title (`TitleHandler`, answered by
+//! `VanillaTitles`).
 
 #[path = "CharacterHandler.rs"]
 pub mod character;
@@ -27,3 +31,9 @@ pub mod travel;
 
 #[path = "ChatHandler.rs"]
 pub mod chat;
+
+#[path = "InstanceHandler.rs"]
+pub mod instance;
+
+#[path = "TitleHandler.rs"]
+pub mod title;

@@ -337,7 +337,7 @@ pub fn list_targets(
     Ok(Outcome::text(map_targets(world.maps()).table.join("\n")))
 }
 
-/// `/maps`: the alias table, the chat half sent and the table logged - the reference's two outputs.
+/// `/maps`: the alias table, the chat half sent and the table logged - GWPS's two outputs.
 pub fn chat_maps(
     _invocation: &Invocation,
     world: &crate::world::World,

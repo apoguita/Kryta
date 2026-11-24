@@ -3,12 +3,12 @@
 //!
 //! Reference: the creation instance is the one map type that is a conversation rather than a place -
 //! `MapType_CharacterCreation` - and its four handlers are `GameSrv_HandleCharCreation*`. The data is
-//! the reference's own: its six bags, the items it creates before anything else, and what a new
+//! GWPS's own: its six bags, the items it creates before anything else, and what a new
 //! character wears per campaign and profession (`GetDefaultEquipments`, `GmDefaultArmors.c`).
 //!
 //! The working implementation this port follows is `ASURA/crates/asura-world/src/creation.rs` and
 //! `item.rs`. The two data files are imported from its rows by `tools/import-creation-inventory.py`,
-//! so the numbers here are the reference's and not this tree's invention.
+//! so the numbers here are GWPS's and not this tree's invention.
 
 use common::configuration::json::Document;
 use common::logging::{Log, LogLevel};
@@ -69,7 +69,7 @@ pub fn wire_slot(worn: &[WornSlot], item_type: u8) -> Option<u8> {
 /// One item, in the field order the client is told about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
-    /// The item's runtime id. The reference allocates one per item; this tree renumbers each set, so
+    /// The item's runtime id. GWPS allocates one per item; this tree renumbers each set, so
     /// two characters cannot own the same id.
     pub id: u32,
     /// The bag it sits in, or `None` for an item that is nowhere yet.
@@ -84,9 +84,9 @@ pub struct Item {
     pub dye_tint: u8,
     /// The four packed dye colours.
     pub dye_colors: u16,
-    /// Crafting materials, as the reference packs them.
+    /// Crafting materials, as GWPS packs them.
     pub materials: u16,
-    /// The reference's own unverified byte.
+    /// GWPS's own unverified byte.
     pub unk1: u8,
     /// Item flags.
     pub flags: u32,
@@ -107,11 +107,12 @@ pub struct Item {
 /// One (campaign, profession) pair and what a character of it starts wearing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EquipmentSet {
-    /// Which campaign: `0` is Prophecies, and the client's own numbering.
+    /// Which campaign, the client's own numbering: `0` is none (a PvP character), `1` Prophecies,
+    /// `2` Factions, `3` Nightfall (`docs/game-rules.md`, E225).
     pub campaign: u8,
     /// Which profession, the client's own numbering.
     pub profession: u8,
-    /// The items, in the reference's table order.
+    /// The items, in GWPS's table order.
     pub items: Vec<Item>,
 }
 
@@ -120,7 +121,7 @@ pub struct EquipmentSet {
 #[derive(Debug, Clone, Default)]
 pub struct Tables {
     bags: Vec<Bag>,
-    /// The items the reference creates before a profession is chosen - the backpack's own item and
+    /// The items GWPS creates before a profession is chosen - the backpack's own item and
     /// the ones that hang off the other bags.
     items: Vec<Item>,
     sets: Vec<EquipmentSet>,
@@ -148,7 +149,7 @@ impl Tables {
 /// What one creation screen's inventory is: the bags, and every item in them.
 #[derive(Debug, Clone, Default)]
 pub struct Inventory {
-    /// The bags, in the reference's order.
+    /// The bags, in GWPS's order.
     pub bags: Vec<Bag>,
     /// Every item, with the id it will be named by.
     pub items: Vec<Item>,
@@ -158,10 +159,10 @@ pub struct Inventory {
 const BAG_EQUIPPED: u8 = 2;
 
 impl Tables {
-    /// Read the two record lists: the inventory and the profession sets.
+    /// Read the three record lists: the inventory, the profession sets and the equipped slots.
     ///
-    /// A file that is missing is reported and leaves that half empty, so a world can still be started
-    /// with what it has - and the log says what it does not have.
+    /// A file that is missing, or an equipped-slot table that is not named, is an error: the world
+    /// does not start half configured.
     pub fn load(
         inventory_path: impl AsRef<std::path::Path>,
         equipment_path: impl AsRef<std::path::Path>,
@@ -273,7 +274,7 @@ impl Tables {
         definitions
     }
 
-    /// The set for a choice, or the campaign's first set when the choice is not in the table.
+    /// The set for a choice, or `None` when the choice is not in the table.
     pub fn set(&self, campaign: u8, profession: u8) -> Option<&EquipmentSet> {
         self.sets
             .iter()
@@ -286,10 +287,10 @@ impl Tables {
         &self.sets
     }
 
-    /// The inventory a creation screen is given for a choice: the reference's bags, the items it
+    /// The inventory a creation screen is given for a choice: GWPS's bags, the items it
     /// creates before anything else, and the chosen profession's equipment in the equipped bag.
     ///
-    /// The ids are this tree's own, allocated from one per screen: the reference renumbers too
+    /// The ids are this tree's own, allocated from one per screen: GWPS renumbers too
     /// (`GameSrv_AllocateItem`), because an id is a runtime allocation and two characters cannot own
     /// the same one.
     pub fn inventory(&self, campaign: u8, profession: u8) -> Inventory {
@@ -362,7 +363,7 @@ impl Inventory {
     }
 }
 
-/// A creation screen's player-data block, in the reference's order.
+/// A creation screen's player-data block, in GWPS's order.
 ///
 /// Reference: `GameSrv_HandleCharCreationRequestPlayer` - the player-data start, the inventory stream
 /// (bags and items, each item placed in its slot), the four empty weapon sets and the gold, the four
@@ -491,7 +492,7 @@ pub fn inventory_block(inventory: &Inventory) -> Vec<Vec<u8>> {
 /// Reference: `GameSrv_HandleRequestItems`-shaped load traffic, measured from a working server in
 /// `recordings/gwps/world/load-stream.log` - `0x0144`, `0x0148`, the bag and item frames, `0x0147`
 /// four times, `0x0141`, then `0x00EA` to `0x00ED`. A map load carries no player-data end (`0x018A`):
-/// the reference sends the creation screen's wrapper and a map's stream do not share it.
+/// the creation screen's wrapper and a map's stream do not share it.
 pub fn load_item_stream(inventory: &Inventory, gold: u32) -> Vec<Vec<u8>> {
     let mut frames = vec![
         item_packets::item_stream_create(item_packets::ITEM_STREAM, 0),

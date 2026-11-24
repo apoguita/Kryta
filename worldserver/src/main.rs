@@ -3,10 +3,15 @@
 //! Reference: `src/server/apps/worldserver/Main.cpp` at 30a36ec4d. The stages below are that
 //! file's order, and each one names the reference call it translates.
 //!
-//! Only the first stage exists: the command line. The program stops at the second with a
-//! reason and exit code 1 rather than printing that it ran a stage it has not ported.
+//! The program runs. It reads its configuration, logs, writes its PID file, registers its scripts,
+//! opens the login, world and character databases and brings each schema up to date, loads the world
+//! from its pack, listens, and runs the world's update loop until it is asked to stop. It exits with
+//! the code the world stopped under.
+//!
+//! `run` is the list of stages, in the order they happen; each stage is one function below it.
 
-// The stages that use these are not ported yet. The module exists so the boundary exists.
+// The console and the local control endpoint. `dead_code` is allowed on both because each holds
+// items that only its own tests call.
 #[allow(dead_code)]
 #[path = "CommandLine/mod.rs"]
 mod command_line;
@@ -14,13 +19,18 @@ mod command_line;
 #[path = "RemoteAccess/mod.rs"]
 mod remote_access;
 
-use common::configuration::{Complaint, Config, Policy, PolicyOverride, Severity};
+use common::configuration::startup::{policy, print_usage, read, read_bool, read_string, report};
+use common::configuration::Config;
 use common::logging::{Log, LogLevel};
 use common::utilities::create_pid_file;
 use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
 use database::updater::{collect_files, UpdateState};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 /// The config file read when `-c` names none.
 /// Reference: `_ACORE_CORE_CONFIG  "worldserver.json"`, with this project's own file format: JSON.
@@ -45,7 +55,7 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
 
     // Reference: `if (vm.count("help") || vm.count("version")) return 0;`
     if options.help {
-        print_usage();
+        print_usage(DEFAULT_CONFIG);
         return Ok(game::world::ExitCode::Normal);
     }
     if options.version {
@@ -54,26 +64,145 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     }
 
     // Stage 2. Reference: `sConfigMgr->Configure(...)` then `LoadAppConfigs()`.
-    //
-    // The severity policy can be overridden on the command line, and a key it does not know is
-    // refused rather than ignored - the reference reports it the same way.
-    // A repair an operator asks for in one flag, rather than a dead stack: the schema is dropped and
-    // rebuilt from the files (`docs/port/04-configuration.md`).
-    let reset_schema = args.iter().any(|argument| argument == "--reset-schema");
-    // `--recheck-schema`: a schema file changed after this database recorded it. The operator says so in
-    // one command, and the recorded hash is re-taken from the file instead of the stack staying down.
-    let recheck_schema = args.iter().any(|argument| argument == "--recheck-schema");
+    let repair = SchemaRepair::from_arguments(args);
+    let mut config = read_configuration(&options)?;
 
-    let mut policy = Policy::default();
-    if let Some(text) = &options.config_policy {
-        let control = PolicyOverride::parse(text).map_err(|error| error.to_string())?;
-        if !control.apply(&mut policy) {
-            return Err(format!(
-                "--config-policy names no value this program has: '{}'",
-                control.key
-            ));
-        }
+    // Stage 3. Reference: `sLog->Initialize(sConfigMgr->GetOption<bool>("Log.Async.Enable", ...))`.
+    let log = start_logging(&config)?;
+
+    // Stage 4. Reference: `CreatePIDFile(pidFile)`, when `PidFile` is set.
+    write_pid_file(&config, &log)?;
+
+    // Stage 5. Reference: `sScriptMgr->SetScriptLoader(AddScripts)`, `SetModulesLoader`, then
+    // `sScriptMgr->Initialize()`.
+    let scripts = start_scripts(&log)?;
+
+    // Stage 6. Reference: `StartDB()`.
+    let databases = open_databases(&mut config, &log, repair)?;
+
+    // Stage 7. Reference: `sWorld->SetInitialWorldSettings()`.
+    let LoadedWorld {
+        world,
+        operations,
+        realm,
+    } = load_world(&config, &log, scripts, &databases)?;
+
+    // Stage 8. Reference: `sWorldSocketMgr.StartWorldNetwork(*ioContext, worldListener, worldPort,
+    // networkThreads)`.
+    let listener = read_listener_settings(&config)?;
+    let (sockets, bound) = start_listener(&world, &databases, &log, &listener)?;
+    announce_ready(&log, &listener, bound, realm);
+    // The world is up, so its scripts are told (`sScriptMgr->OnStartup()`, `Main.cpp:398`).
+    world.on_startup();
+
+    // Reference: Main.cpp:400-408 and CliRunnable.cpp:231: submit to the world update.
+    let (control, command_receiver) = start_console_and_control(&config, &log, &world, &operations)?;
+
+    // The world's loop: `WorldUpdateLoop` (`Main.cpp:584-620`).
+    let world_loop = start_world_loop(
+        &log,
+        &world,
+        &sockets,
+        operations,
+        command_receiver,
+        &listener,
+        bound,
+        realm,
+    )?;
+
+    wait_for_shutdown(&world);
+    let exit = world.exit_code();
+    shut_down(&log, &world, control, world_loop, sockets, &databases);
+    Ok(exit)
+}
+
+/// The two repairs an operator may ask for on the command line.
+#[derive(Clone, Copy)]
+struct SchemaRepair {
+    /// `--reset-schema`: a repair an operator asks for in one flag, rather than a dead stack: the
+    /// world database's schema is dropped and rebuilt from the files
+    /// (`docs/port/04-configuration.md`).
+    reset: bool,
+    /// `--recheck-schema`: a schema file changed after this database recorded it. The operator says
+    /// so in one command, and the recorded hash is re-taken from the file instead of the stack
+    /// staying down.
+    recheck: bool,
+}
+
+impl SchemaRepair {
+    /// Read the two flags from the command line.
+    fn from_arguments(args: &[String]) -> Self {
+        let reset = args.iter().any(|argument| argument == "--reset-schema");
+        let recheck = args.iter().any(|argument| argument == "--recheck-schema");
+        Self { reset, recheck }
     }
+}
+
+/// The three databases this program opens, each behind the lock its users share it through.
+struct Databases {
+    /// The login database: a connection claims its travel record from a session thread, so this
+    /// pool is shared with the listener.
+    login: Arc<Mutex<DatabaseWorkerPool>>,
+    /// The world database: the instances are rows, and the instance store is built on this pool.
+    world: Arc<Mutex<DatabaseWorkerPool>>,
+    /// The character database: a creation confirm writes a character from a session thread, so the
+    /// pool is shared with the listener the way the login program shares its own with the portal.
+    character: Arc<Mutex<DatabaseWorkerPool>>,
+}
+
+/// The world once its content is loaded, and what the later stages need beside it.
+struct LoadedWorld {
+    /// The world, shared from here on.
+    world: Arc<game::world::World>,
+    /// The operations this world answers.
+    operations: Arc<game::chat::operations::Registry>,
+    /// `RealmID`: which world this is.
+    realm: u32,
+}
+
+/// The files the creation screen and the command surface are read from.
+struct ContentFiles {
+    /// `InventoryFile`.
+    inventory: String,
+    /// `EquipmentFile`.
+    equipment: String,
+    /// `EquippedSlotsFile`.
+    worn_slots: String,
+    /// `CommandsFile`.
+    commands: String,
+}
+
+/// What the listener and the world loop run by, as the configuration states it.
+struct ListenerSettings {
+    /// `BindIP`.
+    bind: String,
+    /// `WorldServerPort`.
+    port: u16,
+    /// `Network.Threads`.
+    network_threads: usize,
+    /// `Network.Trace`.
+    trace: bool,
+    /// `StatusInterval`, in seconds, never less than one.
+    status_interval: u64,
+    /// `MinWorldUpdateTime`, never less than one millisecond.
+    min_update: std::time::Duration,
+}
+
+/// A thread this program started, and the flag that asks it to stop.
+struct Background {
+    /// Set to ask the thread to end.
+    stop: Arc<AtomicBool>,
+    /// The thread, joined at shutdown.
+    thread: JoinHandle<()>,
+}
+
+/// Stage 2: load the configuration file.
+///
+/// Reference: `sConfigMgr->Configure(...)` then `LoadAppConfigs()`. The severity policy can be
+/// overridden on the command line, and a key it does not know is refused rather than ignored - the
+/// reference reports it the same way.
+fn read_configuration(options: &Options) -> Result<Config, String> {
+    let policy = policy(options.config_policy.as_deref())?;
 
     let mut config =
         Config::load_json(&options.config, false, policy).map_err(|error| error.to_string())?;
@@ -82,10 +211,15 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     for complaint in config.complaints() {
         report(complaint);
     }
+    Ok(config)
+}
 
-    // Stage 3. Reference: `sLog->Initialize(sConfigMgr->GetOption<bool>("Log.Async.Enable", ...))`.
+/// Stage 3: start the log, print the banner, and print the effective configuration when asked.
+///
+/// Reference: `sLog->Initialize(sConfigMgr->GetOption<bool>("Log.Async.Enable", ...))`.
+fn start_logging(config: &Config) -> Result<Log, String> {
     let log = Log::new();
-    let notes = log.initialize(&config).map_err(|error| error.to_string())?;
+    let notes = log.initialize(config).map_err(|error| error.to_string())?;
     for note in notes {
         println!("warning: {note}");
     }
@@ -108,12 +242,7 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
 
     // What this process actually took from its configuration, when asked. Masked: a connection
     // string holds a password and a log line gets pasted into issue reports.
-    let (show_config, notes) = config
-        .value_bool("Log.EffectiveConfig", false)
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
+    let show_config = read_bool(config, "Log.EffectiveConfig", false)?;
     if show_config {
         for (key, value) in config.describe() {
             log.out(
@@ -123,14 +252,15 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
             );
         }
     }
-    // Stage 4. Reference: `CreatePIDFile(pidFile)`, when `PidFile` is set - the same stage the auth
-    // program has, with the same two lines.
-    let (pid_file, notes) = config
-        .value_string("PidFile", "")
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
+    Ok(log)
+}
+
+/// Stage 4: write the PID file, when `PidFile` names one.
+///
+/// Reference: `CreatePIDFile(pidFile)` - the same stage the auth program has, with the same two
+/// lines.
+fn write_pid_file(config: &Config, log: &Log) -> Result<(), String> {
+    let pid_file = read_string(config, "PidFile", "")?;
     if !pid_file.is_empty() {
         match create_pid_file(&pid_file) {
             Some(pid) => log.out(
@@ -151,12 +281,17 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
             }
         }
     }
+    Ok(())
+}
 
-    // Stage 7. Reference: `sScriptMgr->SetScriptLoader(AddScripts)`, `SetModulesLoader`, then
-    // `sScriptMgr->Initialize()` with `Initializing Scripts...` printed before it. The reference
-    // starts its io-context threads (its `ThreadPool`) before this; that pool is this tree's socket
-    // layer, which owns its runtimes and is created with the listener, so the thread stage lands
-    // there and not as a stage of its own (`docs/port/01-structure.md`).
+/// Stage 5: hand the script manager its two loaders and initialize it.
+///
+/// Reference: `sScriptMgr->SetScriptLoader(AddScripts)`, `SetModulesLoader`, then
+/// `sScriptMgr->Initialize()` with `Initializing Scripts...` printed before it. The reference
+/// starts its io-context threads (its `ThreadPool`) before this; that pool is this tree's socket
+/// layer, which owns its runtimes and is created with the listener, so the thread stage lands
+/// there and not as a stage of its own (`docs/port/01-structure.md`).
+fn start_scripts(log: &Log) -> Result<game::scripting::ScriptMgr, String> {
     let mut scripts = game::scripting::ScriptMgr::new();
     scripts.set_script_loader(scripts::add_scripts);
     scripts.set_modules_loader(scripts::add_modules_scripts);
@@ -170,135 +305,186 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
             registered.scripts, registered.hooks
         ),
     );
+    Ok(scripts)
+}
 
-    // Stage 5. Reference: `StartDB()`, which opens the World and Character pools and runs the schema
-    // updater on each - the stage the auth program has, twice.
-    //
-    // The world program opens three databases: the world's content, a character's sheets, and the
-    // login database's `travel` record - the hand-off a login writes and this program claims, which
-    // is why the two programs need not talk to each other (`docs/port/06-world-plan.md`, "The three
-    // seams"). The login schema is applied here too, so a world started first still finds its table.
-    let (sql_trace, notes) = config
-        .value_bool("Database.Trace", false)
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
+/// Stage 6: open the login, world and character databases, in that order, and bring each schema up
+/// to date.
+///
+/// Reference: `StartDB()`, which opens the World and Character pools and runs the schema updater on
+/// each - the stage the auth program has, twice.
+///
+/// The world program opens three databases: the world's state, a character's sheets, and the
+/// login database's `travel` record - the hand-off a login writes and this program claims, which
+/// is why the two programs need not talk to each other (`docs/port/06-world-plan.md`, "The three
+/// seams"). The login schema is applied here too, so a world started first still finds its table.
+fn open_databases(
+    config: &mut Config,
+    log: &Log,
+    repair: SchemaRepair,
+) -> Result<Databases, String> {
+    let sql_trace = read_bool(config, "Database.Trace", false)?;
 
     config.mark_critical("LoginDatabaseInfo");
-    let mut opened = Vec::new();
-    let mut character_pool: Option<std::sync::Arc<std::sync::Mutex<DatabaseWorkerPool>>> = None;
-    let mut world_pool: Option<std::sync::Arc<std::sync::Mutex<DatabaseWorkerPool>>> = None;
-    let mut login_pool: Option<std::sync::Arc<std::sync::Mutex<DatabaseWorkerPool>>> = None;
-    for (kind, label, schema) in [
-        (DatabaseKind::Login, "Login", "data/sql/base/db_auth"),
-        (DatabaseKind::World, "World", "data/sql/base/db_world"),
-        (DatabaseKind::Character, "Character", "data/sql/base/db_characters"),
-    ] {
-        let settings = read_settings(&config, kind)?;
-        let mut pool = DatabaseWorkerPool::open_with_trace(kind, &settings, &log, sql_trace)?;
+    let login = open_database(
+        config,
+        log,
+        DatabaseKind::Login,
+        "Login",
+        "data/sql/base/db_auth",
+        sql_trace,
+        repair,
+    )?;
+    let world = open_database(
+        config,
+        log,
+        DatabaseKind::World,
+        "World",
+        "data/sql/base/db_world",
+        sql_trace,
+        repair,
+    )?;
+    let character = open_database(
+        config,
+        log,
+        DatabaseKind::Character,
+        "Character",
+        "data/sql/base/db_characters",
+        sql_trace,
+        repair,
+    )?;
+    Ok(Databases {
+        login: Arc::new(Mutex::new(login)),
+        world: Arc::new(Mutex::new(world)),
+        character: Arc::new(Mutex::new(character)),
+    })
+}
 
-        // `--reset-schema`: the schema files changed after this database recorded them as applied, or an
-        // operator wants the tables rebuilt from the files as they are. The world and login databases
-        // hold state and no content, so dropping the schema there costs nothing that is not recreated;
-        // the character database is refused, because it holds what players earned.
-        // Only the world database is reset: it holds state and no content, and the files rebuild it.
-        // The login database holds accounts and the character database holds what players earned, so
-        // neither is dropped by a flag - a changed file there is `--recheck-schema`, which deletes
-        // nothing (`docs/port/04-configuration.md`).
-        if reset_schema && kind == DatabaseKind::World {
-            pool.query_with("DROP SCHEMA IF EXISTS public CASCADE", &[])
-                .map_err(|error| format!("the {label} schema cannot be dropped: {error}"))?;
-            pool.query_with("CREATE SCHEMA public", &[])
-                .map_err(|error| format!("the {label} schema cannot be recreated: {error}"))?;
-            log.out(
-                LogLevel::Info,
-                "server.worldserver",
-                format!("Reset the {label} schema: dropped and recreated, so the files apply from scratch."),
-            );
-        }
+/// Open one database, apply the repair the operator asked for, apply its schema files, and say so.
+fn open_database(
+    config: &Config,
+    log: &Log,
+    kind: DatabaseKind,
+    label: &str,
+    schema: &str,
+    sql_trace: bool,
+    repair: SchemaRepair,
+) -> Result<DatabaseWorkerPool, String> {
+    let settings = read_settings(config, kind)?;
+    let mut pool = DatabaseWorkerPool::open_with_trace(kind, &settings, log, sql_trace)?;
 
-        let schema = std::path::Path::new(schema);
-        let files = collect_files(schema, UpdateState::Released).map_err(|error| {
-            format!(
-                "the {label} schema at {} is not readable: {error}",
-                schema.display()
-            )
-        })?;
-        if recheck_schema {
-            for file in &files {
-                let text = database::updater::read_sql_update(&file.path)
-                    .map_err(|error| error.to_string())?;
-                let hash = database::updater::apply::sha1_hex(&text);
-                let name = file.name();
-                pool.query_with(
-                    "UPDATE \"updates\" SET \"hash\" = $1 WHERE \"name\" = $2",
-                    &[&hash, &name],
-                )
-                .map_err(|error| format!("the {label} update record cannot be re-taken: {error}"))?;
-                log.out(
-                    LogLevel::Info,
-                    "server.worldserver",
-                    format!("{label} schema: re-recorded {name} as {hash}."),
-                );
-            }
-        }        let summary = pool.apply_updates(&files, &log)?;
-        pool.ping()
-            .map_err(|error| format!("the {label} database does not answer: {error}"))?;
-
+    // `--reset-schema`: the schema files changed after this database recorded them as applied, or an
+    // operator wants the tables rebuilt from the files as they are.
+    // Only the world database is reset: it holds state and no content, and the files rebuild it.
+    // The login database holds accounts and the character database holds what players earned, so
+    // neither is dropped by a flag - a changed file there is `--recheck-schema`, which deletes
+    // nothing (`docs/port/04-configuration.md`).
+    if repair.reset && kind == DatabaseKind::World {
+        pool.query_with("DROP SCHEMA IF EXISTS public CASCADE", &[])
+            .map_err(|error| format!("the {label} schema cannot be dropped: {error}"))?;
+        pool.query_with("CREATE SCHEMA public", &[])
+            .map_err(|error| format!("the {label} schema cannot be recreated: {error}"))?;
         log.out(
             LogLevel::Info,
             "server.worldserver",
-            format!(
-                "Started {label} database connection pool: {} file(s) applied, {} already current.",
-                summary.updated, summary.skipped
-            ),
+            format!("Reset the {label} schema: dropped and recreated, so the files apply from scratch."),
         );
+    }
 
-        if kind == DatabaseKind::Character {
-            // A creation confirm writes a character from a session thread, so the character pool is
-            // shared with the listener the way the login program shares its own with the portal.
-            character_pool = Some(std::sync::Arc::new(std::sync::Mutex::new(pool)));
-        } else if kind == DatabaseKind::World {
-            // The maps are rows, so the world pool is kept: the map catalogue is read from it below.
-            world_pool = Some(std::sync::Arc::new(std::sync::Mutex::new(pool)));
-        } else if kind == DatabaseKind::Login {
-            // A connection claims its travel record from a session thread, so this pool is shared
-            // with the listener as well.
-            login_pool = Some(std::sync::Arc::new(std::sync::Mutex::new(pool)));
-        } else {
-            opened.push(pool);
+    let schema = std::path::Path::new(schema);
+    let files = collect_files(schema, UpdateState::Released).map_err(|error| {
+        format!(
+            "the {label} schema at {} is not readable: {error}",
+            schema.display()
+        )
+    })?;
+    if repair.recheck {
+        for file in &files {
+            let text = database::updater::read_sql_update(&file.path)
+                .map_err(|error| error.to_string())?;
+            let hash = database::updater::apply::sha1_hex(&text);
+            let name = file.name();
+            pool.query_with(
+                "UPDATE \"updates\" SET \"hash\" = $1 WHERE \"name\" = $2",
+                &[&hash, &name],
+            )
+            .map_err(|error| format!("the {label} update record cannot be re-taken: {error}"))?;
+            log.out(
+                LogLevel::Info,
+                "server.worldserver",
+                format!("{label} schema: re-recorded {name} as {hash}."),
+            );
         }
     }
+    let summary = pool.apply_updates(&files, log)?;
+    pool.ping()
+        .map_err(|error| format!("the {label} database does not answer: {error}"))?;
 
-    // Stage 8. Reference: `sWorld->SetInitialWorldSettings()` - everything the game is made of,
-    // loaded before the listener opens. Here that is the map catalogue, and the log says how many
-    // maps it holds; zero would be a statement, and the block below only serves what is listed.
-    let (realm, notes) = config
-        .value::<u32>("RealmID", 1)
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
+    log.out(
+        LogLevel::Info,
+        "server.worldserver",
+        format!(
+            "Started {label} database connection pool: {} file(s) applied, {} already current.",
+            summary.updated, summary.skipped
+        ),
+    );
+    Ok(pool)
+}
+
+/// Stage 7: build the world and load everything the game is made of, before the listener opens.
+///
+/// Reference: `sWorld->SetInitialWorldSettings()`. Each step below is one function, in the order
+/// the content is read: the maps and titles, the operations and the command surface, the wire
+/// capture, the world's numbers, the path graphs, the creation screen, the doorways, the instance
+/// table and the item definitions.
+fn load_world(
+    config: &Config,
+    log: &Log,
+    scripts: game::scripting::ScriptMgr,
+    databases: &Databases,
+) -> Result<LoadedWorld, String> {
+    let realm = read::<u32>(config, "RealmID", 1)?;
 
     let mut world = game::world::World::new(realm);
-    // The scripts the program registered at stage 7 are the world's: the manager is a game symbol in
+    // The scripts the program registered at stage 5 are the world's: the manager is a game symbol in
     // the reference too (`sScriptMgr`, `src/server/game/Scripting/`), and the world is the object
     // that raises its moments.
     world.set_scripts(scripts);
-    // The maps are the pack's (`config/World/Vanilla/maps/...`): what a world *is* is a file, and a row
-    // is what a server writes (`docs/decisions/0014-the-world-content-is-a-pack.md`). Read once, held for
-    // the life of the program, and the log says which source answered. The database is still opened for
-    // the state it holds - instances, characters, items, travels - and no longer for content.
-    let (world_pack, notes) = config
-        .value_string("WorldPack", "config/World/Vanilla")
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
-    let pack = game::maps::pack::Pack::load(&world_pack, &log)?;
-    let maps = world.load_maps(&pack, &format!("the map pack at {world_pack}"), &log)?;
-    world.load_titles(std::path::Path::new(&world_pack).join("titles.json"), &log)?;
+
+    let (pack, hostable) = load_maps(config, log, &mut world)?;
+    let files = read_content_files(config)?;
+    let operations = load_operations_and_commands(&files, log, &mut world)?;
+    start_wire_capture(config, log)?;
+    load_world_settings(config, log, &mut world)?;
+    load_graphs(config, log, &hostable, &mut world)?;
+    load_creation(&files, log, &mut world)?;
+    load_doorways(&pack, log, &mut world);
+    open_instances(&databases.world, log, &mut world);
+    load_item_definitions(log, &mut world);
+
+    Ok(LoadedWorld {
+        world: Arc::new(world),
+        operations,
+        realm,
+    })
+}
+
+/// Read the map pack into the world, then the titles, and answer the pack and the maps this world
+/// can put a client in.
+///
+/// The maps are the pack's (`config/World/Vanilla/maps/...`): what a world *is* is a file, and a row
+/// is what a server writes (`docs/decisions/0014-the-world-content-is-a-pack.md`). Read once, held for
+/// the life of the program, and the log says which source answered. The databases are opened for
+/// the state they hold - instances, characters, items, travels - and not for content.
+fn load_maps(
+    config: &Config,
+    log: &Log,
+    world: &mut game::world::World,
+) -> Result<(game::maps::pack::Pack, Vec<game::world::MapEntry>), String> {
+    let world_pack = read_string(config, "WorldPack", "config/World/Vanilla")?;
+    let pack = game::maps::pack::Pack::load(&world_pack, log)?;
+    let maps = world.load_maps(&pack, &format!("the map pack at {world_pack}"), log)?;
+    world.load_titles(std::path::Path::new(&world_pack).join("titles.json"), log)?;
     // The maps this world can put a client in: a record the pack states no type or no blob for is a
     // destination the client can resolve and this world cannot load, so it is not asked for a graph
     // (`ASURA/crates/asura-world/src/catalogue.rs:54-63`).
@@ -337,41 +523,53 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
             }
         ),
     );
+    Ok((pack, hostable))
+}
+
+/// Read where the creation screen's content and the command surface are.
+fn read_content_files(config: &Config) -> Result<ContentFiles, String> {
     // The creation screen's own content: the bags and items a client is given, and what a new
     // character wears per campaign and profession. Reference: the same `SetInitialWorldSettings`
     // pass that loads a world's maps; a creation screen's equipment is content like any other.
-    let (inventory_file, notes) = config
-        .value_string("InventoryFile", "config/World/Vanilla/creation/inventory.json")
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
-    let (equipment_file, notes) = config
-        .value_string("EquipmentFile", "config/World/Vanilla/creation/equipment.json")
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
+    let inventory = read_string(
+        config,
+        "InventoryFile",
+        "config/World/Vanilla/creation/inventory.json",
+    )?;
+    let equipment = read_string(
+        config,
+        "EquipmentFile",
+        "config/World/Vanilla/creation/equipment.json",
+    )?;
     // Which slot each kind of item is worn in. Content, like the two above: the number is the
     // client's own, and a wrong one draws a character without the piece it holds.
-    let (worn_slots_file, notes) = config
-        .value_string("EquippedSlotsFile", "config/World/Vanilla/creation/worn_slots.json")
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
+    let worn_slots = read_string(
+        config,
+        "EquippedSlotsFile",
+        "config/World/Vanilla/creation/worn_slots.json",
+    )?;
     // The chat command surface: the names a player may type and the operation each one runs. Content,
     // not a setting - the file is where the surface lives, and `CommandsFile` says where that file is
     // (`docs/decisions/0011-the-command-surface-is-content.md`).
-    let (commands_file, notes) = config
-        .value_string("CommandsFile", "config/Server/commands.json")
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
-    // The operations this world answers, before its rows are read: a row names one of them, and a name
-    // the registry does not have is refused at start-up (`docs/port/14-operator-surfaces.md`). The chat
-    // operations live in the game library and are registered here beside the world's own.
+    let commands = read_string(config, "CommandsFile", "config/Server/commands.json")?;
+    Ok(ContentFiles {
+        inventory,
+        equipment,
+        worn_slots,
+        commands,
+    })
+}
+
+/// Register the operations this world answers, then read the command rows that name them.
+///
+/// The operations come before the rows: a row names one of them, and a name the registry does not
+/// have is refused at start-up (`docs/port/14-operator-surfaces.md`). The chat operations live in
+/// the game library and are registered here beside the world's own.
+fn load_operations_and_commands(
+    files: &ContentFiles,
+    log: &Log,
+    world: &mut game::world::World,
+) -> Result<Arc<game::chat::operations::Registry>, String> {
     let mut operations = game::chat::operations::Registry::new();
     game::chat::operations::register_chat(&mut operations)?;
     operations.register(
@@ -414,18 +612,19 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
         },
         command_line::world_restart,
     )?;
-    let operations = std::sync::Arc::new(operations);
-    world.set_operations(std::sync::Arc::clone(&operations));
-    world.load_commands(&commands_file, &log)?;
-    // The server-side wire capture (`game/Server/Capture.rs`): every game message, both directions, as
-    // plaintext JSONL. Empty leaves it off, which is the default; a path is a setting, so a diagnostic
-    // run names its own file (`docs/port/04-configuration.md`).
-    let (capture_file, notes) = config
-        .value_string("CaptureFile", "")
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
+    let operations = Arc::new(operations);
+    world.set_operations(Arc::clone(&operations));
+    world.load_commands(&files.commands, log)?;
+    Ok(operations)
+}
+
+/// Start the server-side wire capture, when `CaptureFile` names a file.
+///
+/// The capture (`game/Server/Capture.rs`) is every game message, both directions, as plaintext
+/// JSONL. Empty leaves it off, which is the default; a path is a setting, so a diagnostic run names
+/// its own file (`docs/port/04-configuration.md`).
+fn start_wire_capture(config: &Config, log: &Log) -> Result<(), String> {
+    let capture_file = read_string(config, "CaptureFile", "")?;
     if !capture_file.is_empty() {
         game::server::capture::install(&capture_file)?;
         log.out(
@@ -434,9 +633,19 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
             format!("Capturing the wire to {capture_file} (layer wire, two-byte headers)."),
         );
     }
-    // The world's own numbers: every threshold an instance, a district or a spawn uses, read from this
-    // program's file with the game's value as the default (R53, and docs/game-rules.md for each row).
-    let (world_settings, notes) = game::world::world_config::WorldConfig::read(&config)?;
+    Ok(())
+}
+
+/// Read the world's own numbers and give them to the world.
+///
+/// Every threshold an instance, a district or a spawn uses, read from this program's file with the
+/// game's value as the default (R53, and docs/game-rules.md for each row).
+fn load_world_settings(
+    config: &Config,
+    log: &Log,
+    world: &mut game::world::World,
+) -> Result<(), String> {
+    let (world_settings, notes) = game::world::world_config::WorldConfig::read(config)?;
     for note in notes {
         log.out(LogLevel::Info, "server.worldserver", note);
     }
@@ -450,26 +659,42 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
             world.settings().party_size_cap
         ),
     );
+    Ok(())
+}
 
-    // The path graphs are extracted data. ASURA's standard startup at
-    // `crates/asura-worldserver/src/main.rs:366-391` may fall back to the client archive; Kryta's
-    // serving process is detached from that archive and reads only the shipped cache. A cache may be
-    // partial: maps it does not contain remain `NoGraph`, including future custom maps.
-    let (graph_dump, notes) = config
-        .value_string("PathGraphs", "data/path-graphs.bin")
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
-    let graphs = load_path_graphs(&graph_dump, &hostable, &log)?;
+/// Read the path-graph cache `PathGraphs` names and give it to the world.
+///
+/// The path graphs are extracted data. ASURA's standard startup at
+/// `crates/asura-worldserver/src/main.rs:366-391` may fall back to the client archive; Kryta's
+/// serving process is detached from that archive and reads only the shipped cache. A cache may be
+/// partial: maps it does not contain remain `NoGraph`, including future custom maps.
+fn load_graphs(
+    config: &Config,
+    log: &Log,
+    hostable: &[game::world::MapEntry],
+    world: &mut game::world::World,
+) -> Result<(), String> {
+    let graph_dump = read_string(config, "PathGraphs", "data/path-graphs.bin")?;
+    let graphs = load_path_graphs(&graph_dump, hostable, log)?;
     world.set_graphs(graphs);
+    Ok(())
+}
 
+/// Read the creation screen's content into the world, and say what was read.
+fn load_creation(
+    files: &ContentFiles,
+    log: &Log,
+    world: &mut game::world::World,
+) -> Result<(), String> {
+    let inventory_file = &files.inventory;
+    let equipment_file = &files.equipment;
+    let worn_slots_file = &files.worn_slots;
     let (bags, items, sets) =
         world.load_creation(
-            &inventory_file,
-            &equipment_file,
-            Some(std::path::Path::new(&worn_slots_file)),
-            &log,
+            inventory_file,
+            equipment_file,
+            Some(std::path::Path::new(worn_slots_file)),
+            log,
         )?;
     log.out(
         LogLevel::Info,
@@ -478,74 +703,80 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
             "Creation screen: {bags} bag(s) and {items} item(s) from {inventory_file}, {sets} profession set(s) from {equipment_file}, worn slots from {worn_slots_file}."
         ),
     );
+    Ok(())
+}
 
-    // A map's doorways, which is what a step is judged against
-    // (`game/Maps/Portals.rs`, `ASURA/crates/asura-world/src/portals.rs`). They come from the pack's
-    // `portals.json` (`config/World/Vanilla/maps/**`), read once like the maps themselves; a map with no
-    // `portals.json` has no doorway, and every step in it crosses nothing.
-    {
-        match pack.arches() {
-            Ok(arches) => {
-                let portals = game::maps::Portals::new(
-                    arches,
-                    world.settings().point_box_half_extent,
-                );
-                log.out(
-                    LogLevel::Info,
-                    "server.worldserver",
-                    format!(
-                        "Doorways: {} arch(es) on {} map(s); a point doorway's box has a half side of {:.0} (World.PointBoxHalfExtent).",
-                        portals.arches(),
-                        portals.maps_with_doorways(),
-                        portals.extent()
-                    ),
-                );
-                world.set_portals(portals);
-            }
-            Err(error) => log.out(
-                LogLevel::Warn,
-                "server.worldserver",
-                format!(
-                    "No doorway rows: {error}. Every step crosses nothing until the map_arch table is readable."
-                ),
-            ),
-        }
-    }
-
-    // The instance table (`data/sql/base/db_world/0003-instances.sql`): the copies a session opens
-    // are rows, and a fresh world disposes what an earlier run left - nobody is inside it.
-    if let Some(pool) = world_pool.as_ref() {
-        let store = std::sync::Arc::new(game::districts::DatabaseInstances::new(
-            std::sync::Arc::clone(pool),
-            log.clone(),
-        ));
-        match store.dispose_all() {
-            Ok(count) if count > 0 => log.out(
+/// Give the world its maps' doorways, which is what a step is judged against.
+///
+/// `game/Maps/Portals.rs`, `ASURA/crates/asura-world/src/portals.rs`. They come from the pack's
+/// `portals.json` (`config/World/Vanilla/maps/**`), read once like the maps themselves; a map with no
+/// `portals.json` has no doorway, and every step in it crosses nothing.
+fn load_doorways(pack: &game::maps::pack::Pack, log: &Log, world: &mut game::world::World) {
+    match pack.arches() {
+        Ok(arches) => {
+            let portals = game::maps::Portals::new(
+                arches,
+                world.settings().point_box_half_extent,
+            );
+            log.out(
                 LogLevel::Info,
                 "server.worldserver",
                 format!(
-                    "Disposed {count} instance row(s) left by an earlier run; a fresh world has nobody inside it."
+                    "Doorways: {} arch(es) on {} map(s); a point doorway's box has a half side of {:.0} (World.PointBoxHalfExtent).",
+                    portals.arches(),
+                    portals.maps_with_doorways(),
+                    portals.extent()
                 ),
-            ),
-            Ok(_) => {}
-            Err(error) => log.out(
-                LogLevel::Error,
-                "server.worldserver",
-                format!("Cannot read the instance table: {error}"),
-            ),
+            );
+            world.set_portals(portals);
         }
-        world.set_instances(store, log.clone());
-    } else {
-        log.out(
+        Err(error) => log.out(
             LogLevel::Warn,
             "server.worldserver",
-            "No world database is open, so instances are kept in memory only and no copy is recorded.",
-        );
+            format!(
+                "No doorway rows: {error}. Every step crosses nothing until the map_arch table is readable."
+            ),
+        ),
     }
+}
 
-    // The item definitions are the creation content's own: the pack says what an item is, and a load
-    // resolves a character's held items against these. No table, no seed, no read-back - a start-up
-    // writes nothing (AGENTS.md rule 7).
+/// Build the instance store on the world database and dispose what an earlier run left.
+///
+/// The instance table (`data/sql/base/db_world/0003-instances.sql`): the copies a session opens
+/// are rows, and a fresh world disposes what an earlier run left - nobody is inside it.
+fn open_instances(
+    world_pool: &Arc<Mutex<DatabaseWorkerPool>>,
+    log: &Log,
+    world: &mut game::world::World,
+) {
+    let store = Arc::new(game::districts::DatabaseInstances::new(
+        Arc::clone(world_pool),
+        log.clone(),
+    ));
+    match store.dispose_all() {
+        Ok(count) if count > 0 => log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!(
+                "Disposed {count} instance row(s) left by an earlier run; a fresh world has nobody inside it."
+            ),
+        ),
+        Ok(_) => {}
+        Err(error) => log.out(
+            LogLevel::Error,
+            "server.worldserver",
+            format!("Cannot read the instance table: {error}"),
+        ),
+    }
+    world.set_instances(store, log.clone());
+}
+
+/// Give the world its item definitions, from the creation content already read.
+///
+/// The item definitions are the creation content's own: the pack says what an item is, and a load
+/// resolves a character's held items against these. No table, no seed, no read-back - a start-up
+/// writes nothing (AGENTS.md rule 7).
+fn load_item_definitions(log: &Log, world: &mut game::world::World) {
     let templates = game::data_stores::definitions_as_templates(world.creation().definitions());
     log.out(
         LogLevel::Info,
@@ -556,71 +787,69 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
         ),
     );
     world.set_templates(templates);
-    let world = std::sync::Arc::new(world);
+}
 
-    // Stage 9. Reference: `sWorldSocketMgr.StartWorldNetwork(*ioContext, worldListener, worldPort,
-    // networkThreads)` - the listener, on the address and port its own configuration names, with the
-    // number of network threads `Network.Threads` asks for.
-    let (bind, notes) = config
-        .value_string("BindIP", "0.0.0.0")
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
-    let (port, notes) = config
-        .value::<u16>("WorldServerPort", 8085)
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
-    let (network_threads, notes) = config
-        .value::<usize>("Network.Threads", 1)
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
-    let (trace, notes) = config
-        .value_bool("Network.Trace", false)
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
-    let (status_interval, notes) = config
-        .value::<u64>("StatusInterval", 30)
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
+/// Read what the listener and the world loop run by.
+///
+/// The listener is on the address and port its own configuration names, with the number of network
+/// threads `Network.Threads` asks for.
+fn read_listener_settings(config: &Config) -> Result<ListenerSettings, String> {
+    let bind = read_string(config, "BindIP", "0.0.0.0")?;
+    let port = read::<u16>(config, "WorldServerPort", 8085)?;
+    let network_threads = read::<usize>(config, "Network.Threads", 1)?;
+    let trace = read_bool(config, "Network.Trace", false)?;
+    let status_interval = read::<u64>(config, "StatusInterval", 30)?;
     let status_interval = status_interval.max(1);
     // The world loop's floor: how long may pass before the loop does not bother to update. The
     // reference's own `MinWorldUpdateTime` (`worldserver.conf`, 1 ms) - `WorldUpdateLoop` sleeps the
     // remainder rather than updating twice inside it (`Main.cpp:586-616`).
-    let (min_update_ms, notes) = config
-        .value::<u64>("MinWorldUpdateTime", 1)
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
+    let min_update_ms = read::<u64>(config, "MinWorldUpdateTime", 1)?;
     let min_update = std::time::Duration::from_millis(min_update_ms.max(1));
+    Ok(ListenerSettings {
+        bind,
+        port,
+        network_threads,
+        trace,
+        status_interval,
+        min_update,
+    })
+}
 
+/// Stage 8: start the world listener, answering the port it bound.
+///
+/// Reference: `sWorldSocketMgr.StartWorldNetwork(*ioContext, worldListener, worldPort,
+/// networkThreads)`.
+fn start_listener(
+    world: &Arc<game::world::World>,
+    databases: &Databases,
+    log: &Log,
+    listener: &ListenerSettings,
+) -> Result<(game::server::WorldSocketMgr, u16), String> {
     let sockets =
         game::server::WorldSocketMgr::start(
-            std::sync::Arc::clone(&world),
-            character_pool.clone(),
-            login_pool.clone(),
+            Arc::clone(world),
+            Some(Arc::clone(&databases.character)),
+            Some(Arc::clone(&databases.login)),
             log.clone(),
-            &bind,
-            port,
-            network_threads,
-            trace,
+            &listener.bind,
+            listener.port,
+            listener.network_threads,
+            listener.trace,
         )
             .map_err(|error| format!("the world listener could not start: {error}"))?;
-    let bound = sockets.port().unwrap_or(port);
+    let bound = sockets.port().unwrap_or(listener.port);
+    Ok((sockets, bound))
+}
 
-    // The stack's handshake: printed only when a supervisor asked for it (`KRYTA_STACK`), because
-    // nothing this program says belongs on a screen the operator did not ask to fill. The record is
-    // what the appenders are configured to take, and these same words go there
-    // (`docs/port/03-tracing.md`).
+/// Say the program is up and what it is up on.
+///
+/// The stack's handshake: printed only when a supervisor asked for it (`KRYTA_STACK`), because
+/// nothing this program says belongs on a screen the operator did not ask to fill. The record is
+/// what the appenders are configured to take, and these same words go there
+/// (`docs/port/03-tracing.md`).
+fn announce_ready(log: &Log, listener: &ListenerSettings, bound: u16, realm: u32) {
+    let bind = &listener.bind;
+    let status_interval = listener.status_interval;
     let ready = format!(
         "READY: listening on {bind}:{bound} as world {realm}; a client's gameplay connection is copied here by the login program; status reported every {status_interval} s."
     );
@@ -629,24 +858,30 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
         println!("{ready}");
     }
     log.out(LogLevel::Info, "server.worldserver", ready);
-    // The world is up, so its scripts are told (`sScriptMgr->OnStartup()`, `Main.cpp:398`).
-    world.on_startup();
+}
 
-    // Reference: Main.cpp:400-408 and CliRunnable.cpp:231: submit to the world update.
-    let (console_enabled, notes) = config.value_bool("Console.Enable", true)
-        .map_err(|error| error.to_string())?;
-    for note in notes { report(&note); }
-    let (queue_capacity, notes) = config.value::<usize>("Console.QueueCapacity", 64)
-        .map_err(|error| error.to_string())?;
-    for note in notes { report(&note); }
+/// Start the console and, when `Control.Enable` asks for it, the local control endpoint; answer the
+/// endpoint and the queue the world loop drains.
+///
+/// Reference: Main.cpp:400-408 and CliRunnable.cpp:231: submit to the world update. The control
+/// endpoint stands where the reference's `ACSoapThread` does: JSON on loopback instead of SOAP
+/// (`RemoteAccess/mod.rs`, `ACSoap.cpp:81-140`).
+fn start_console_and_control(
+    config: &Config,
+    log: &Log,
+    world: &game::world::World,
+    operations: &Arc<game::chat::operations::Registry>,
+) -> Result<(Option<remote_access::Server>, Receiver<command_line::Request>), String> {
+    let console_enabled = read_bool(config, "Console.Enable", true)?;
+    let queue_capacity = read::<usize>(config, "Console.QueueCapacity", 64)?;
     if queue_capacity == 0 { return Err("Console.QueueCapacity must be greater than zero".into()); }
     let (command_sender, command_receiver) = std::sync::mpsc::sync_channel(queue_capacity);
-    let console_table = std::sync::Arc::new(world.commands().clone());
+    let console_table = Arc::new(world.commands().clone());
     let console = console_enabled
         && command_line::start(
             command_sender.clone(),
-            std::sync::Arc::clone(&console_table),
-            std::sync::Arc::clone(&operations),
+            Arc::clone(&console_table),
+            Arc::clone(operations),
         );
     let (control_enabled, _) = config.value_bool("Control.Enable", false).map_err(|error| error.to_string())?;
     let control = if control_enabled {
@@ -654,7 +889,7 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
         let (path, _) = config.value_string("Control.CredentialFile", "").map_err(|error| error.to_string())?;
         let (timeout, _) = config.value::<u64>("Control.TimeoutSeconds", 5).map_err(|error| error.to_string())?;
         if path.is_empty() || timeout == 0 { return Err("Control requires a credential file and positive timeout".into()); }
-        let server = remote_access::Server::start(port, std::path::Path::new(&path), std::time::Duration::from_secs(timeout), command_sender.clone(), std::sync::Arc::clone(&operations))?;
+        let server = remote_access::Server::start(port, std::path::Path::new(&path), std::time::Duration::from_secs(timeout), command_sender.clone(), Arc::clone(operations))?;
         log.out(LogLevel::Info, "server.worldserver", format!("Local world control listening on 127.0.0.1:{port}."));
         Some(server)
     } else { None };
@@ -664,28 +899,38 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     } else {
         "World console unavailable or disabled."
     });
+    Ok((control, command_receiver))
+}
 
-    // ACSoapThread, the reference's remote endpoint, is not yet ported.
-    // On shutdown, in the reference's order: `sWorldSessionMgr->KickAll` and the `UpdateSessions(1)`
-    // pass that unloads what it kicked, then `sWorldSocketMgr::StopNetwork` (`Main.cpp:370-374`) -
-    // `sockets.stop` does all three here - then `sScriptMgr->OnShutdown` once the network is gone
-    // (`:426`). `sMapMgr->UnloadAll` and `OnAfterUnloadAllMaps` have no work to do in this tree yet:
-    // the copies' rows are disposed by a fresh world at its start (`dispose_all`), which is what an
-    // unload at the end would have achieved.
-
-    // The world's loop: `WorldUpdateLoop` (`Main.cpp:584-620`), which is one thread in the reference
-    // and is one here. It measures how long it has been, sleeps the remainder of
-    // `MinWorldUpdateTime` when there is one, and calls `sWorld->Update(diff)` - the world decides
-    // inside which of its own slower things are due (the copies' sweep) and tells the scripts every
-    // tick. What is left that is the program's own and not the world's is the status line: it is this
-    // tree's, and it rides the same loop on `StatusInterval` seconds.
-    let stop_update = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+/// Start the world's update loop on its own thread.
+///
+/// The world's loop: `WorldUpdateLoop` (`Main.cpp:584-620`), which is one thread in the reference
+/// and is one here. It measures how long it has been, sleeps the remainder of
+/// `MinWorldUpdateTime` when there is one, and calls `sWorld->Update(diff)` - the world decides
+/// inside which of its own slower things are due (the copies' sweep) and tells the scripts every
+/// tick. What is left that is the program's own and not the world's is the status line: it is this
+/// tree's, and it rides the same loop on `StatusInterval` seconds.
+#[allow(clippy::too_many_arguments)]
+fn start_world_loop(
+    log: &Log,
+    world: &Arc<game::world::World>,
+    sockets: &game::server::WorldSocketMgr,
+    operations: Arc<game::chat::operations::Registry>,
+    command_receiver: Receiver<command_line::Request>,
+    listener: &ListenerSettings,
+    bound: u16,
+    realm: u32,
+) -> Result<Background, String> {
+    let bind = listener.bind.clone();
+    let status_interval = listener.status_interval;
+    let min_update = listener.min_update;
+    let stop_update = Arc::new(AtomicBool::new(false));
     let accepted = sockets.accepted_handle();
     let live = sockets.live_handle();
     let world_loop = {
         let log = log.clone();
-        let update_world = std::sync::Arc::clone(&world);
-        let stop_update = std::sync::Arc::clone(&stop_update);
+        let update_world = Arc::clone(world);
+        let stop_update = Arc::clone(&stop_update);
         let started = std::time::Instant::now();
         let status_period = std::time::Duration::from_secs(status_interval);
         std::thread::Builder::new()
@@ -753,12 +998,30 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
             })
             .map_err(|error| format!("the world loop could not start: {error}"))?
     };
+    Ok(Background {
+        stop: stop_update,
+        thread: world_loop,
+    })
+}
 
-    wait_for_shutdown(&world);
-    let exit = world.exit_code();
+/// Close what the program opened, in the reference's order.
+///
+/// `sWorldSessionMgr->KickAll` and the `UpdateSessions(1)` pass that unloads what it kicked, then
+/// `sWorldSocketMgr::StopNetwork` (`Main.cpp:370-374`) - `sockets.stop` does all three here - then
+/// `sScriptMgr->OnShutdown` once the network is gone (`:426`). `sMapMgr->UnloadAll` and
+/// `OnAfterUnloadAllMaps` have no work to do in this tree yet: the copies' rows are disposed by a
+/// fresh world at its start (`dispose_all`), which is what an unload at the end would have achieved.
+fn shut_down(
+    log: &Log,
+    world: &game::world::World,
+    control: Option<remote_access::Server>,
+    world_loop: Background,
+    sockets: game::server::WorldSocketMgr,
+    databases: &Databases,
+) {
     if let Some(control) = control { control.stop(); }
-    stop_update.store(true, std::sync::atomic::Ordering::Relaxed);
-    let _ = world_loop.join();
+    world_loop.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = world_loop.thread.join();
     log.out(
         LogLevel::Info,
         "server.worldserver",
@@ -769,28 +1032,21 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     // And the world's own shutdown, raised once the network is gone, which is where the
     // reference raises it (`sScriptMgr->OnShutdown()`, `Main.cpp:426`, after the pool is gone).
     world.on_shutdown();
-    for pool in &mut opened {
-        pool.close();
+    match databases.character.lock() {
+        Ok(mut pool) => pool.close(),
+        Err(_) => log.out(
+            LogLevel::Error,
+            "server.worldserver",
+            "the character database pool was poisoned; it closes when the process ends",
+        ),
     }
-    if let Some(pool) = character_pool {
-        match pool.lock() {
-            Ok(mut pool) => pool.close(),
-            Err(_) => log.out(
-                LogLevel::Error,
-                "server.worldserver",
-                "the character database pool was poisoned; it closes when the process ends",
-            ),
-        }
-    }
-    if let Some(pool) = login_pool {
-        match pool.lock() {
-            Ok(mut pool) => pool.close(),
-            Err(_) => log.out(
-                LogLevel::Error,
-                "server.worldserver",
-                "the login database pool was poisoned; it closes when the process ends",
-            ),
-        }
+    match databases.login.lock() {
+        Ok(mut pool) => pool.close(),
+        Err(_) => log.out(
+            LogLevel::Error,
+            "server.worldserver",
+            "the login database pool was poisoned; it closes when the process ends",
+        ),
     }
     log.out(
         LogLevel::Info,
@@ -801,7 +1057,6 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     // diagnostic session usually ends with a kill (`game/Server/Capture.rs`, FLUSH_EVERY).
     game::server::capture::stop();
     log.shutdown();
-    Ok(exit)
 }
 
 /// Block until the operator stops the program, or the world is asked to stop.
@@ -823,18 +1078,6 @@ fn wait_for_shutdown(world: &game::world::World) {
             Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
         }
-    }
-}
-
-/// Print a complaint at the severity the policy gave it.
-///
-/// Reference: `LogWithSeverity`, whose first act is to say nothing at `Skip`.
-fn report(complaint: &Complaint) {
-    match complaint.severity {
-        Severity::Skip => {}
-        Severity::Warn => println!("warning: {}", complaint.message),
-        Severity::Error => eprintln!("error: {}", complaint.message),
-        Severity::Fatal => eprintln!("fatal: {}", complaint.message),
     }
 }
 
@@ -920,15 +1163,6 @@ fn load_path_graphs(
         ),
     );
     Ok(graphs)
-}
-
-fn print_usage() {
-    println!("Allowed options:");
-    println!("  -h [ --help ]             print usage message");
-    println!("  -v [ --version ]          print version build info");
-    println!("  -d [ --dry-run ]          Dry run");
-    println!("  -c [ --config ] arg       use <arg> as configuration file (default: {DEFAULT_CONFIG})");
-    println!("  --config-policy policy    override config severity policy");
 }
 
 #[cfg(test)]

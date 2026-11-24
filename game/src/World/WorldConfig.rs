@@ -17,8 +17,8 @@ pub struct WorldConfig {
     /// How many players one district of an outpost holds before the next district is shown (R5). The game
     /// starts at 100; the allotment is tied to a machine's own efficiency, so it is an operator's number.
     pub district_allotment: u32,
-    /// The common party cap (R15). Some game modes allow 12 and some instances 25; a map may state its own
-    /// cap in its row, and this is the number that applies when it does not.
+    /// The common party cap (R15). Some game modes allow 12 and some instances 25; no map record in this
+    /// tree states a cap of its own, so this is the number that applies.
     pub party_size_cap: u32,
     /// How far around a spawn point a character is placed on entry (R13), in the game's own units.
     pub spawn_scatter: f32,
@@ -69,7 +69,7 @@ pub struct WorldConfig {
     pub appearance: u32,
     /// How far a client may place itself when it cancels a walk and still be believed, in game units.
     ///
-    /// The reference's `MAXIMUM_ALLOWED_CORRECTION` (`GmAgent.c:547-563`), through the working
+    /// OpenTyria's `MAXIMUM_ALLOWED_CORRECTION` (`GmAgent.c:547-563`), through the working
     /// implementation's own setting (`ASURA/config/Server/movement.json`, `max_allowed_correction`). A
     /// correction farther than this from where the server thought the agent stood is ignored: the agent
     /// stops where the server believes it is and nothing goes on the wire, so the client is never

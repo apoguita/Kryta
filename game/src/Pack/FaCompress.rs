@@ -4,21 +4,21 @@
 //! function for function: a hand-rolled LZ + Huffman scheme, not a library format.
 //!
 //! * [`Bits`] - the 32-bit MSB-first window (`ConsumeBits`/`GetBits`), with the same two-word
-//!   `Buf1`/`Buf2` refill the reference uses;
+//!   `Buf1`/`Buf2` refill OpenTyria uses;
 //! * `setup_nodes_and_tree` - `SetupNodesandTree`, which reads a code-length description out of the
 //!   stream through `Table1`/`Table2` and builds a flat 256-entry lookup plus a "large encoding" table
 //!   for codes longer than eight bits;
 //! * `next_code` - `GetNextCode`;
 //! * [`decompress`] - `FaDecompress`, the block loop with literal bytes and back-references.
 //!
-//! The six static tables live in `FaCompressTables.rs`; they are data read out of the reference, not
+//! The six static tables live in `FaCompressTables.rs`; they are data read out of OpenTyria, not
 //! something derivable from the format.
 //!
 //! ## What this is verified against
 //!
 //! Not against a reading of the C. `decompress` is tested on real archive entries: the size an entry
 //! announces must come out exactly, and a map blob must come out as a RIFF container - `ffna` at byte 0,
-//! which is the reference's `RIFF_SIGNATURE` and what `GmMapDataImport.c` parses. A decoder off by a bit
+//! which is OpenTyria's `RIFF_SIGNATURE` and what `GmMapDataImport.c` parses. A decoder off by a bit
 //! produces the right length and the wrong bytes, so the signature is the check that matters.
 
 use crate::pack::fa_compress_tables::{
@@ -28,7 +28,7 @@ use crate::pack::fa_compress_tables::{
 /// Why a stream is not a compressed payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecompressError {
-    /// The stream ended before the output was full. The reference would read past its buffer here; this
+    /// The stream ended before the output was full. OpenTyria would read past its buffer here; this
     /// refuses instead, because a short read is a corrupt entry rather than a message to invent.
     InputExhausted,
     /// A code-length description that cannot be a prefix code: two codes claim the same bit pattern.
@@ -53,9 +53,9 @@ impl core::fmt::Display for DecompressError {
 
 impl std::error::Error for DecompressError {}
 
-/// The reference's 32-bit MSB-first bit window (`DecompressState` plus `ConsumeBits`/`GetBits`).
+/// OpenTyria's 32-bit MSB-first bit window (`DecompressState` plus `ConsumeBits`/`GetBits`).
 struct Bits<'a> {
-    /// Little-endian words of the input, exactly as the reference reads them through a `u32 *`.
+    /// Little-endian words of the input, exactly as OpenTyria reads them through a `u32 *`.
     words: &'a [u32],
     /// Index of the next word to refill from.
     next: usize,
@@ -71,7 +71,7 @@ impl<'a> Bits<'a> {
     fn new(words: &'a [u32]) -> Bits<'a> {
         Bits {
             words,
-            next: 2, // the reference loads the first two words up front
+            next: 2, // OpenTyria loads the first two words up front
             buf1: words.first().copied().unwrap_or(0),
             buf2: words.get(1).copied().unwrap_or(0),
             available: 32,
@@ -99,7 +99,7 @@ impl<'a> Bits<'a> {
             if self.next >= self.words.len() {
                 self.available = 0;
                 self.buf2 = 0;
-                // The reference tolerates this and reads on with zero padding; the error is only
+                // OpenTyria tolerates this and reads on with zero padding; the error is only
                 // returned if the caller actually needs the missing bits, which the output loop decides.
                 return Ok(());
             }
@@ -162,7 +162,7 @@ fn setup_nodes_and_tree(bits: &mut Bits<'_>) -> Result<Tree, DecompressError> {
     let mut follow = vec![0u32; symbol_count];
     let mut total = 0u32;
 
-    // The reference counts down from `SymbolsCount - 1` in an unsigned type, so an empty tree wraps into
+    // OpenTyria counts down from `SymbolsCount - 1` in an unsigned type, so an empty tree wraps into
     // a full pass. Mirroring that exactly matters: the wrap is how a zero count is handled.
     let mut cur: u32 = (symbol_count as u32).wrapping_sub(1);
     while cur < symbols_count {
@@ -316,7 +316,7 @@ fn next_code(bits: &mut Bits<'_>, tree: &Tree) -> Result<u32, DecompressError> {
 /// `output_size` is the size the entry announces in the four bytes this function does not see
 /// (`GwDat::announced_size` reads them).
 pub fn decompress(input: &[u8], output_size: usize) -> Result<Vec<u8>, DecompressError> {
-    // The reference reads the input as `u32 *`, so a tail shorter than a word makes it read the bytes it
+    // OpenTyria reads the input as `u32 *`, so a tail shorter than a word makes it read the bytes it
     // was told to ignore. Padding with zeros reproduces that without the out-of-bounds read.
     let mut padded = input.to_vec();
     while !padded.len().is_multiple_of(4) {
@@ -332,7 +332,7 @@ pub fn decompress(input: &[u8], output_size: usize) -> Result<Vec<u8>, Decompres
     let mut bits = Bits::new(&words);
     let mut output: Vec<u8> = Vec::with_capacity(output_size);
 
-    bits.consume(4)?; // the reference ignores the first four bits ("is it always 0b1111 anyway?")
+    bits.consume(4)?; // OpenTyria ignores the first four bits ("is it always 0b1111 anyway?")
     let first4 = bits.peek(4);
     bits.consume(4)?;
 
@@ -388,7 +388,7 @@ pub fn decompress(input: &[u8], output_size: usize) -> Result<Vec<u8>, Decompres
                 if output.len() + copy_len > output_size {
                     return Err(DecompressError::OutputOverrun);
                 }
-                // Byte by byte, as the reference does: a run may overlap what it is writing.
+                // Byte by byte, as OpenTyria does: a run may overlap what it is writing.
                 for offset in 0..copy_len {
                     let byte = output[from + offset];
                     output.push(byte);

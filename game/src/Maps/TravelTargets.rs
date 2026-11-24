@@ -1,18 +1,18 @@
 //! Every alias `/tp` accepts, and the map each one names.
 //!
 //! Ported, whole, from the working implementation's own generated table
-//! (`ASURA/crates/asura-world/src/travel_targets.rs`, itself generated from the reference's
-//! `GmCommands.c`): the reference's `s_teleport_targets` is the table its `/tp` resolves through, its
+//! (`ASURA/crates/asura-world/src/travel_targets.rs`, itself generated from OpenTyria's
+//! `GmCommands.c`): OpenTyria's `s_teleport_targets` is the table its `/tp` resolves through, its
 //! comment calls it "every map the server has a config for", and it is written out rather than derived
 //! from `GmMaps.h` for a stated reason - a command that quietly lands on Kamadan is not a testing tool.
 //!
-//! The reference's aliases are not the maps' names: `lakeside` and `lakeside county` both name map 146,
+//! OpenTyria's aliases are not the maps' names: `lakeside` and `lakeside county` both name map 146,
 //! and `ascalon city` names a map whose own name is `Ascalon City (pre-Searing)`. That is why this is a
 //! table of its own and not a lookup on [`crate::world::MapEntry::name`].
 //!
-//! `hosted` is the working implementation's answer to "do I have a row and a blob for it", because the
-//! reference refuses a target with no map config rather than letting its map load fall back. This world
-//! answers the same question from its own map rows, and asks it in the same order the working
+//! `hosted` is the working implementation's answer to "do I have a row and a blob for it", because
+//! OpenTyria refuses a target with no map config rather than letting its map load fall back. This world
+//! answers the same question from its own map records, and asks it in the same order the working
 //! implementation does: the alias, then the entry's own `hosted` flag, then whether a map with that id
 //! exists (`ASURA/crates/asura-world/src/travel.rs:201-247`).
 
@@ -31,7 +31,7 @@ pub struct TravelTarget {
     pub hosted: bool,
 }
 
-/// Every alias of the reference's table, in its order.
+/// Every alias of OpenTyria's table, in its order.
 pub const TRAVEL_TARGETS: &[TravelTarget] = &[
     TravelTarget {
         alias: "ascalon",
@@ -188,7 +188,7 @@ mod tests {
         assert_eq!(TRAVEL_TARGETS[0].map_id, 148);
         assert_eq!(TRAVEL_TARGETS[19].alias, "kamadan");
         assert_eq!(TRAVEL_TARGETS[19].map_id, 449);
-        // The reference's own two spellings of one map, and its three kinds.
+        // OpenTyria's own two spellings of one map, and its three kinds.
         assert_eq!(
             TRAVEL_TARGETS[2].map_id,
             TRAVEL_TARGETS[3].map_id,

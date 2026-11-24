@@ -23,7 +23,8 @@ use std::path::{Path, PathBuf};
 use common::configuration::json::Document;
 use common::logging::{Log, LogLevel};
 
-use crate::maps::{Arch, Arrival, MapEntry, MapSpawn};
+use crate::maps::{Arch, Arrival, MapSpawn};
+use crate::world::MapEntry;
 
 /// A world read from a pack folder: every map record, every entry point, every wall and arrival.
 #[derive(Debug, Clone, Default)]
@@ -132,7 +133,7 @@ impl Pack {
         self.maps.push(MapEntry {
             id,
             // The record's kind, when it has one: a record with none is a destination a client can
-            // name and this world cannot load, which is what the rows call `NULL`.
+            // name and this world cannot load (`MapEntry::kind` is `None`).
             kind: number(&record, "map_type")?.map(|value| value as u8),
             file_id: number(&record, "map_file_id")?.unwrap_or(0) as u32,
             name: if name.is_empty() {
@@ -183,9 +184,9 @@ impl Pack {
             for arrival in record.rows("arrivals")? {
                 // The file's own key is `from` (`ASURA/crates/asura-world/src/portals.rs:16-22`,
                 // `Arrival { from, x, y, angle }`): the receiving map states where a character
-                // arriving *from* that map stands. Reading a different name here left every arrival
-                // with source map 0, so a doorway crossing could not find its landing and a map
-                // with no spawn list (an explorable such as Lakeside County) refused its load.
+                // arriving *from* that map stands. A doorway crossing finds its landing by that
+                // source map, and for a map with no spawn list (an explorable such as Lakeside
+                // County) an arrival is the only point the pack states to stand on.
                 self.arrivals.push(Arrival {
                     map_id: id,
                     from_map: number(&arrival, "from")?.unwrap_or(0) as u32,
@@ -200,20 +201,6 @@ impl Pack {
     }
 }
 
-/// The pack answers the world's map questions: it is one of the two sources a world can be built from.
-impl crate::maps::MapSource for Pack {
-    fn load_maps(&self) -> Result<(Vec<crate::maps::MapEntry>, Vec<crate::maps::MapSpawn>), String> {
-        Pack::load_maps(self)
-    }
-
-    fn arrivals(&self) -> Result<Vec<crate::maps::Arrival>, String> {
-        Pack::arrivals(self)
-    }
-
-    fn arches(&self) -> Result<Vec<crate::maps::Arch>, String> {
-        Pack::arches(self)
-    }
-}
 /// Every folder under `root` that holds a `basic.json`, in one pass.
 fn walk(root: &Path, folders: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = std::fs::read_dir(root)
@@ -288,8 +275,7 @@ mod tests {
         let pack = shipped();
         let (maps, spawns) = pack.load_maps().expect("the maps");
         assert_eq!(maps.len(), 265, "every map record the client can resolve");
-        // 467, not 466: the third entry point of map 148 left the SQL seed and joined the pack in
-        // `9d508ba`, and the count is the pack's own statement of what it states.
+        // The count is the pack's own statement of what it states; map 148 states three of them.
         assert_eq!(spawns.len(), 467, "and every entry point the pack states");
         assert_eq!(pack.arches().expect("the arches").len(), 28);
         assert_eq!(pack.arrivals().expect("the arrivals").len(), 28);

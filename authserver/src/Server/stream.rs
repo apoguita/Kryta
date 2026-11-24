@@ -10,53 +10,15 @@
 //! (six) in one TCP segment: the whole read was treated as one body, the nine bytes decoded as a
 //! login that was not there, and the client, owed an answer to `0x8035`, waited and then reset.
 //!
-//! Every size below is the reference's own send-or-receive trace of one working login,
-//! `recordings/gwps/world/load-stream.log`, except the two counted ones, which are walked
-//! rather than measured because their length is on the wire.
+//! The sizes come from the login connection's own table (`authserver/src/Protocol/Tables.rs`), walked
+//! by the shared frame walk: a fixed message is its row's size, and a counted message - the computer
+//! info `0x8001`, the portal login `0x8038` - is walked field by field, because its length is on the
+//! wire. The tests below hold the walk to the sizes GWPS's own trace of one working login prints
+//! (`recordings/gwps/world/load-stream.log`): `0x8001` 42, `0x8002` 22, `0x8000` 6, `0x8038` 54,
+//! `0x8026` 3, `0x8035` 6, `0x800E` 6, `0x8029` 26 - and `0x800D` 6, the disconnect, which was learned
+//! from a client that went back to the character list (`docs/evidence/client-protocol.md`).
 
 use shared::packets::FrameError;
-
-/// The frames a client sends on the auth connection, and how many bytes each one is.
-///
-/// The trace, as it prints them (one line per message, either direction):
-///
-/// ```text
-/// 0x8001  42  computer info: two counted UTF-16 strings, so it is walked, not fixed
-/// 0x8002  22  computer hash
-/// 0x8000   6  heartbeat
-/// 0x8023   6  unnamed; the reference logs it and ignores it
-/// 0x8038  54  portal login: fixed fields, then two counted UTF-16 strings
-/// 0x8026   3  accept EULA, one version byte
-/// 0x8035   6  ask server response
-/// 0x800E   6  set player status
-/// 0x8029  26  request game instance, six dwords
-/// 0x800D   6  disconnect
-/// ```
-///
-/// `0x800D` was learned from a client, not from the trace: a run whose gameplay connection was
-/// refused went back to the character list, said it was offline (`0x800E` with a zero), and then
-/// sent this - and a table without it stopped splitting the stream. It is
-/// `AUTH_CMSG_DISCONNECT`, six bytes, per `docs/evidence/client-protocol.md`'s table.
-const FIXED: &[(u16, usize)] = &[
-    (0x8000, 6),
-    (0x8002, 22),
-    (0x8023, 6),
-    (0x8026, 3),
-    (0x8035, 6),
-    (0x800D, 6),
-    (0x800E, 6),
-    (0x8029, 26),
-];
-
-/// The computer info message (`0x8001`), whose header is followed by two counted strings.
-const COMPUTER_INFO: u16 = 0x8001;
-/// The portal login message (`0x8038`), whose header is followed by fixed fields and then two
-/// counted strings.
-const PORTAL_LOGIN: u16 = 0x8038;
-
-/// How many fixed bytes come after a `0x8038` header before its first counted string: the request
-/// id and the portal's two 16-byte identifiers.
-const PORTAL_LOGIN_FIXED: usize = 4 + 16 + 16;
 
 /// One message, taken off the front of the stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,23 +72,6 @@ pub fn take(buffer: &[u8]) -> Take<'_> {
         Err(FrameError::Incomplete { .. }) => Take::Incomplete,
         Err(_) => Take::Unknown { header },
     }
-}
-
-/// The end of the two counted UTF-16 strings that start at `at`, if both are all there.
-///
-/// A counted string here is a `u16` count of UTF-16 units and twice that many bytes - not a count of
-/// bytes, and not padded out to the field the reference's own struct reserves.
-fn counted_after(buffer: &[u8], at: usize) -> Option<usize> {
-    let after_first = counted_utf16(buffer, at)?;
-    counted_utf16(buffer, after_first)
-}
-
-/// The end of one counted UTF-16 string, if it is all there.
-fn counted_utf16(buffer: &[u8], at: usize) -> Option<usize> {
-    let count_at = at..at + 2;
-    let count = u16::from_le_bytes(buffer.get(count_at)?.try_into().ok()?) as usize;
-    let end = at + 2 + count * 2;
-    if buffer.len() < end { None } else { Some(end) }
 }
 
 #[cfg(test)]

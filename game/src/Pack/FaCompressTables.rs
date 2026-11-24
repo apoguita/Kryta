@@ -1,12 +1,12 @@
 //! The decompressor's static tables.
 //!
-//! Generated in the working implementation from the reference's `FaCompress.c` by
+//! Generated in the working implementation (ASURA) from OpenTyria's `FaCompress.c` by
 //! `tools/gen-fa-compress-tables.py`, and copied here value for value from
 //! `ASURA/crates/asura-world/src/fa_compress_tables.rs`.
 //!
-//! They are **data, not something derivable from the format**, so they are read out of the reference
+//! They are **data, not something derivable from the format**, so they are read out of OpenTyria
 //! rather than typed: the working implementation's own note says its first hand transcription of
-//! `Table1` produced values that appear nowhere in the reference.
+//! `Table1` produced values that appear nowhere in OpenTyria.
 
 /// `Table1` (`FaCompress.c`): `(FirstEncoding, LastIndex)` prefix ranges for a code-length run.
 pub const TABLE1: [(u32, u32); 14] = [

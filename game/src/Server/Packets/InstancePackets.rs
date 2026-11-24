@@ -1,8 +1,8 @@
 //! The instance message family: what a world says when it puts a client inside a map.
 //!
 //! Reference: `src/server/game/Server/Packets/InstancePackets.{h,cpp}`. One file per family is this
-//! tree's rule (`AGENTS.md`), and this is the first family to have content - the messages a
-//! character-creation connection is answered with.
+//! tree's rule (`AGENTS.md`), and this family holds the messages a load is made of - a
+//! character-creation connection's and a map's.
 //!
 //! Sizes and layouts are this client's, measured from a server that works with it; each builder
 //! names where its bytes came from. A message here is a whole wire frame: the `u16` header and then
@@ -10,7 +10,7 @@
 
 /// `GAME_SMSG_INSTANCE_LOAD_HEAD`: the load begins.
 ///
-/// Two bytes of flags and two zero bytes. Evidence: the reference's own send log,
+/// Two bytes of flags and two zero bytes. Evidence: GWPS's own send log,
 /// `SEND 0x017C 6 bytes : 7C 01 3F 3F 00 00`, and a working server's builder that writes exactly
 /// those four bytes after the header (`instance_load_head(0x3F, 0x3F)`).
 pub const INSTANCE_LOAD_HEAD: u16 = 0x017C;
@@ -26,7 +26,7 @@ pub const INSTANCE_PLAYER_DATA_DONE: u16 = 0x018A;
 
 /// `GAME_SMSG_CHAR_CREATION_START`: the creation instance may show its screen.
 ///
-/// Evidence: the reference's own send log; two bytes, the header only. A creation connection is
+/// Evidence: GWPS's own send log; two bytes, the header only. A creation connection is
 /// answered with the load head and this, and nothing else - the map's own block (player name, load
 /// info, the agent) belongs to a map that has geometry, and the creation instance has none.
 pub const CHAR_CREATION_START: u16 = 0x0189;
@@ -159,7 +159,8 @@ pub fn instance_load_player_name(name: &str) -> Vec<u8> {
 /// The explorable byte is **1 for every load**, which is what the reference sends: it hardcodes 1 with
 /// the comment `// what to put here?` (`ASURA/crates/asura-protocol/src/game/mod.rs:530-534`,
 /// `instance_load_info`; its only caller passes 1, `ASURA/crates/asura-world/src/map.rs:34-42`). It is
-/// a parameter here for the same reason it is one there, and every call passes 1.
+/// a parameter here for the same reason it is one there, and the one caller outside tests
+/// (`WorldSession::converse`) passes 1.
 pub fn instance_load_info(
     agent: u32,
     map_id: u16,
@@ -356,7 +357,7 @@ mod tests {
 
     #[test]
     fn the_load_head_is_the_traced_six_bytes() {
-        // `7C 01 3F 3F 00 00` - the reference's own send log, one line per message.
+        // `7C 01 3F 3F 00 00` - GWPS's own send log, one line per message.
         assert_eq!(instance_load_head(), vec![0x7C, 0x01, 0x3F, 0x3F, 0x00, 0x00]);
     }
 

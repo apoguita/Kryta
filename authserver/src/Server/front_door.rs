@@ -3,7 +3,7 @@
 //! Measured, not assumed: this client answers the `0x0009` that hands it a world address by opening
 //! its gameplay connection **to the address it was launched with** - the auth port - whatever address
 //! that message named. So the gameplay connection arrives on the login port, and this program has to
-//! hand it on. The reference does the same thing with its control channel; a socket handle cannot
+//! hand it on. GWPS does the same thing with its control channel; a socket handle cannot
 //! cross a process boundary here, so the crossing is a copy
 //! (`docs/decisions/0004-gameplay-connections-arrive-at-the-front-door.md`).
 //!
@@ -13,8 +13,7 @@
 //! authority. The world reads the same 64 bytes itself, compares the token pair against the travel
 //! the login recorded, and closes the connection when they do not match.
 //!
-//! Reference: `AuthSrv_DoPostHandshake` and `CtrlMsgId_TransferConnection`, in the reference's auth
-//! service.
+//! GWPS: `AuthSrv_DoPostHandshake` and `CtrlMsgId_TransferConnection`, in its auth service.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -30,7 +29,7 @@ use crate::server::session::{GameServer, read_exactly};
 
 /// How long the front door waits for a world's port before closing the client's connection.
 ///
-/// Reference: the reference's transfer is immediate because it hands over an open socket; a copy has
+/// GWPS's transfer is immediate because it hands over an open socket; a copy has
 /// to make a connection of its own, and a client should not wait for the system's connect timeout.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -51,7 +50,7 @@ impl FrontDoor {
 
     /// The world a login hands out: the first one that is not marked offline.
     ///
-    /// Reference: the reference picks a live game server out of its own registry and answers
+    /// GWPS picks a live game server out of its own registry and answers
     /// `0x0009` with it.
     pub fn pick(&self) -> Option<GameServer> {
         let worlds = self.worlds.lock().ok()?;

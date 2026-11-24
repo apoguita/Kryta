@@ -4,8 +4,8 @@
 //! connects to the server's maintenance database with the credentials the world program's file
 //! states, creates a database, and starts the real `worldserver` pointed at it through the
 //! configuration's own environment override. What the run proves is the whole start-up a fresh
-//! machine would see: the schema applied from `data/sql/base/db_world/`, the map rows the migrations
-//! seed, the item templates seeded from the creation record and read back, and the listener up.
+//! machine would see: the schema applied from `data/sql/base/db_world/`, the maps and the item
+//! definitions read from the world pack with nothing seeded, and the listener up.
 //!
 //! It is `#[ignore]` because it needs a database server and the right to create a database on it; a
 //! role without `CREATEDB` makes it say so and stop rather than fail, because nothing about this tree
@@ -139,29 +139,33 @@ fn a_fresh_world_database_is_applied_seeded_and_served() {
     let _ = child.wait();
 
     let startup = lines.join("\n");
-    // The schema applied from the files, and the migrations' own seeds - the maps and the one
-    // outpost with its spawn point.
+    // The schema applied from the files. It creates tables and seeds nothing.
     assert!(
-        startup.contains("file(s) applied, 0 already current")
-            || startup.contains("file(s) applied"),
-        "the fresh schema is applied:\n{startup}"
+        startup.contains("file(s) applied"),
+        "the fresh schema is applied:
+{startup}"
+    );
+    // The maps are the world pack's, read from its files (`game::maps::pack::Pack`).
+    assert!(
+        startup.contains("Map pack ") && startup.contains(" map record(s), "),
+        "the map pack is read:
+{startup}"
     );
     assert!(
-        startup.contains("2 map(s), 1 spawn point(s)"),
-        "the migrations' maps are read:\n{startup}"
+        startup.contains("read from the map pack at"),
+        "the world takes its maps from the pack:
+{startup}"
     );
     assert!(
-        startup.contains("Ascalon City (pre-Searing)"),
-        "the seeded outpost is the world's:\n{startup}"
+        startup.contains("World of ") && startup.contains("of them hosted"),
+        "the world says what it hosts:
+{startup}"
     );
-    // The item templates, seeded from the creation record and read back.
+    // The item definitions are the creation content's own; no row is written.
     assert!(
-        startup.contains("row(s) from 188 definition(s)"),
-        "the templates are seeded:\n{startup}"
-    );
-    assert!(
-        startup.contains("Item templates read back:"),
-        "and read back:\n{startup}"
+        startup.contains("Item definitions: ") && startup.contains("nothing is seeded"),
+        "the item definitions come from the pack:
+{startup}"
     );
     assert!(
         startup.contains("listening on 127.0.0.1:"),

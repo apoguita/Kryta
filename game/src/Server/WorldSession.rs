@@ -24,12 +24,11 @@ use shared::cryptography::AuthCrypt;
 use shared::network::socket::{Session, SessionFuture, SessionIo};
 
 use crate::server::packets::{
-    agent_packets, creation_load_block, instance_packets, item_packets, misc_packets, title_packets,
+    agent_packets, creation_load_block, instance_packets, misc_packets,
 };
 use crate::server::protocol::tables::game::{GAME_CMSG_TITLE_DISPLAY, GAME_CMSG_TITLE_HIDE};
 use crate::server::protocol::GameVersion;
 use crate::server::protocol::FrameError;
-use crate::agents::player::{PLAYER_TEAM_TOKEN, UNLOCKED_MAP_ZEROS};
 use crate::handlers::character::Creation;
 use crate::world::World;
 
@@ -44,9 +43,9 @@ type StepOutcome = (Option<((f32, f32), (f32, f32))>, Option<Vec<u8>>);
 /// number is the world's to give, and nothing else reads it until a map exists.
 pub(crate) const CREATION_AGENT: u32 = 1;
 
-/// What a load reads from the character's own row. It is the noun's now
-/// (`game/src/Characters/Sheet.rs`, the reference's `Player::LoadFromDB`); this name stays because
-/// the handlers and the travel path already speak it.
+/// What a load reads from the character's own row. The type is the noun's
+/// (`game/src/Characters/Sheet.rs`, the reference's `Player::LoadFromDB`); it is re-exported here
+/// because the handlers and the travel path name it from this module.
 pub(crate) use crate::characters::CharacterSheet;
 
 
@@ -106,9 +105,54 @@ pub(crate) struct PortalStep {
     pub(crate) last_step: Option<((f32, f32), (f32, f32))>,
 }
 
+/// What a map's load decided before the client's first ask, which every answer on that map reads.
+///
+/// The entry position, the load block and the player record all have to name the same place and the
+/// same body, so they are decided once (`WorldSession::load_map`) and handed to the handlers
+/// (`game/Handlers/InstanceHandler.rs`) as one value.
+pub(crate) struct MapLoad<'a> {
+    /// The map being loaded.
+    pub(crate) map: &'a crate::world::MapEntry,
+    /// The character's own row.
+    pub(crate) sheet: &'a CharacterSheet,
+    /// What the character holds: the items ask draws it, and the players answer what is worn.
+    pub(crate) inventory: crate::creation::Inventory,
+    /// Where the character stands - the point, its plane and its facing - or `None` when the map
+    /// cannot be entered.
+    pub(crate) entry: Option<(f32, f32, u16, (f32, f32))>,
+    /// When the load began, for the load time the players answer states.
+    pub(crate) load_started: std::time::Instant,
+    /// The character as the load is told it.
+    pub(crate) state: crate::agents::Player,
+}
+
+/// Where a gameplay connection is in its conversation, which decides what a message means.
+///
+/// A connection for the creation instance stays on the creation screen. A connection for a map is
+/// loading until the players ask is answered, and loaded from then on: only a loaded map is ticked,
+/// is written what other sessions push at it, and answers a title display.
+#[derive(Clone, Copy)]
+pub(crate) enum Phase<'a> {
+    /// The creation screen, and the version message its confirm writes a character for.
+    Creation(&'a GameVersion),
+    /// A map whose load is being answered.
+    Loading(&'a MapLoad<'a>),
+    /// A map the client has finished loading.
+    Loaded(&'a MapLoad<'a>),
+}
+
+/// The map's clock, as one connection keeps it: the period, the absolute deadline of the next tick
+/// and the instant the last one went out.
+struct MapClock {
+    period: std::time::Duration,
+    next_tick: std::time::Instant,
+    last_tick: std::time::Instant,
+}
+
 /// `GAME_CMSG_ITEM_MOVE` (`0x8072`): a drag in the inventory - the item, the bag and the slot.
 const CLIENT_ITEM_MOVE: u16 = 0x8072;
-/// `GAME_CMSG_ITEM_DESTROY` (`0x8069`): the item to destroy.
+/// `GAME_CMSG_DROP_ITEM` (`0x802C`): the item as a dword and the count to drop as a byte. There is
+/// no handler for `GAME_CMSG_ITEM_DESTROY` (`0x8069`).
 const CLIENT_DROP_ITEM: u16 = 0x802C;
 const CLIENT_UNEQUIP_ITEM: u16 = 0x804F;
 const CLIENT_PING_REPLY: u16 = 0x8009;
@@ -126,7 +170,7 @@ const CLIENT_CANCEL_MOVEMENT: u16 = 0x8028;
 
 /// The client's in-game travel request - `GAME_CMSG_PARTY_TRAVEL`, `0x80B1`, nine bytes
 /// (`ASURA/crates/asura-protocol/src/packets.rs`; the client's own frame is `B1 80 | <instance> | ...`).
-/// This tree listened for `0x00B1`, which is the *server's* party message, until 2026-11-12.
+/// `0x00B1` without the client bit is a different message: the *server's* party update.
 const CLIENT_PARTY_TRAVEL: u16 = 0x80B1;
 
 /// `GAME_CMSG_TRAVEL_INIT` (`0x80C1`, ten bytes): the client touched a travel object. Two agent ids;
@@ -146,81 +190,41 @@ const CLIENT_CHAT_MESSAGE: u16 = 0x8064;
 
 
 
-/// One gameplay connection.
-pub struct WorldSession {
-    pub(crate) log: Log,
-    /// Which world this is: a connection that names another is not this world's.
-    pub(crate) realm: u32,
-    /// The maps the world hosts, so a connection can be told what it may enter.
-    pub(crate) maps: Vec<crate::world::MapEntry>,
-    /// The chat command surface: the names a player may type and the operation each one runs
-    /// (`config/Server/commands.json`, `docs/decisions/0011-the-command-surface-is-content.md`).
-    pub(crate) commands: crate::chat::commands::Table,
-    /// Where a character may stand on each map, for the entry placement of R13.
-    spawns: Vec<crate::maps::MapSpawn>,
-    /// The numbers this world runs by: the spawn scatter and the rest.
-    pub(crate) settings: crate::world::world_config::WorldConfig,
+/// What one gameplay connection is doing: the state its conversation builds up, from the version
+/// message to the end of the connection.
+///
+/// One task owns a connection, so this is plain data: [`WorldSession::run`] creates it and hands it,
+/// as `&mut`, to the loop, the dispatch and the handlers. Other sessions never reach it - they reach
+/// a connection through the peer registry and the channel whose receiving end is `outbox`
+/// (`game/Districts/Peers.rs`), and the listener through the closing flag the session holds.
+pub(crate) struct Connection {
     /// The account the version message named, kept for the travel hand-off a redirect writes: the
     /// login database's travel row is keyed by account and player token.
-    pub(crate) account: std::sync::Mutex<[u8; 16]>,
+    pub(crate) account: [u8; 16],
     /// Whether a travel is already in flight: the client is about to reconnect, so a second crossing
     /// must not start another one (`ASURA/crates/asura-world/src/travel.rs:600`, `player.moved`).
-    pub(crate) moved: std::sync::Mutex<bool>,
-    /// The map's walkable graphs, which a walk request is answered from: one finder per map, imported
-    /// from the client archive at start-up (`ASURA/crates/asura-world/src/pathfind.rs:1484`). A map
-    /// whose graph was never bound answers `Walk::NoGraph`.
-    pub(crate) graphs: std::sync::Arc<crate::terrain::pathfind::PathGraphs>,
-    /// The doorways a step is judged against, and the arrivals a crossing lands on.
-    pub(crate) portals: std::sync::Arc<crate::maps::Portals>,
-    /// The arrival points the world read with its maps (R21), so a crossing knows where the receiving
-    /// map puts the character.
-    pub(crate) arrivals: Vec<crate::maps::Arrival>,
+    pub(crate) moved: bool,
     /// The character this connection is playing, as the version message named it: what the saved
     /// position and the last outpost are written for.
-    character: std::sync::Mutex<Option<[u8; 16]>>,
+    character: Option<[u8; 16]>,
     /// Where a claimed travel says the receiving map puts this character, when it was a doorway
     /// crossing: the load stands it there and faces it along the arrival, rather than scattering it
     /// around a spawn point (R13/R21).
-    landing: std::sync::Mutex<Option<Claimed>>,
+    landing: Option<Claimed>,
     /// The last client-reported position checked for a doorway, and the segment between finite
     /// reports: `ASURA/crates/asura-world/src/player.rs:43-74` (`portal_position`, `last_step`,
     /// `record_portal_step`). Simulation ticks never move it - a tick can cross a wall between
     /// reports, and that movement must remain in the next check.
-    pub(crate) portal: std::sync::Mutex<PortalStep>,
-    /// The character database, when the program opened one: a creation screen's confirm writes a row
-    /// there. A session without it can draw the screen but cannot finish it.
-    pub(crate) characters: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
-    /// The login database, when the program opened one: the travel record a login wrote is claimed
-    /// here, once, and decides the map and the district the connection loads
-    /// (`docs/port/06-world-plan.md`, "The three seams").
-    pub(crate) login: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
-    /// The world's running district copies, shared with every session: entering a map claims a place
-    /// in a district, and the connection gives it back when it ends.
-    districts: std::sync::Arc<std::sync::Mutex<crate::districts::Districts>>,
-    /// The district this connection entered, so [`Self::leave_district`] can give the place back.
-    /// `None` until a place has been entered.
-    entered: std::sync::Mutex<Option<(u32, u32)>>,
+    pub(crate) portal: PortalStep,
+    /// The district this connection entered, so [`WorldSession::leave_district`] can give the place
+    /// back. `None` until a place has been entered.
+    entered: Option<(u32, u32)>,
     /// The player's own agent: where the client says it is. The client moves it; the world keeps
     /// what it reports, which is what a later load or a second client would be told.
-    agent: std::sync::Mutex<Option<crate::agents::Agent>>,
-    /// The bags, items and profession sets a creation screen is built from, when the program read them.
-    pub(crate) creation: Option<crate::creation::Tables>,
-    /// The item templates the world holds, so a load can resolve a character's held items.
-    templates: Vec<crate::data_stores::ItemDefinition>,
-    /// The master secret to draw the exchange from, when the caller wants a known one. A program
-    /// leaves it empty and every connection draws its own.
-    master: Option<[u8; shared::cryptography::handshake::MASTER_SECRET_LEN]>,
-    /// The players loaded in this world's running copies: a connection tells them it arrived, and is
-    /// told when one of them does (game/Districts/Peers.rs).
-    pub(crate) peers: std::sync::Arc<std::sync::Mutex<crate::districts::Peers>>,
+    agent: Option<crate::agents::Agent>,
     /// The frames other sessions pushed to this one, which it scrambles with its own cipher and writes
     /// when it next looks. A session that has not loaded a map has no channel at all.
-    outbox: std::sync::Mutex<Option<std::sync::mpsc::Receiver<Vec<u8>>>>,
-    /// Set by the listener when the world is shutting down: the session ends itself on its next
-    /// turn, so its own tail runs - the district place is given back and the position is
-    /// written. Reference: `sWorldSessionMgr->KickAll()` (`WorldSessionMgr.cpp:220`), the first
-    /// thing the reference's shutdown does (`Main.cpp:372`). `None` in a session a test builds.
-    closing: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    outbox: Option<std::sync::mpsc::Receiver<Vec<u8>>>,
     /// The id this connection's player and agent are known by, drawn the moment a map load begins.
     ///
     /// One number for both, as every message in this tree already treats them: the load draws the body
@@ -229,141 +233,155 @@ pub struct WorldSession {
     /// players in one map are two players: a second connection that carried the first one's id would be
     /// the same body to every client. `None` until a real map is loaded - the creation instance has no
     /// population to be told apart in.
-    id: std::sync::Mutex<Option<u32>>,
+    id: Option<u32>,
     /// How many times this connection has sent a message this world does not answer, per header.
     ///
     /// A client retries an ask it got no answer to, so a line per arrival is one line per retry, per
     /// connection - unbounded. The first sighting of a header is the report; the rest are a count
     /// (`WorldSession::report_unanswered`).
-    unanswered: std::sync::Mutex<std::collections::BTreeMap<u16, u32>>,
-    /// The world this connection answers for: its operation registry is what a command resolves
-    /// through, so the session holds the world and not only copies of its parts.
+    unanswered: std::collections::BTreeMap<u16, u32>,
+}
+
+impl Connection {
+    /// A connection that has said nothing yet.
+    pub(crate) fn new() -> Self {
+        Self {
+            account: [0u8; 16],
+            moved: false,
+            character: None,
+            landing: None,
+            portal: PortalStep::default(),
+            entered: None,
+            agent: None,
+            outbox: None,
+            id: None,
+            unanswered: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// The id this connection's player and agent are known by: drawn once, when a map load begins, and
+    /// the first id until then (the creation instance's own body).
+    pub(crate) fn player_id(&self) -> u32 {
+        self.id.unwrap_or(CREATION_AGENT)
+    }
+
+    /// The district this connection entered, when it has entered one: the number a copy is known by
+    /// (`game/Districts/`), and the half a peer registry keys on. Zero before a place is entered.
+    pub(crate) fn district(&self) -> u32 {
+        self.entered.map(|(_, district)| district).unwrap_or(0)
+    }
+
+    /// The map this connection is in, as the graph lookup wants it. Zero before a place is entered.
+    pub(crate) fn map_id(&self) -> u32 {
+        self.entered.map(|(map_id, _)| map_id).unwrap_or(0)
+    }
+
+    /// Preserve the full reported movement even when simulation ticks advanced the agent meanwhile.
+    ///
+    /// `ASURA/crates/asura-world/src/player.rs:60-74`, `record_portal_step`: the segment between two
+    /// finite client reports, and nothing at all when the client reported the same point again.
+    pub(crate) fn record_portal_step(&mut self, position: (f32, f32)) {
+        self.portal.last_step =
+            (self.portal.position != position).then_some((self.portal.position, position));
+        self.portal.position = position;
+    }
+
+    /// Where the character entered: the first report is measured from here, not from nowhere.
+    ///
+    /// `ASURA/crates/asura-world/src/connection.rs:318-319`: `portal_position` starts at the standing
+    /// position the load put the agent on, so a step across a doorway at the entry point is a step.
+    pub(crate) fn start_portal_position(&mut self, position: (f32, f32)) {
+        self.portal.position = position;
+        self.portal.last_step = None;
+    }
+
+    /// Take the segment the doorway test consumes, if a report left one.
+    pub(crate) fn take_portal_step(&mut self) -> Option<((f32, f32), (f32, f32))> {
+        self.portal.last_step.take()
+    }
+
+    /// Put this connection's own agent in the map: the body the entry-point answer stands the
+    /// character on.
+    pub(crate) fn place_agent(&mut self, placed: crate::agents::Agent) {
+        self.agent = Some(placed);
+    }
+
+    /// Keep the receiving end of the channel other sessions push this one's frames into, once the
+    /// peer registry holds the sending end.
+    pub(crate) fn open_outbox(&mut self, receiving: std::sync::mpsc::Receiver<Vec<u8>>) {
+        self.outbox = Some(receiving);
+    }
+}
+
+/// One gameplay connection: what it is for its whole life, and nothing it is doing.
+///
+/// Everything here is fixed when the listener builds the session. What the conversation builds up -
+/// the account, the agent, the district it entered - is the connection's own [`Connection`].
+pub struct WorldSession {
+    pub(crate) log: Log,
+    /// The world this connection answers for. Its maps, settings, content, path graphs, doorways,
+    /// district copies, peer registry and operation registry are read through it, never copied.
     pub(crate) world: std::sync::Arc<World>,
+    /// The character database, when the program opened one: a creation screen's confirm writes a row
+    /// there. A session without it can draw the screen but cannot finish it.
+    pub(crate) characters: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
+    /// The login database, when the program opened one: the travel record a login wrote is claimed
+    /// here, once, and decides the map and the district the connection loads
+    /// (`docs/port/06-world-plan.md`, "The three seams").
+    pub(crate) login: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
+    /// The master secret to draw the exchange from, when the caller wants a known one. A program
+    /// leaves it empty and every connection draws its own.
+    master: Option<[u8; shared::cryptography::handshake::MASTER_SECRET_LEN]>,
+    /// Set by the listener when the world is shutting down: the session ends itself on its next
+    /// turn, so its own tail runs - the district place is given back and the position is
+    /// written. Reference: `sWorldSessionMgr->KickAll()` (`WorldSessionMgr.cpp:220`), the first
+    /// thing the reference's shutdown does (`Main.cpp:372`). `None` in a session a test builds.
+    closing: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl WorldSession {
-    /// A session for one connection, for this world.
-    ///
-    /// The world itself is kept, not only copies of its parts: a command resolves through the world's
-    /// operation registry (`docs/port/14-operator-surfaces.md`), so the session needs the world it is
-    /// answering for.
+    /// A session for one connection, for this world: no database, and a master secret drawn per
+    /// connection. The optional parts are added by the `with_` methods below.
     pub fn new(log: Log, world: &std::sync::Arc<World>) -> Self {
         Self {
             log,
             world: std::sync::Arc::clone(world),
-            realm: world.realm(),
-            maps: world.maps().to_vec(),
-            commands: world.commands().clone(),
-            spawns: world.spawns().to_vec(),
-            settings: world.settings().clone(),
-            account: std::sync::Mutex::new([0u8; 16]),
-            moved: std::sync::Mutex::new(false),
-            graphs: std::sync::Arc::clone(world.graphs()),
-            portals: std::sync::Arc::clone(world.portals()),
-            arrivals: world.arrivals().to_vec(),
-            character: std::sync::Mutex::new(None),
-            landing: std::sync::Mutex::new(None),
-            portal: std::sync::Mutex::new(PortalStep::default()),
             characters: None,
             login: None,
-            districts: world.districts(),
-            entered: std::sync::Mutex::new(None),
-            agent: std::sync::Mutex::new(None),
-            creation: Some(world.creation().clone()),
-            templates: world.templates().to_vec(),
             master: None,
-            peers: world.peers(),
-            outbox: std::sync::Mutex::new(None),
             closing: None,
-            id: std::sync::Mutex::new(None),
-            unanswered: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         }
     }
 
-    /// A session that can write a character.
+    /// The same session, able to write a character.
     pub fn with_characters(
-        log: Log,
-        world: &std::sync::Arc<World>,
+        mut self,
         characters: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
     ) -> Self {
-        Self {
-            characters: Some(characters),
-            ..Self::new(log, world)
-        }
+        self.characters = Some(characters);
+        self
     }
 
-    /// A session that can write a character and claim a travel.
-    ///
-    /// The program's own shape: the travel table is in the login database, and the version message's
-    /// token pair is what claims a row.
-    pub fn with_characters_and_login(
-        log: Log,
-        world: &std::sync::Arc<World>,
-        characters: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
+    /// The same session, able to claim a travel: the travel table is in the login database, and the
+    /// version message's token pair is what claims a row.
+    pub fn with_login(
+        mut self,
         login: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
     ) -> Self {
-        Self {
-            characters: Some(characters),
-            login: Some(login),
-            ..Self::new(log, world)
-        }
+        self.login = Some(login);
+        self
     }
 
-    /// A session whose exchange uses this master secret instead of one drawn from entropy.
+    /// The same session, with an exchange that uses this master secret instead of one drawn from
+    /// entropy.
     ///
     /// For a test that wants to read what the client would read; a program never calls this.
     pub fn with_master(
-        log: Log,
-        world: &std::sync::Arc<World>,
+        mut self,
         master: [u8; shared::cryptography::handshake::MASTER_SECRET_LEN],
     ) -> Self {
-        Self {
-            master: Some(master),
-            ..Self::new(log, world)
-        }
-    }
-
-    /// A session whose creation screen has no inventory: the shape a test uses when it wants the
-    /// frames without the content files.
-    pub fn without_creation_data(log: Log, world: &std::sync::Arc<World>) -> Self {
-        Self {
-            creation: None,
-            ..Self::new(log, world)
-        }
-    }
-
-    /// A session with both a known master and a character database.
-    ///
-    /// The shape a test that plays a whole character creation uses: it needs to read the exchange's
-    /// answer and to see the row the confirm writes.
-    pub fn with_master_and_characters(
-        log: Log,
-        world: &std::sync::Arc<World>,
-        master: [u8; shared::cryptography::handshake::MASTER_SECRET_LEN],
-        characters: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
-    ) -> Self {
-        Self {
-            characters: Some(characters),
-            ..Self::with_master(log, world, master)
-        }
-    }
-
-    /// A session with a known master, a character database and a login database.
-    ///
-    /// The shape a test that plays a whole travel uses: the row the login would have written is
-    /// claimed by the connection, and the map it names is the one loaded.
-    pub fn with_master_and_characters_and_login(
-        log: Log,
-        world: &std::sync::Arc<World>,
-        master: [u8; shared::cryptography::handshake::MASTER_SECRET_LEN],
-        characters: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
-        login: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
-    ) -> Self {
-        Self {
-            characters: Some(characters),
-            login: Some(login),
-            ..Self::with_master(log, world, master)
-        }
+        self.master = Some(master);
+        self
     }
 
     /// The inventory a load draws: the character's own rows when it has them - what a confirm wrote -
@@ -376,15 +394,10 @@ impl WorldSession {
             );
             match characters.items_of(&crate::characters::uuid_text(&sheet.uuid)) {
                 Ok(held) if !held.is_empty() => {
-                    let bags = self
-                        .creation
-                        .as_ref()
-                        .map(crate::creation::bags)
-                        .unwrap_or(&[]);
                     return crate::creation::inventory_from_held(
-                        bags,
+                        crate::creation::bags(self.world.creation()),
                         &held,
-                        &self.templates,
+                        self.world.templates(),
                         &self.log,
                     );
                 }
@@ -397,41 +410,31 @@ impl WorldSession {
                 ),
             }
         }
-        self.creation
-            .as_ref()
-            .map(|tables| tables.inventory(sheet.campaign, sheet.profession))
-            .unwrap_or_default()
+        self.world
+            .creation()
+            .inventory(sheet.campaign, sheet.profession)
     }
 
-    /// The bags this world's content gives a character, or none when the world read no creation data.
     /// The item templates this world read at start-up: what an item's kind and slot come from.
     pub(crate) fn item_templates(&self) -> &[crate::data_stores::ItemDefinition] {
-        &self.templates
+        self.world.templates()
     }
 
     /// The bag a character wears things in, when the content names one (`BagType_Equipped`).
     pub(crate) fn equipped_bag(&self) -> Option<crate::creation::Bag> {
-        self.creation
-            .as_ref()
-            .and_then(crate::creation::equipped_bag)
-            .copied()
+        crate::creation::equipped_bag(self.world.creation()).copied()
     }
 
+    /// The bags this world's content gives a character, or none when the world read no creation data.
     pub(crate) fn bags(&self) -> Vec<crate::creation::Bag> {
-        self.creation
-            .as_ref()
-            .map(|tables| crate::creation::bags(tables).to_vec())
-            .unwrap_or_default()
+        crate::creation::bags(self.world.creation()).to_vec()
     }
 
     /// Which slot each kind of item is worn in, from the content (`config/World/Vanilla/creation/worn_slots.json`). Empty
     /// when the world read no such file, and then nothing is worn: the caller refuses rather than
     /// choosing a slot.
     pub(crate) fn worn(&self) -> &[crate::creation::WornSlot] {
-        self.creation
-            .as_ref()
-            .map(|tables| tables.worn())
-            .unwrap_or(&[])
+        self.world.creation().worn()
     }
 
     /// The character database, when the program opened one.
@@ -452,15 +455,19 @@ impl WorldSession {
     ///
     /// Reference: the reference names a message only where it has a handler for it, and the gap this
     /// line reports is a gap to fill, not an event - the first sighting says the client asked, and a
-    /// client that got no answer asks again. Logging every arrival made one stuck ask into the whole
-    /// log (`docs/port/03-tracing.md`); the count is kept beside the first sighting, and later sightings
-    /// are a `Trace` line, below both the console and the default log file.
-    fn report_unanswered(&self, peer: &str, header: u16, what: &str, bytes: usize) {
-        let mut unanswered = match self.unanswered.lock() {
-            Ok(unanswered) => unanswered,
-            Err(_) => return,
-        };
-        let seen = unanswered.entry(header).or_insert(0);
+    /// client that got no answer asks again. A line per arrival would make one stuck ask the whole
+    /// log (`docs/port/03-tracing.md`), so the first sighting is a `Debug` line, the count is kept
+    /// beside it, and later sightings are a `Trace` line, below both the console and the default
+    /// log file.
+    fn report_unanswered(
+        &self,
+        state: &mut Connection,
+        peer: &str,
+        header: u16,
+        what: &str,
+        bytes: usize,
+    ) {
+        let seen = state.unanswered.entry(header).or_insert(0);
         *seen += 1;
         let sighting = *seen;
         match sighting {
@@ -480,7 +487,7 @@ impl WorldSession {
     }
 
     /// The whole conversation, as far as it goes.
-    async fn converse(&self, io: &mut SessionIo) {
+    async fn converse(&self, state: &mut Connection, io: &mut SessionIo) {
         let peer = io
             .peer()
             .map(|address| address.to_string())
@@ -517,18 +524,16 @@ impl WorldSession {
             ),
         );
 
-        if let Ok(mut account) = self.account.lock() {
-            *account = version.account;
-        }
+        state.account = version.account;
 
         // The world's own id is the check the reference makes through its transfer record: a
         // connection that names another world is not this one's.
-        if version.map_token != self.realm {
+        if version.map_token != self.world.realm() {
             self.say(
                 LogLevel::Warn,
                 format!(
                     "Gameplay connection from {peer} names world {} and this world is {}; closing it.",
-                    version.map_token, self.realm
+                    version.map_token, self.world.realm()
                 ),
             );
             let _ = io.close().await;
@@ -615,7 +620,7 @@ impl WorldSession {
                     std::sync::Arc::clone(login),
                     self.log.clone(),
                 );
-                match travels.claim(self.realm, &account, version.player_token) {
+                match travels.claim(self.world.realm(), &account, version.player_token) {
                     Ok(Some(travel)) => {
                         self.say(
                             LogLevel::Debug,
@@ -637,10 +642,10 @@ impl WorldSession {
                         // stands it there instead of scattering it around a spawn point (R13/R21,
                         // `ASURA/crates/asura-world/src/travel.rs:446-468`), and faces it along the
                         // arrival the receiving map states for the map it came from.
-                        if let (Some(landing), Ok(mut claimed)) = (travel.landing, self.landing.lock())
-                        {
+                        if let Some(landing) = travel.landing {
                             let facing = self
-                                .arrivals
+                                .world
+                                .arrivals()
                                 .iter()
                                 .find(|arrival| {
                                     arrival.map_id == travel.map_id
@@ -648,7 +653,7 @@ impl WorldSession {
                                 })
                                 .map(|arrival| arrival.direction())
                                 .unwrap_or((1.0, 0.0));
-                            *claimed = Some(Claimed {
+                            state.landing = Some(Claimed {
                                 map_id: travel.map_id,
                                 landing,
                                 facing,
@@ -695,12 +700,12 @@ impl WorldSession {
             .unwrap_or(0);
 
         // 4. The block the world sends unasked, once the connection is scrambled.
-        let Some(map) = self.maps.iter().find(|map| map.id == map_id) else {
+        let Some(map) = self.world.maps().iter().find(|map| map.id == map_id) else {
             self.say(
                 LogLevel::Error,
                 format!(
                     "Gameplay connection from {peer} asks for map {map_id}, which this world does not host ({} map(s) in the catalogue); closing it.",
-                    self.maps.len()
+                    self.world.maps().len()
                 ),
             );
             let _ = io.close().await;
@@ -710,7 +715,7 @@ impl WorldSession {
         // A map that is a place is loaded: the head, the player-data start, the character's name and the
         // instance's own record, unasked - the order `docs/evidence/` and ASURA's
         // `reference/instance-initialization.md` measured on a live load, and the rows
-        // `shared/src/Packets/../Tables.rs` names.
+        // `game/src/Server/Protocol/Tables.rs` names.
         if !map.is_creation() {
             // The unlock is **not** a gate here. `ASURA/crates/asura-world/src/player.rs:442-462`:
             // "The instance the character is standing in is reached, so it is unlocked - that is the
@@ -718,19 +723,19 @@ impl WorldSession {
             // the players ask is answered (it needs the map the character actually loaded), and the
             // client uses the bitmap to decide what to *offer* on the world map.
             //
-            // This block used to close the connection for a claimed map the character had not
-            // unlocked. That is what a doorway crossing into a new map met: the client reconnected onto
-            // the map it had just walked into, and this world dropped it - the client's `007`.
+            // So a claimed map the character has not unlocked is loaded like any other: a doorway
+            // crossing into a new map reconnects onto the map it has just walked into, and a
+            // connection dropped there is the client's `007`.
 
             // The district the connection enters: the travel's own number when it named one (R57),
             // otherwise the first with room (R22) - and a named full district is refused rather than
             // moved (R58). The allotment is the world's setting (R5).
-            let entered = match self.districts.lock() {
+            let entered = match self.world.districts().lock() {
                 Ok(mut districts) => districts.enter(
                     map,
                     travel.map(|travel| travel.district).unwrap_or(0),
                     u32::from(language),
-                    self.settings.district_allotment,
+                    self.world.settings().district_allotment,
                 ),
                 Err(_) => Err("the world's district copies are poisoned".to_string()),
             };
@@ -747,9 +752,7 @@ impl WorldSession {
                     return;
                 }
             };
-            if let Ok(mut entered) = self.entered.lock() {
-                *entered = Some((map.id, district));
-            }
+            state.entered = Some((map.id, district));
 
             // R14: the outpost the character is now in is its last outpost, so a later load - or the
             // login's list - places it there. **Only an outpost**: an explorable must not overwrite it
@@ -775,75 +778,10 @@ impl WorldSession {
                 }
             }
 
-            let sheet = self.character_sheet(&version);
-            if let Ok(mut character) = self.character.lock() {
-                *character = Some(sheet.uuid);
-            }
-            // 1 for every load: the reference hardcodes it (`ASURA/crates/asura-world/src/map.rs:34-42`).
-            let is_explorable = 1;
-            let mut frames = vec![
-                instance_packets::instance_load_head(),
-                instance_packets::instance_player_data_start(),
-                instance_packets::instance_load_player_name(&sheet.name),
-                instance_packets::instance_load_info(
-                    self.player_id(),
-                    map.id as u16,
-                    is_explorable,
-                    district,
-                    language,
-                    0,
-                ),
-            ];
-            // The exploration grid, right after the instance's record: that is where a live server
-            // sends it, once per instance (`ASURA/crates/asura-world/src/map.rs:22-48`), and a client
-            // without it asserts on its own world map the first time the map view opens
-            // (`GmMapView.cpp(1731)`, client build 39112).
-            let grid = crate::maps::cartography::init_frames(crate::maps::cartography::grid_for(
-                map.id,
-            ));
-            frames.extend(grid);
-            // And the destinations it can resolve, in the batches a load uses - the working
-            // implementation sends these in the same phase (`ASURA/crates/asura-world/src/map.rs:49-58`).
-            let (table, notes) = crate::maps::instance_table::table_for(&self.maps);
-            for note in &notes {
-                self.say(
-                    LogLevel::Warn,
-                    format!("Gameplay connection from {peer}: instance table: {note}"),
-                );
-            }
-            frames.extend(table.frames());
-            let mut block = Vec::new();
-            for frame in &frames {
-                block.extend_from_slice(frame);
-            }
-            crypt.encrypt(&mut block);
-            match io.write_all(&block).await {
-                Ok(()) => self.say(
-                    LogLevel::Debug,
-                    format!(
-                        "Gameplay connection from {peer}: {} is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}', the instance's record (district {district}, language {language}), the exploration grid ({} x {}, nothing explored) and the instance table ({} pair(s)).",
-                        map.label(),
-                        frames.len(),
-                        block.len(),
-                        sheet.name,
-                        crate::maps::cartography::grid_for(map.id).0,
-                        crate::maps::cartography::grid_for(map.id).1,
-                        table.pairs.len()
-                    ),
-                ),
-                Err(error) => {
-                    self.say(
-                        LogLevel::Warn,
-                        format!("Gameplay connection from {peer} could not be sent its load block: {error}"),
-                    );
-                    let _ = io.close().await;
-                    return;
-                }
-            }
-
-            // What the client asks next, and what a load answers: the items, where it stands, and
-            // then its own body and the end of the load.
-            self.load_map(io, &peer, map, &sheet, &mut crypt).await;
+            // The load itself: the block the world sends unasked, and then what the client asks
+            // next - the items, where it stands, and then its own body and the end of the load.
+            self.load_map(state, io, &peer, map, &version, district, language, &mut crypt)
+                .await;
             return;
         }
 
@@ -870,6 +808,32 @@ impl WorldSession {
         // From here the client asks what it needs for the creation screen, and what it asks for is
         // answered in the reference's order: the player-data block, the PvP half, a profession
         // change, and the confirm.
+        self.serve(state, io, &peer, &mut crypt, Phase::Creation(&version), None)
+            .await;
+    }
+
+    /// The connection's one message loop, from the first scrambled ask to the end of the connection.
+    ///
+    /// Every turn does the same things in the same order: the closing flag is read, what other
+    /// sessions pushed at a loaded map is written, every whole message already unscrambled is framed
+    /// and handed to [`Self::dispatch`], and then the connection waits - for the client's next bytes,
+    /// and on a map for the map's clock as well. `phase` says where the connection is and `clock` is
+    /// the map's, `None` on the creation screen.
+    ///
+    /// What a phase keeps to itself is the log it had before the loops were one: the inbound trace
+    /// lines and the line for a closed connection are the creation screen's, and each phase words a
+    /// message that cannot be framed its own way.
+    #[allow(clippy::too_many_arguments)]
+    async fn serve(
+        &self,
+        state: &mut Connection,
+        io: &mut SessionIo,
+        peer: &str,
+        crypt: &mut AuthCrypt,
+        mut phase: Phase<'_>,
+        mut clock: Option<MapClock>,
+    ) {
+        // The creation screen's own state; only that phase's arms read it.
         let mut creation = Creation::start();
         let mut pending: Vec<u8> = Vec::new();
         let mut buffer = vec![0u8; 1024];
@@ -880,9 +844,16 @@ impl WorldSession {
         let mut stalled: Option<(u16, usize, std::time::Instant)> = None;
         loop {
             // The world is going down: the listener set this before it stopped, and a session that
-            // keeps turning would answer a client that is being kicked (`KickAll`).
+            // keeps turning would answer a client that is being kicked (`KickAll`). Ending here is
+            // what lets the session finish through its own tail instead of being dropped mid-future.
             if self.closing() {
                 return;
+            }
+            // Whatever other sessions pushed at this one - an introduction, a farewell, a move - is
+            // written before anything else is read: it travels plaintext and is scrambled here, with
+            // this connection's own cipher (`game/Districts/Peers.rs`).
+            if matches!(phase, Phase::Loaded(_)) {
+                self.flush_outbox(state, io, peer, crypt).await;
             }
             // Everything already unscrambled and not yet answered, before any more is read.
             while let Some(bytes) = pending.first_chunk::<2>() {
@@ -891,15 +862,17 @@ impl WorldSession {
                 // the walk is exact for every header the protocol has, not just the ones answered here.
                 let used = match crate::server::protocol::decode_game_message(&pending, true) {
                     Ok((frame, used)) => {
-                        self.log.out(
-                            LogLevel::Debug,
-                            "network.trace",
-                            format!(
-                                "trace {peer} game in  {} bytes, {}",
-                                used,
-                                crate::server::protocol::label(frame.header())
-                            ),
-                        );
+                        if matches!(phase, Phase::Creation(_)) {
+                            self.log.out(
+                                LogLevel::Debug,
+                                "network.trace",
+                                format!(
+                                    "trace {peer} game in  {} bytes, {}",
+                                    used,
+                                    crate::server::protocol::label(frame.header())
+                                ),
+                            );
+                        }
                         used
                     }
                     Err(FrameError::Incomplete { needed }) => {
@@ -927,13 +900,16 @@ impl WorldSession {
                         break;
                     }
                     Err(error) => {
-                        self.say(
-                            LogLevel::Warn,
-                            format!(
+                        let said = match phase {
+                            Phase::Creation(_) => format!(
                                 "Gameplay connection from {peer}: a message with header 0x{header:04X} cannot be framed ({error}), so the stream cannot be split any further. The bytes so far are {}.",
                                 shared::network::socket::hex(&pending[..pending.len().min(64)])
                             ),
-                        );
+                            Phase::Loading(_) | Phase::Loaded(_) => format!(
+                                "Gameplay connection from {peer}: a message could not be framed ({error}); the load stops here."
+                            ),
+                        };
+                        self.say(LogLevel::Warn, said);
                         let _ = io.close().await;
                         return;
                     }
@@ -943,39 +919,101 @@ impl WorldSession {
                 // One complete incoming frame: the capture records the wire layer, after ARC4 came off.
                 crate::server::capture::record("CToS", header, &message);
 
-                self.log.out(
-                    LogLevel::Debug,
-                    "network.trace",
-                    format!(
-                        "trace {peer} game in  {} bytes: {}",
-                        message.len(),
-                        shared::network::socket::hex(&message[..message.len().min(64)])
-                    ),
-                );
+                if matches!(phase, Phase::Creation(_)) {
+                    self.log.out(
+                        LogLevel::Debug,
+                        "network.trace",
+                        format!(
+                            "trace {peer} game in  {} bytes: {}",
+                            message.len(),
+                            shared::network::socket::hex(&message[..message.len().min(64)])
+                        ),
+                    );
+                }
 
-                match self
-                    .answer(io, &peer, header, &message, &mut creation, &version, &mut crypt)
+                if !self
+                    .dispatch(state, io, peer, crypt, header, &message, &mut phase, &mut creation)
                     .await
                 {
-                    Some(true) => {}
-                    Some(false) => return,
-                    None => {
-                        // A message this world does not answer: say so once per header, and keep the
-                        // connection (`WorldSession::report_unanswered`).
-                        self.report_unanswered(&peer, header, &format!("0x{header:04X}"), message.len());
-                    }
+                    return;
                 }
             }
 
-            let read = match io.read(&mut buffer).await {
-                Ok(0) => {
-                    self.say(
-                        LogLevel::Debug,
-                        format!("Gameplay connection from {peer} closed."),
-                    );
+            // The two things this connection waits on, and neither is a poll: the client's next bytes,
+            // and - on a map - the map's clock. `ASURA/crates/asura-world/src/connection.rs:494-548`
+            // races the same two, and the clock's moment does not move because traffic arrived.
+            let read = match clock.as_ref() {
+                Some(clock) => {
+                    let wait = clock
+                        .next_tick
+                        .saturating_duration_since(std::time::Instant::now());
+                    io.read_timeout(&mut buffer, wait).await
+                }
+                None => io.read(&mut buffer).await.map(|count| match count {
+                    0 => shared::network::socket::ReadOutcome::Closed,
+                    count => shared::network::socket::ReadOutcome::Read(count),
+                }),
+            };
+            match read {
+                Ok(shared::network::socket::ReadOutcome::TimedOut) => {
+                    let Some(clock) = clock.as_mut() else {
+                        continue;
+                    };
+                    // Cadence, not drift: the next deadline moves by one period from the one that
+                    // fired, the way `tokio::time::interval` does in `Instance::run`
+                    // (`ASURA/crates/asura-world/src/instance.rs:394-403`). Measuring the period from
+                    // "now" instead would add the tick's own work to every interval, and the map would
+                    // run a few percent slow for as long as it runs. A missed deadline is caught up one
+                    // tick at a time, which is that interval's own default.
+                    clock.next_tick += clock.period;
+                    if let Phase::Loaded(load) = phase {
+                        // **How long it has been since the last tick**, not a counter: the client advances
+                        // its simulation - and its sync copy of every agent - by this number
+                        // (`ASURA/crates/asura-world/src/instance.rs:369`, `world_simulation_tick`); a
+                        // counter here makes everything the client draws run at the wrong speed.
+                        let now = std::time::Instant::now();
+                        let elapsed = now.duration_since(clock.last_tick);
+                        clock.last_tick = now;
+                        // The map's clock advances every agent by the elapsed time, and **the doorway is
+                        // decided on the segment the advance walked** - not on a report's - because that is
+                        // the copy this server believes and the one the client is drawn from
+                        // (`ASURA/crates/asura-world/src/instance.rs:290-308`). A crossing found here is
+                        // pushed to the connection and served before anything else, as `portal_inbox` is in
+                        // `connection.rs:498-502`.
+                        let (crossed, walk) = self.step_map(state, elapsed);
+                        let mut frames = vec![misc_packets::world_simulation_tick(
+                            u32::try_from(elapsed.as_millis()).unwrap_or(u32::MAX),
+                        )];
+                        if let Some(walk) = walk {
+                            frames.push(walk);
+                        }
+                        // The tick is periodic, so its report is routine: a `Trace` line, because one
+                        // line per connection per `World.SimulationTickMs` would be the whole of the log.
+                        self.send_quiet(io, peer, crypt, &frames, "a tick").await;
+                        if let Some((from, to)) = crossed {
+                            // The travelling body leaves the map it is in: the clock that crossed it has
+                            // already been announced, then the transfer is served.
+                            self.cross_portal(state, io, peer, crypt, load.sheet, from, to)
+                                .await;
+                            return;
+                        }
+                    }
+                }
+                Ok(shared::network::socket::ReadOutcome::Closed) => {
+                    if matches!(phase, Phase::Creation(_)) {
+                        self.say(
+                            LogLevel::Debug,
+                            format!("Gameplay connection from {peer} closed."),
+                        );
+                    }
                     return;
                 }
-                Ok(read) => read,
+                Ok(shared::network::socket::ReadOutcome::Read(count)) => {
+                    // The asks after the seed are scrambled with the key both sides derive.
+                    let mut plain = buffer[..count].to_vec();
+                    crypt.decrypt(&mut plain);
+                    pending.extend_from_slice(&plain);
+                }
                 Err(error) => {
                     self.say(
                         LogLevel::Warn,
@@ -983,74 +1021,201 @@ impl WorldSession {
                     );
                     return;
                 }
-            };
-
-            let mut plain = buffer[..read].to_vec();
-            crypt.decrypt(&mut plain);
-            pending.extend_from_slice(&plain);
+            }
         }
     }
 
-    /// Answer one gameplay message.
+    /// Answer one gameplay message: the connection's one dispatch, whatever phase it is in.
     ///
-    /// `Some(true)` keeps the connection, `Some(false)` ends it, `None` is a message this world has
-    /// no behaviour for - the caller logs its header and size, which is what says what is missing.
+    /// An arm is written for the phase it is valid in - the creation screen's four messages, the
+    /// asks of a map, the title a loaded map displays - and a message that arrives in another phase
+    /// falls to the last arm with every message this world has no behaviour for, which is reported
+    /// once per header. Each arm is one call into `game/Handlers/`.
+    ///
+    /// Answers whether the connection goes on.
     #[allow(clippy::too_many_arguments)]
-    async fn answer(
+    async fn dispatch(
         &self,
+        state: &mut Connection,
         io: &mut SessionIo,
         peer: &str,
+        crypt: &mut AuthCrypt,
         header: u16,
         message: &[u8],
+        phase: &mut Phase<'_>,
         creation: &mut Creation,
-        version: &GameVersion,
-        crypt: &mut AuthCrypt,
-    ) -> Option<bool> {
-        match header {
+    ) -> bool {
+        match (header, *phase) {
             // The four creation messages, in the order ASURA dispatches them
             // (`ASURA/crates/asura-world/src/dispatch.rs:88-103`), each answered by its own
             // `creation.rs` handler in `game/Handlers/CharacterHandler.rs`.
-            CHAR_CREATION_REQUEST_PLAYER => {
+            (CHAR_CREATION_REQUEST_PLAYER, Phase::Creation(_)) => {
                 self.answer_creation_request_player(io, peer, message, creation, crypt)
                     .await;
-                Some(true)
             }
-            CHAR_CREATION_REQUEST_ARMORS => {
+            (CHAR_CREATION_REQUEST_ARMORS, Phase::Creation(_)) => {
                 self.answer_creation_request_armors(io, peer, crypt).await;
-                Some(true)
             }
-            CHAR_CREATION_CHANGE_PROF => {
-                self.answer_creation_change_prof(io, peer, message, creation, crypt)
+            (CHAR_CREATION_CHANGE_PROF, Phase::Creation(_)) => {
+                self.answer_creation_change_prof(state, io, peer, message, creation, crypt)
                     .await;
-                Some(true)
             }
-            CHAR_CREATION_CONFIRM => {
+            (CHAR_CREATION_CONFIRM, Phase::Creation(version)) => {
                 // The confirm carries the name as a counted string and then the packed
                 // appearance word; the reference reads exactly those and writes the rows.
                 self.confirm_creation(io, peer, message, creation, version, crypt)
                     .await;
-                Some(true)
             }
             // The client is going away (GAME_CMSG_DISCONNECT, 0x8008, two bytes): the working
-            // implementation's dispatch ends the connection on it
+            // implementation's dispatch ends the connection on it, in every phase
             // (ASURA/crates/asura-world/src/dispatch.rs:86).
-            CLIENT_DISCONNECT => Some(false),
+            (CLIENT_DISCONNECT, _) => return false,
             // `GAME_CMSG_PING_REQUEST` (`0x800D`): the client asks to be pinged back, and the answer is
-            // the ping reply - `0x000D` and the value this world runs with, **not** the request echoed
+            // the ping reply - `0x000D` and the value this world runs with, **not** the request echoed.
+            // The working implementation has one handler for the connection's whole life
             // (`ASURA/crates/asura-world/src/connection.rs:579-587`, `handle_ping_request`).
-            GAME_PING => {
+            (GAME_PING, _) => {
                 self.send(
                     io,
                     peer,
                     crypt,
-                    &[misc_packets::ping_reply(self.settings.ping_value)],
+                    &[misc_packets::ping_reply(self.world.settings().ping_value)],
                     "the ping reply",
                 )
                 .await;
-                Some(true)
             }
-            _ => None,
+            // The three asks of a map load (`game/Handlers/InstanceHandler.rs`): the items, the
+            // entry point - a map that cannot be entered ends the connection - and the players,
+            // whose answer ends the load.
+            (
+                instance_packets::CLIENT_LOAD_REQUEST_ITEMS,
+                Phase::Loading(load) | Phase::Loaded(load),
+            ) => {
+                self.answer_load_request_items(io, peer, crypt, load).await;
+            }
+            (
+                instance_packets::CLIENT_LOAD_REQUEST_SPAWN,
+                Phase::Loading(load) | Phase::Loaded(load),
+            ) => {
+                return self
+                    .answer_load_request_spawn(state, io, peer, crypt, load)
+                    .await;
+            }
+            (
+                instance_packets::CLIENT_LOAD_REQUEST_PLAYERS,
+                Phase::Loading(load) | Phase::Loaded(load),
+            ) => {
+                self.answer_load_request_players(state, io, peer, crypt, load)
+                    .await;
+                *phase = Phase::Loaded(load);
+            }
+            // The title the player displays or hides, on a loaded map only
+            // (`game/Handlers/TitleHandler.rs`).
+            (GAME_CMSG_TITLE_DISPLAY | GAME_CMSG_TITLE_HIDE, Phase::Loaded(load)) => {
+                self.answer_title_display(state, io, peer, header, message, crypt, load)
+                    .await;
+            }
+            // A drag in the inventory: where the item goes is a row, the rules are ASURA's, and
+            // the client is told the placement back. `0x8072` is the client's own `9` bytes - the
+            // item, the bag and the slot - and `0x013E` is the placement.
+            (CLIENT_ITEM_MOVE, Phase::Loading(load) | Phase::Loaded(load)) => {
+                self.answer_item_move(state, io, peer, message, crypt, load.sheet)
+                    .await;
+            }
+            // `GAME_CMSG_PING_REPLY` (`0x8009`, 10 bytes) and `GAME_CMSG_HEARTBEAT` (`0x800C`,
+            // 2 bytes): the working implementation names both and discards both
+            // (`ASURA/crates/asura-world/src/dispatch.rs:116-122`), because the reference does.
+            (CLIENT_PING_REPLY | CLIENT_HEARTBEAT, Phase::Loading(_) | Phase::Loaded(_)) => {}
+            // The client's movement. Four messages, four handlers, ported from the working
+            // implementation's own (`ASURA/crates/asura-world/src/agent.rs`): `0x803E` asks for
+            // a walk, `0x803D` reports where the client is and the direction it is walking in,
+            // `0x8028` cancels, and `0x8047` is the stopping point a cancel carries.
+            (CLIENT_MOVE_TO_COORD, Phase::Loading(_) | Phase::Loaded(_)) => {
+                self.answer_move_to_coord(state, io, peer, message, crypt).await;
+            }
+            (CLIENT_MOVE_TO_COORD_WITH_DIR, Phase::Loading(load) | Phase::Loaded(load)) => {
+                self.answer_position_update(state, io, peer, message, crypt).await;
+                // The step the report moved the agent along, checked against the map's own
+                // walls (`ASURA/crates/asura-world/src/dispatch.rs:44-54`).
+                if let Some((from, to)) = state.take_portal_step() {
+                    self.cross_portal(state, io, peer, crypt, load.sheet, from, to)
+                        .await;
+                }
+            }
+            (CLIENT_CANCEL_MOVEMENT, Phase::Loading(_) | Phase::Loaded(_)) => {
+                self.answer_cancel_movement(state, io, peer, crypt).await;
+            }
+            (
+                CLIENT_LAST_POS_BEFORE_MOVE_CANCELED,
+                Phase::Loading(load) | Phase::Loaded(load),
+            ) => {
+                self.answer_last_position(state, io, peer, message, crypt).await;
+                // A correction the server accepted is a movement the reports lagged behind, so
+                // it is checked for a doorway the same way a walk is
+                // (`ASURA/crates/asura-world/src/dispatch.rs:60-68`).
+                if let Some((from, to)) = state.take_portal_step() {
+                    self.cross_portal(state, io, peer, crypt, load.sheet, from, to)
+                        .await;
+                }
+            }
+            // The client's own in-game travel request. `ASURA/crates/asura-world/src/travel.rs`
+            // answers it with the same cycle `/tp` ends in: a map this world hosts goes to
+            // `begin_transfer`, and one it cannot serve is refused in the log.
+            (CLIENT_PARTY_TRAVEL, Phase::Loading(load) | Phase::Loaded(load)) => {
+                self.answer_party_travel(state, io, peer, message, crypt, load.sheet)
+                    .await;
+            }
+            // The client touched a travel object (`0x80C1`): named in the log and nothing more,
+            // because a crossing is decided from the player's own step, not from the touch
+            // (`ASURA/crates/asura-world/src/travel.rs:132-169`).
+            (CLIENT_TRAVEL_INIT, Phase::Loading(load) | Phase::Loaded(load)) => {
+                self.answer_travel_init(state, peer, message, load.sheet).await;
+            }
+            // The client speaks: a line on a channel, or one of the reference's commands
+            // (`ASURA/crates/asura-world/src/chat.rs`).
+            (CLIENT_CHAT_MESSAGE, Phase::Loading(load) | Phase::Loaded(load)) => {
+                self.answer_chat_message(state, io, peer, message, crypt, load.sheet)
+                    .await;
+            }
+            // The client drops `count` of an item (`GAME_CMSG_DROP_ITEM`, `0x802C`: the item as a
+            // dword and the count as a byte). The working implementation's `drop_item`
+            // (`ASURA/crates/asura-world/src/item.rs:187`) takes them off the stack and puts
+            // **nothing on the wire**: both messages a drop could send crashed a live client -
+            // `ITEM_REMOVE` with the stack re-created cloned the item, and the ground agent
+            // (`0x0020`, `AgentType_Item`) crashed with that message as the log's last line -
+            // and neither appears in any capture (`item.rs:236-246`). So the stack is the state
+            // and silence is the answer.
+            (CLIENT_DROP_ITEM, Phase::Loading(load) | Phase::Loaded(load)) => {
+                self.answer_drop_item(peer, message, load.sheet);
+            }
+            // `GAME_CMSG_UNEQUIP_ITEM` (`0x804F`): the working implementation answers it by
+            // saying what it cannot do - the message carries no item id and no capture shows
+            // what it means, and dragging the item out of the equipped bag works instead
+            // (`ASURA/crates/asura-world/src/item.rs:555`).
+            (CLIENT_UNEQUIP_ITEM, Phase::Loading(_) | Phase::Loaded(_)) => {
+                self.answer_unequip_item(peer);
+            }
+            // The client wears one of its items: the slot its kind is worn in, in the equipped
+            // bag, with whatever was worn there taken off to the first free carrying slot - and
+            // the agent's worn items sent again, which is the one thing the client cannot work
+            // out for itself (`ASURA/crates/asura-world/src/item.rs:314-436`).
+            (CLIENT_EQUIP_ITEM, Phase::Loading(load) | Phase::Loaded(load)) => {
+                self.answer_equip_item(state, io, peer, message, crypt, load.sheet)
+                    .await;
+            }
+            // A message this world does not answer, or one that arrived in a phase it has no
+            // meaning in: said once per header, repeats are a count, and the connection stays
+            // (`WorldSession::report_unanswered`). A map names the header by the protocol's own
+            // name for it; the creation screen by its number.
+            (other, _) => {
+                let what = match *phase {
+                    Phase::Creation(_) => format!("0x{other:04X}"),
+                    Phase::Loading(_) | Phase::Loaded(_) => crate::server::protocol::label(other),
+                };
+                self.report_unanswered(state, peer, other, &what, message.len());
+            }
         }
+        true
     }
 
     /// The character's own row, as the load reads it - or the sheet a load falls back to when the row
@@ -1086,41 +1251,16 @@ impl WorldSession {
             .is_some_and(|closing| closing.load(std::sync::atomic::Ordering::Relaxed))
     }
 
-    /// Preserve the full reported movement even when simulation ticks advanced the agent meanwhile.
-    ///
-    /// `ASURA/crates/asura-world/src/player.rs:60-74`, `record_portal_step`: the segment between two
-    /// finite client reports, and nothing at all when the client reported the same point again.
-    pub(crate) fn record_portal_step(&self, position: (f32, f32)) {
-        let Ok(mut portal) = self.portal.lock() else {
-            return;
-        };
-        portal.last_step =
-            (portal.position != position).then_some((portal.position, position));
-        portal.position = position;
-    }
-
-    /// Where the character entered: the first report is measured from here, not from nowhere.
-    ///
-    /// `ASURA/crates/asura-world/src/connection.rs:318-319`: `portal_position` starts at the standing
-    /// position the load put the agent on, so a step across a doorway at the entry point is a step.
-    fn start_portal_position(&self, position: (f32, f32)) {
-        if let Ok(mut portal) = self.portal.lock() {
-            portal.position = position;
-            portal.last_step = None;
-        }
-    }
-
-    /// Take the segment the doorway test consumes, if a report left one.
-    fn take_portal_step(&self) -> Option<((f32, f32), (f32, f32))> {
-        self.portal.lock().ok().and_then(|mut portal| portal.last_step.take())
-    }
-
     /// Write everything other sessions have pushed at this one, and nothing when they pushed nothing.
-    async fn flush_outbox(&self, io: &mut SessionIo, peer: &str, crypt: &mut AuthCrypt) {
+    async fn flush_outbox(
+        &self,
+        state: &mut Connection,
+        io: &mut SessionIo,
+        peer: &str,
+        crypt: &mut AuthCrypt,
+    ) {
         let mut frames: Vec<Vec<u8>> = Vec::new();
-        if let Ok(outbox) = self.outbox.lock()
-            && let Some(receiver) = outbox.as_ref()
-        {
+        if let Some(receiver) = state.outbox.as_ref() {
             while let Ok(frame) = receiver.try_recv() {
                 frames.push(frame);
             }
@@ -1130,19 +1270,23 @@ impl WorldSession {
         }
     }
 
-    /// Run something against this session's own agent, when it has one.
+    /// Run something against this connection's own agent, when it has one.
     ///
     /// Every message that moves a body goes through here, so this is also where the peer registry learns
     /// where the body stands: an introduction names the point a player is at **now**, not the one it
     /// entered at (`ASURA/crates/asura-world/src/instance.rs:249-255`, `standing`, and `PeerView::from`,
     /// which reads the live agent).
-    pub(crate) fn with_agent<T>(&self, work: impl FnOnce(&mut crate::agents::Agent) -> T) -> Option<T> {
-        let mut agent = self.agent.lock().ok()?;
-        let agent = agent.as_mut()?;
+    pub(crate) fn with_agent<T>(
+        &self,
+        state: &mut Connection,
+        work: impl FnOnce(&mut crate::agents::Agent) -> T,
+    ) -> Option<T> {
+        let player_id = state.player_id();
+        let agent = state.agent.as_mut()?;
         let answer = work(agent);
-        if let Ok(mut peers) = self.peers.lock() {
+        if let Ok(mut peers) = self.world.peers().lock() {
             peers.moved(
-                self.player_id(),
+                player_id,
                 crate::districts::Standing {
                     position: agent.position,
                     plane: agent.plane,
@@ -1153,31 +1297,12 @@ impl WorldSession {
         Some(answer)
     }
 
-    /// The id this connection's player and agent are known by: drawn once, when a map load begins, and
-    /// the first id until then (the creation instance's own body).
-    pub(crate) fn player_id(&self) -> u32 {
-        match self.id.lock() {
-            Ok(id) => id.unwrap_or(CREATION_AGENT),
-            Err(_) => CREATION_AGENT,
-        }
-    }
-
     /// Draw this connection's id, once. A connection that already has one keeps it.
-    fn draw_player_id(&self) {
-        if let Ok(mut id) = self.id.lock()
-            && id.is_none()
-            && let Ok(mut peers) = self.peers.lock()
+    fn draw_player_id(&self, state: &mut Connection) {
+        if state.id.is_none()
+            && let Ok(mut peers) = self.world.peers().lock()
         {
-            *id = Some(peers.allocate());
-        }
-    }
-
-    /// The district this connection entered, when it has entered one: the number a copy is known by
-    /// (`game/Districts/`), and the half a peer registry keys on.
-    pub(crate) fn district(&self) -> u32 {
-        match self.entered.lock() {
-            Ok(entered) => entered.map(|(_, district)| district).unwrap_or(0),
-            Err(_) => 0,
+            state.id = Some(peers.allocate());
         }
     }
 
@@ -1186,37 +1311,99 @@ impl WorldSession {
     ///
     /// R12 gives a new character exactly one unlock; R14 places a load at the character's last outpost.
     pub(crate) fn starting_outpost(&self) -> Option<&crate::world::MapEntry> {
-        // The rule is the world's (`crate::world::first_outpost`); what the connection has is the
-        // copy of the maps it was built with, and the number from the settings.
-        crate::world::first_outpost(&self.maps, self.settings.starting_outpost)
+        // The rule is the world's (`crate::world::first_outpost`), over the maps it hosts and the
+        // number from its settings.
+        crate::world::first_outpost(self.world.maps(), self.world.settings().starting_outpost)
     }
 
-    /// The map this connection is in, as the graph lookup wants it.
-    pub(crate) fn map_id(&self) -> u32 {
-        match self.entered.lock() {
-            Ok(entered) => entered.map(|(map_id, _)| map_id).unwrap_or(0),
-            Err(_) => 0,
-        }
-    }
-
-    /// The rest of a map's load: the ping pair, the inventory and the map's record, where the
-    /// character stands, its own body, and the end of the load.
+    /// A map's load: the block the world sends unasked, the ping pair, and everything the load
+    /// decides before the client's first ask - after which the connection is served on that map.
     ///
     /// The client asks and the world answers, in the order a working server measured
     /// (`recordings/gwps/world/load-stream.log`): `0x8091` wants the items and is answered with the
-    /// inventory stream and the map's record, `0x8088` wants the entry point and is answered with a
-    /// point of this map's own list (scattered per R13) and the first tick, and `0x8090` wants the
-    /// players and ends the load. What is still missing is named here rather than implied: the
-    /// agent stream of step 6 and the party stream of step 7 are not sent, and the PvP halves carry
-    /// the empty values a fresh character has.
+    /// inventory stream and the map's record, `0x8088` wants the entry point and is answered with
+    /// one `0x0196` frame - a point of this map's own list (scattered per R13), a doorway's landing
+    /// or the saved position - and `0x8090` wants the players and ends the load
+    /// (`game/Handlers/InstanceHandler.rs`). The ticks come from the map's clock once the load is
+    /// over, not from the entry-point answer. The player's own four party frames are part of the
+    /// players answer; what is not sent is named here rather than implied: the map's other agents
+    /// (the agent stream of step 6), and the PvP halves carry the empty values a fresh character has.
+    #[allow(clippy::too_many_arguments)]
     async fn load_map(
         &self,
+        state: &mut Connection,
         io: &mut SessionIo,
         peer: &str,
         map: &crate::world::MapEntry,
-        sheet: &CharacterSheet,
+        version: &GameVersion,
+        district: u32,
+        language: u8,
         crypt: &mut AuthCrypt,
     ) {
+        let sheet = self.character_sheet(version);
+        state.character = Some(sheet.uuid);
+        // 1 for every load: the reference hardcodes it (`ASURA/crates/asura-world/src/map.rs:34-42`).
+        let is_explorable = 1;
+        let mut frames = vec![
+            instance_packets::instance_load_head(),
+            instance_packets::instance_player_data_start(),
+            instance_packets::instance_load_player_name(&sheet.name),
+            instance_packets::instance_load_info(
+                state.player_id(),
+                map.id as u16,
+                is_explorable,
+                district,
+                language,
+                0,
+            ),
+        ];
+        // The exploration grid, right after the instance's record: that is where a live server
+        // sends it, once per instance (`ASURA/crates/asura-world/src/map.rs:22-48`), and a client
+        // without it asserts on its own world map the first time the map view opens
+        // (`GmMapView.cpp(1731)`, client build 39112).
+        let grid = crate::maps::cartography::init_frames(crate::maps::cartography::grid_for(
+            map.id,
+        ));
+        frames.extend(grid);
+        // And the destinations it can resolve, in the batches a load uses - the working
+        // implementation sends these in the same phase (`ASURA/crates/asura-world/src/map.rs:49-58`).
+        let (table, notes) = crate::maps::instance_table::table_for(self.world.maps());
+        for note in &notes {
+            self.say(
+                LogLevel::Warn,
+                format!("Gameplay connection from {peer}: instance table: {note}"),
+            );
+        }
+        frames.extend(table.frames());
+        let mut block = Vec::new();
+        for frame in &frames {
+            block.extend_from_slice(frame);
+        }
+        crypt.encrypt(&mut block);
+        match io.write_all(&block).await {
+            Ok(()) => self.say(
+                LogLevel::Debug,
+                format!(
+                    "Gameplay connection from {peer}: {} is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}', the instance's record (district {district}, language {language}), the exploration grid ({} x {}, nothing explored) and the instance table ({} pair(s)).",
+                    map.label(),
+                    frames.len(),
+                    block.len(),
+                    sheet.name,
+                    crate::maps::cartography::grid_for(map.id).0,
+                    crate::maps::cartography::grid_for(map.id).1,
+                    table.pairs.len()
+                ),
+            ),
+            Err(error) => {
+                self.say(
+                    LogLevel::Warn,
+                    format!("Gameplay connection from {peer} could not be sent its load block: {error}"),
+                );
+                let _ = io.close().await;
+                return;
+            }
+        }
+
         // The unasked pair the measured load follows the head block with.
         self.send(
             io,
@@ -1227,27 +1414,24 @@ impl WorldSession {
         )
         .await;
 
-        let mut pending: Vec<u8> = Vec::new();
-        let mut buffer = vec![0u8; 1024];
         // This connection's own id, drawn before anything names it: the load block, the entry point and
         // every message after them carry the same number (`Peers::allocate`).
-        self.draw_player_id();
-        let inventory = self.load_inventory(sheet);
+        self.draw_player_id(state);
+        let inventory = self.load_inventory(&sheet);
         // The instant the last tick went out, so the next one carries how long it really has been.
-        let mut last_tick = std::time::Instant::now();
-        let mut loaded = false;
+        let last_tick = std::time::Instant::now();
         // Where the character stands, chosen once: the entry-position answer and the agent the load
         // creates have to be the same place. The saved position is read here, once, because it is what
         // a reconnect to the map the character left resumes at (R14,
         // `ASURA/crates/asura-world/src/agent.rs:531-545`).
-        let saved = self.saved_position(sheet);
-        let entry = self.entry_point(map, saved);
+        let saved = self.saved_position(&sheet);
+        let entry = self.entry_point(state, map, saved);
         let load_started = std::time::Instant::now();
         // The character as the load is told it: the two ids it is named by, where it stands, what it
         // wears. Everything here is decided once, before the first ask, because the entry position,
         // the block and the player record all have to name the same place.
-        let agent = self.player_id();
-        let player = self.player_id();
+        let agent = state.player_id();
+        let player = state.player_id();
         let position = entry
             .map(|point| (point.0, point.1))
             .unwrap_or((0.0, 0.0));
@@ -1259,21 +1443,17 @@ impl WorldSession {
         // when its row carries none (an all-zero word is `Profession_None`, which the client cannot
         // draw).
         let appearance = if sheet.appearance == 0 {
-            self.settings.appearance
+            self.world.settings().appearance
         } else {
             sheet.appearance
         };
-        // The item ids the agent is drawn wearing, from the equipped bag, in its own order. A slot
-        // the character wears nothing in is zero.
+        // The item ids the agent is drawn wearing, taken from the equipped bag. A slot the character
+        // wears nothing in is zero.
         // The nine-dword list is the client's wire order, which is not the equipped bag's own order:
         // a piece's cell in the bag and its position here are two numbers, and the table names both
         // (`config/World/Vanilla/creation/worn_slots.json`).
         let mut equipped = [0u32; 9];
-        if let Some(bag) = self
-            .creation
-            .as_ref()
-            .and_then(crate::creation::equipped_bag)
-        {
+        if let Some(bag) = crate::creation::equipped_bag(self.world.creation()) {
             for item in inventory.items_in(bag.id) {
                 if let Some(slot) = crate::creation::wire_slot(self.worn(), item.item_type)
                     && let Some(held) = equipped.get_mut(slot as usize)
@@ -1282,7 +1462,7 @@ impl WorldSession {
                 }
             }
         }
-        let state = crate::agents::Player {
+        let told = crate::agents::Player {
             agent,
             player,
             position,
@@ -1304,459 +1484,24 @@ impl WorldSession {
         //
         // So the deadline is **absolute**: `next_tick` moves by one period from the tick that fired,
         // whatever the client sends in between.
-        let period = std::time::Duration::from_millis(u64::from(self.settings.simulation_tick_ms));
-        let mut next_tick = std::time::Instant::now() + period;
+        let period = std::time::Duration::from_millis(u64::from(self.world.settings().simulation_tick_ms));
+        let next_tick = std::time::Instant::now() + period;
 
-        loop {
-            // The world is going down: the same kick the pre-load loop reads, and here it is what
-            // lets the session finish through its own tail instead of being dropped mid-future.
-            if self.closing() {
-                return;
-            }
-            // Whatever other sessions pushed at this one - an introduction, a farewell, a move - is
-            // written before anything else is read: it travels plaintext and is scrambled here, with
-            // this connection's own cipher (`game/Districts/Peers.rs`).
-            if loaded {
-                self.flush_outbox(io, peer, crypt).await;
-            }
-            while let Some(bytes) = pending.first_chunk::<2>() {
-                let header = u16::from_le_bytes(*bytes);
-                let used = match crate::server::protocol::decode_game_message(&pending, true) {
-                    Ok((_, used)) => used,
-                    Err(FrameError::Incomplete { .. }) => break,
-                    Err(error) => {
-                        self.say(
-                            LogLevel::Warn,
-                            format!(
-                                "Gameplay connection from {peer}: a message could not be framed ({error}); the load stops here."
-                            ),
-                        );
-                        let _ = io.close().await;
-                        return;
-                    }
-                };
-                let message: Vec<u8> = pending.drain(..used).collect();
-
-                // One complete incoming frame: the capture records the wire layer, after ARC4 came off.
-                crate::server::capture::record("CToS", header, &message);
-
-                match header {
-                    // The items ask: the inventory stream and the map's record, measured in one
-                    // block. The manifest pair that ends it names the map in its second form.
-                    instance_packets::CLIENT_LOAD_REQUEST_ITEMS => {
-                        let frames = state.items_answer(&inventory, map);
-                        self.send(io, peer, crypt, &frames, "the inventory and the map's record")
-                            .await;
-                    }
-                    // The spawn request: a random point of this map's own list, scattered (R13),
-                    // and the first simulation tick.
-                    instance_packets::CLIENT_LOAD_REQUEST_SPAWN => {
-                        let point = entry;
-                        let frames = match point {
-                            Some(point) => {
-                                self.say(
-                                    LogLevel::Debug,
-                                    format!(
-                                        "Gameplay connection from {peer}: the character stands at {:.2}, {:.2} (plane {}) on map {}.",
-                                        point.0, point.1, point.2, map.id
-                                    ),
-                                );
-                                if let Ok(mut agent) = self.agent.lock() {
-                                    *agent = Some(crate::agents::Agent::new(
-                                        self.player_id(),
-                                        (point.0, point.1),
-                                        point.2,
-                                        // A doorway crossing hands its arrival's facing over, and
-                                        // every other entry faces the direction its spawn point
-                                        // states (`Standing::at_spawn`, `agent.rs:460-476`; a point
-                                        // with no angle keeps `(1, 0)`, `map_spawns.rs:44-53`).
-                                        point.3,
-                                        self.settings.agent_speed,
-                                    ));
-                                }
-                                self.start_portal_position((point.0, point.1));
-                                vec![state.spawn_answer(map)]
-                            }
-                            None => {
-                                // A map with no entry spawn and no doorway arrival cannot be entered, and
-                                // the working implementation says so by refusing the load rather than
-                                // leaving the client on a loading screen
-                                // (`ASURA/crates/asura-world/src/agent.rs:513-527`). The connection ends
-                                // with the reason, exactly as there.
-                                self.say(
-                                    LogLevel::Error,
-                                    format!(
-                                        "Gameplay connection from {peer}: map {} '{}' has no configured entry spawn or doorway arrival; the load is refused.",
-                                        map.id, map.name
-                                    ),
-                                );
-                                return;
-                            }
-                        };
-                        // The answer is the entry point and nothing else: `spawn_block` in the working
-                        // implementation is exactly one `0x0196` frame
-                        // (`ASURA/crates/asura-world/src/map.rs:13-20`), and the simulation's ticks
-                        // come from the ticker, not from this answer. This answer used to append a
-                        // first `0x001E` of its own, which is one message the client was never sent
-                        // by the working implementation.
-                        self.send(io, peer, crypt, &frames, "the entry position").await;
-                    }
-                    // The players request: the whole block the reference answers it with, frame for
-                    // frame and in its own order (`GameSrv_HandleInstanceLoadRequestPlayers`, ported
-                    // from `ASURA/crates/asura-world/src/player.rs`, `player_block`). It is one block,
-                    // not a menu: the PvP unlocks and the unlockable-item table, the account features,
-                    // the unlocked lists and the team token, the skills and the progress record, the
-                    // visibility and player flags, the player and the agent it is drawn as, the
-                    // agent's own properties and look, the party, and the message that ends the load.
-                    instance_packets::CLIENT_LOAD_REQUEST_PLAYERS => {
-                        // The instance this character is now standing in is **reached**, so it is
-                        // unlocked - the walk sets the bit and the bit never gates the walk
-                        // (`ASURA/crates/asura-world/src/player.rs:442-462`). Written before the bitmap
-                        // is read, so the list the client gets names the map it is in even on the first
-                        // arrival; the creation instance is not a place a character "reaches" and sets
-                        // nothing.
-                        let mut reached_here = false;
-                        // The instances the character has reached, as the client addresses them: bit
-                        // `n % 32` of word `n / 32`.
-                        let mut unlocked = UNLOCKED_MAP_ZEROS.to_vec();
-                        if let Some(pool) = self.characters.as_ref() {
-                            let characters = crate::characters::DatabaseCharacters::new(
-                                std::sync::Arc::clone(pool),
-                                self.log.clone(),
-                            );
-                            let uuid = crate::characters::uuid_text(&sheet.uuid);
-                            if !map.is_creation() {
-                                match characters.unlock_map(&uuid, map.id) {
-                                    Ok(true) => {
-                                        reached_here = true;
-                                        self.say(
-                                            LogLevel::Debug,
-                                            format!(
-                                                "Gameplay connection from {peer}: map {} '{}' is unlocked - the character arrived in it (R12).",
-                                                map.id, map.name
-                                            ),
-                                        );
-                                    }
-                                    Ok(false) => {}
-                                    Err(error) => self.say(
-                                        LogLevel::Warn,
-                                        format!(
-                                            "Gameplay connection from {peer}: the arrival in map {} cannot be recorded: {error}",
-                                            map.id
-                                        ),
-                                    ),
-                                }
-                            }
-                            match characters.unlocked_maps(&uuid) {
-                                Ok(maps) => {
-                                    for map_id in maps {
-                                        let word = (map_id / 32) as usize;
-                                        if let Some(slot) = unlocked.get_mut(word) {
-                                            *slot |= 1 << (map_id % 32);
-                                        }
-                                    }
-                                }
-                                Err(error) => self.say(
-                                    LogLevel::Warn,
-                                    format!(
-                                        "Gameplay connection from {peer}: the character's reached instances cannot be read ({error}); the list is sent with only what this load knows."
-                                    ),
-                                ),
-                            }
-                            // "a client told it is nowhere can offer nowhere": the map it is in is on
-                            // the list whether or not the read above worked (`player.rs:463-471`).
-                            if !map.is_creation() || reached_here {
-                                let word = (map.id / 32) as usize;
-                                if let Some(slot) = unlocked.get_mut(word) {
-                                    *slot |= 1 << (map.id % 32);
-                                }
-                            }
-                        }
-                        let load_ms = u32::try_from(load_started.elapsed().as_millis())
-                            .unwrap_or(u32::MAX);
-
-                        // Everyone already in this copy of the map is introduced first: the player, its
-                        // party size, its party and its agent, in that order
-                        // (`ASURA/crates/asura-world/src/player.rs:499-501`, `introduction`).
-                        let standing = crate::districts::Standing {
-                            position,
-                            plane,
-                            direction: (0.0, 1.0),
-                        };
-                        let me = crate::districts::PeerView {
-                            player_id: player,
-                            agent_id: agent,
-                            name: sheet.name.clone(),
-                            standing,
-                            equipped,
-                            displayed_rank: self.world.titles().initial_display_rank(),
-                            map_id: map.id,
-                            district: self.district(),
-                        };
-                        let (sending, receiving) = std::sync::mpsc::channel();
-                        let others = match self.peers.lock() {
-                            Ok(mut peers) => peers.join(me.clone(), sending),
-                            Err(_) => Vec::new(),
-                        };
-                        if let Ok(mut outbox) = self.outbox.lock() {
-                            *outbox = Some(receiving);
-                        }
-                        let mut frames = Vec::with_capacity(40);
-                        for peer in &others {
-                            frames.extend(crate::districts::introduction(
-                                peer,
-                                appearance,
-                                self.settings.agent_speed,
-                                PLAYER_TEAM_TOKEN,
-                            ));
-                        }
-                        frames.extend(state.load_block(
-                            &self.settings,
-                            load_ms,
-                            &unlocked,
-                            self.world.titles(),
-                        ));
-                        // Send peer selections after this load has defined the corresponding ranks.
-                        frames.extend(
-                            others
-                                .iter()
-                                .filter(|other| other.displayed_rank != 0)
-                                .map(|other| {
-                                    title_packets::rank_display(
-                                        other.player_id as u16,
-                                        other.displayed_rank,
-                                    )
-                                }),
-                        );
-                        let count = frames.len();
-                        self.send(io, peer, crypt, &frames, "the players and the load's last message")
-                            .await;
-                        self.say(
-                            LogLevel::Debug,
-                            format!(
-                                "Gameplay connection from {peer}: map {} is loaded - the character '{}' is in it ({count} message(s), {} other player(s) introduced).",
-                                map.id,
-                                sheet.name,
-                                others.len()
-                            ),
-                        );
-                        // And the others are told this body is here: the introduction, then the items it
-                        // wears in the form a bag slot uses (`CREATE_UNNAMED_ITEM`, `GameSrv_BroadcastPlayerEquippedItems`,
-                        // `GmItem.c:129-160`), then what the agent is drawn wearing and its cape - the
-                        // reference's own order (`ASURA/crates/asura-world/src/player.rs:509-532`).
-                        let mut mine = crate::districts::introduction(
-                            &me,
-                            appearance,
-                            self.settings.agent_speed,
-                            PLAYER_TEAM_TOKEN,
-                        );
-                        if let Some(bag) = self
-                            .creation
-                            .as_ref()
-                            .and_then(crate::creation::equipped_bag)
-                        {
-                            for item in inventory.items_in(bag.id) {
-                                mine.push(item_packets::create_unnamed_item(
-                                    &crate::creation::named_item(item),
-                                ));
-                            }
-                        }
-                        mine.push(misc_packets::update_agent_visual_equipment(agent, equipped));
-                        mine.push(misc_packets::agent_display_cape(agent, 1));
-                        if me.displayed_rank != 0 {
-                            mine.push(title_packets::rank_display(player as u16, me.displayed_rank));
-                        }
-                        if let Ok(peers) = self.peers.lock() {
-                            peers.broadcast(player, map.id, self.district(), &mine);
-                        }
-                        loaded = true;
-                    }
-                    // ASURA crates/asura-protocol/src/packets.rs:422-423,772 supplies the layouts.
-                    // Retail login-unfiltered-9292 seq 659-661 replies with the selected rank.
-                    // Preforged packets-1360-15821281.jsonl:36252 shows rank zero for no title.
-                    GAME_CMSG_TITLE_DISPLAY | GAME_CMSG_TITLE_HIDE if loaded => {
-                        let rank = if header == GAME_CMSG_TITLE_HIDE {
-                            Some(0)
-                        } else {
-                            let title = u32::from_le_bytes(message[2..6].try_into().unwrap());
-                            self.world.titles().selectable_rank(title)
-                        };
-                        if let Some(rank) = rank {
-                            let reply = [title_packets::rank_display(player as u16, rank)];
-                            if let Ok(mut peers) = self.peers.lock() {
-                                peers.set_displayed_rank(player, rank);
-                                peers.broadcast(player, map.id, self.district(), &reply);
-                            }
-                            self.send(io, peer, crypt, &reply, "the displayed title")
-                                .await;
-                        }
-                    }
-                    // A drag in the inventory: where the item goes is a row, the rules are ASURA's, and
-                    // the client is told the placement back. `0x8072` is the client's own `9` bytes - the
-                    // item, the bag and the slot - and `0x013E` is the placement.
-                    CLIENT_ITEM_MOVE => {
-                        self.answer_item_move(io, peer, &message, crypt, sheet).await;
-                    }
-                    // `GAME_CMSG_PING_REPLY` (`0x8009`, 10 bytes) and `GAME_CMSG_HEARTBEAT` (`0x800C`,
-                    // 2 bytes): the working implementation names both and discards both
-                    // (`ASURA/crates/asura-world/src/dispatch.rs:116-122`), because the reference does.
-                    CLIENT_PING_REPLY | CLIENT_HEARTBEAT => {}
-                    // The client's own ping on a live connection: the reference logs it and
-                    // answers nothing, so this does the same.
-                    // `GAME_CMSG_PING_REQUEST` (`0x800D`) on a loaded connection: the same answer as
-                    // before the load, because the working implementation has one handler for the
-                    // connection's whole life (`ASURA/crates/asura-world/src/connection.rs:579-587`).
-                    GAME_PING => {
-                        self.send(
-                            io,
-                            peer,
-                            crypt,
-                            &[misc_packets::ping_reply(self.settings.ping_value)],
-                            "the ping reply",
-                        )
-                        .await;
-                    }
-                    // The client's movement. Four messages, four handlers, ported from the working
-                    // implementation's own (`ASURA/crates/asura-world/src/agent.rs`): `0x803E` asks for
-                    // a walk, `0x803D` reports where the client is and the direction it is walking in,
-                    // `0x8028` cancels, and `0x8047` is the stopping point a cancel carries.
-                    CLIENT_MOVE_TO_COORD => {
-                        self.answer_move_to_coord(io, peer, &message, crypt).await;
-                    }
-                    CLIENT_MOVE_TO_COORD_WITH_DIR => {
-                        self.answer_position_update(io, peer, &message, crypt).await;
-                        // The step the report moved the agent along, checked against the map's own
-                        // walls (`ASURA/crates/asura-world/src/dispatch.rs:44-54`).
-                        if let Some((from, to)) = self.take_portal_step() {
-                            self.cross_portal(io, peer, crypt, sheet, from, to).await;
-                        }
-                    }
-                    CLIENT_CANCEL_MOVEMENT => {
-                        self.answer_cancel_movement(io, peer, crypt).await;
-                    }
-                    CLIENT_LAST_POS_BEFORE_MOVE_CANCELED => {
-                        self.answer_last_position(io, peer, &message, crypt).await;
-                        // A correction the server accepted is a movement the reports lagged behind, so
-                        // it is checked for a doorway the same way a walk is
-                        // (`ASURA/crates/asura-world/src/dispatch.rs:60-68`).
-                        if let Some((from, to)) = self.take_portal_step() {
-                            self.cross_portal(io, peer, crypt, sheet, from, to).await;
-                        }
-                    }
-                    // The client's own in-game travel request. `ASURA/crates/asura-world/src/travel.rs`
-                    // answers it with the same cycle `/tp` ends in: a map this world hosts goes to
-                    // `begin_transfer`, and one it cannot serve is refused in the log.
-                    CLIENT_PARTY_TRAVEL => {
-                        self.answer_party_travel(io, peer, &message, crypt, sheet)
-                            .await;
-                    }
-                    // The client touched a travel object (`0x80C1`): named in the log and nothing more,
-                    // because a crossing is decided from the player's own step, not from the touch
-                    // (`ASURA/crates/asura-world/src/travel.rs:132-169`).
-                    CLIENT_TRAVEL_INIT => {
-                        self.answer_travel_init(peer, &message, sheet).await;
-                    }
-                    // The client speaks: a line on a channel, or one of the reference's commands
-                    // (`ASURA/crates/asura-world/src/chat.rs`).
-                    CLIENT_CHAT_MESSAGE => {
-                        self.answer_chat_message(io, peer, &message, crypt, sheet)
-                            .await;
-                    }
-                    // The client destroys one of its items: the row goes, and the item is told gone
-                    // with `0x014D`.
-                    // The client drops `count` of an item (`GAME_CMSG_DROP_ITEM`, `0x802C`: the item as a
-                    // dword and the count as a byte). The working implementation's `drop_item`
-                    // (`ASURA/crates/asura-world/src/item.rs:187`) takes them off the stack and puts
-                    // **nothing on the wire**: both messages a drop could send crashed a live client -
-                    // `ITEM_REMOVE` with the stack re-created cloned the item, and the ground agent
-                    // (`0x0020`, `AgentType_Item`) crashed with that message as the log's last line -
-                    // and neither appears in any capture (`item.rs:236-246`). So the stack is the state
-                    // and silence is the answer.
-                    CLIENT_DROP_ITEM => self.answer_drop_item(peer, &message, sheet),
-                    // `GAME_CMSG_UNEQUIP_ITEM` (`0x804F`): the working implementation answers it by
-                    // saying what it cannot do - the message carries no item id and no capture shows
-                    // what it means, and dragging the item out of the equipped bag works instead
-                    // (`ASURA/crates/asura-world/src/item.rs:555`).
-                    CLIENT_UNEQUIP_ITEM => self.answer_unequip_item(peer),
-                    // The client wears one of its items: the slot its kind is worn in, in the equipped
-                    // bag, with whatever was worn there taken off to the first free carrying slot - and
-                    // the agent's worn items sent again, which is the one thing the client cannot work
-                    // out for itself (`ASURA/crates/asura-world/src/item.rs:314-436`).
-                    CLIENT_EQUIP_ITEM => {
-                        self.answer_equip_item(io, peer, &message, crypt, sheet).await;
-                    }
-                    other => {
-                        // Once per header, with the protocol's own name for it; repeats are a count
-                        // (`WorldSession::report_unanswered`).
-                        let what = crate::server::protocol::label(other);
-                        self.report_unanswered(peer, other, &what, message.len());
-                    }
-                }
-            }
-
-            // The two things this connection waits on, and neither is a poll: the client's next bytes,
-            // and the map's clock. `ASURA/crates/asura-world/src/connection.rs:494-548` races the same
-            // two, and the clock's moment does not move because traffic arrived.
-            let wait = next_tick.saturating_duration_since(std::time::Instant::now());
-            let read = io.read_timeout(&mut buffer, wait).await;
-            match read {
-                Ok(shared::network::socket::ReadOutcome::TimedOut) => {
-                    // Cadence, not drift: the next deadline moves by one period from the one that
-                    // fired, the way `tokio::time::interval` does in `Instance::run`
-                    // (`ASURA/crates/asura-world/src/instance.rs:394-403`). Measuring the period from
-                    // "now" instead would add the tick's own work to every interval, and the map would
-                    // run a few percent slow for as long as it runs. A missed deadline is caught up one
-                    // tick at a time, which is that interval's own default.
-                    next_tick += period;
-                    if loaded {
-                    // **How long it has been since the last tick**, not a counter: the client advances
-                    // its simulation - and its sync copy of every agent - by this number
-                    // (`ASURA/crates/asura-world/src/instance.rs:369`, `world_simulation_tick`); a
-                    // counter here makes everything the client draws run at the wrong speed.
-                    let now = std::time::Instant::now();
-                    let elapsed = now.duration_since(last_tick);
-                    last_tick = now;
-                    // The map's clock advances every agent by the elapsed time, and **the doorway is
-                    // decided on the segment the advance walked** - not on a report's - because that is
-                    // the copy this server believes and the one the client is drawn from
-                    // (`ASURA/crates/asura-world/src/instance.rs:290-308`). A crossing found here is
-                    // pushed to the connection and served before anything else, as `portal_inbox` is in
-                    // `connection.rs:498-502`.
-                    let (crossed, walk) = self.step_map(elapsed);
-                    let mut frames = vec![misc_packets::world_simulation_tick(
-                        u32::try_from(elapsed.as_millis()).unwrap_or(u32::MAX),
-                    )];
-                    if let Some(walk) = walk {
-                        frames.push(walk);
-                    }
-                    // The tick is periodic, so its report is routine: one line per connection per
-                    // `World.SimulationTickMs` at `Info` was the whole of a flowing log.
-                    self.send_quiet(io, peer, crypt, &frames, "a tick").await;
-                    if let Some((from, to)) = crossed {
-                        // The travelling body leaves the map it is in: the clock that crossed it has
-                        // already been announced, then the transfer is served.
-                        self.cross_portal(io, peer, crypt, sheet, from, to).await;
-                        return;
-                    }
-                    }
-                }
-                Ok(shared::network::socket::ReadOutcome::Closed) => return,
-                Ok(shared::network::socket::ReadOutcome::Read(count)) => {
-                    // The asks after the seed are scrambled with the key both sides derive, the
-                    // same as in the run loop above.
-                    let mut plain = buffer[..count].to_vec();
-                    crypt.decrypt(&mut plain);
-                    pending.extend_from_slice(&plain);
-                }
-                Err(error) => {
-                    self.say(
-                        LogLevel::Warn,
-                        format!("Gameplay connection from {peer} could not be read: {error}"),
-                    );
-                    return;
-                }
-            }
-        }
+        let load = MapLoad {
+            map,
+            sheet: &sheet,
+            inventory,
+            entry,
+            load_started,
+            state: told,
+        };
+        let clock = MapClock {
+            period,
+            next_tick,
+            last_tick,
+        };
+        self.serve(state, io, peer, crypt, Phase::Loading(&load), Some(clock))
+            .await;
     }
 
 
@@ -1842,10 +1587,11 @@ impl WorldSession {
     /// claimed travel stated, the position the character was saved at, and the world's scatter.
     fn entry_point(
         &self,
+        state: &Connection,
         map: &crate::world::MapEntry,
         saved: Option<crate::characters::Position>,
     ) -> Option<(f32, f32, u16, (f32, f32))> {
-        let landing = self.landing.lock().ok().and_then(|claimed| *claimed).map(|claimed| {
+        let landing = state.landing.map(|claimed| {
             crate::agents::Landing {
                 map_id: claimed.map_id,
                 x: claimed.landing.x,
@@ -1856,18 +1602,18 @@ impl WorldSession {
         });
         crate::agents::entry_point(&crate::agents::Entering {
             map,
-            spawns: &self.spawns,
+            spawns: self.world.spawns(),
             landing,
             saved,
-            scatter: self.settings.spawn_scatter,
+            scatter: self.world.settings().spawn_scatter,
         })
     }
 
 
     /// Scramble and send whole frames, and say so.
     ///
-    /// The report is `Info`: a batch this world was asked for is an event. A periodic frame is not - the
-    /// simulation tick goes through [`WorldSession::send_quiet`] instead, because at `Info` it wrote one
+    /// The report is `Debug`: a batch this world was asked for is an event. A periodic frame is not - the
+    /// simulation tick goes through [`WorldSession::send_quiet`] instead, because here it would write one
     /// line every `World.SimulationTickMs` for every connection (`docs/port/03-tracing.md`, which reports
     /// the tick by its effect rather than by a line).
     pub(crate) async fn send(
@@ -1962,11 +1708,13 @@ fn unix_now() -> u64 {
 impl Session for WorldSession {
     fn run(self: Box<Self>, mut io: SessionIo) -> SessionFuture {
         Box::pin(async move {
-            self.converse(&mut io).await;
+            // What this connection is doing lives here, owned by the one task that serves it.
+            let mut state = Connection::new();
+            self.converse(&mut state, &mut io).await;
             // The connection ended, whatever ended it: its place in the district is given back. The
             // copy itself stays open - R37 holds an outpost for 15 minutes of inactivity and R40
             // disposes exactly as the lifecycle says - so this only keeps the count honest.
-            self.leave_district();
+            self.leave_district(&mut state);
             // The last frames of a connection are the ones a diagnostic capture exists for, and a
             // session that ends quietly would leave them in the capture's buffer until the process is
             // killed (`server/Capture.rs`, FLUSH_EVERY). Flush them here, where the connection ends.
@@ -1993,24 +1741,19 @@ impl WorldSession {
     /// The copy itself stays open - R37 holds an outpost for 15 minutes of inactivity and R40
     /// disposes exactly as the lifecycle says - so this only keeps the count honest; the lifecycle
     /// that acts on an empty copy arrives with the instance table.
-    fn leave_district(&self) {
+    fn leave_district(&self, state: &mut Connection) {
         // The position the character leaves at is written before the place is given back: after the
         // take below this connection no longer knows which map it was in.
-        self.save_position();
-        let entered = self
-            .entered
-            .lock()
-            .ok()
-            .and_then(|mut entered| entered.take());
-        if let Some((map_id, district)) = entered
-            && let Ok(mut districts) = self.districts.lock()
+        self.save_position(state);
+        if let Some((map_id, district)) = state.entered.take()
+            && let Ok(mut districts) = self.world.districts().lock()
         {
             districts.leave(map_id, district, unix_now());
         }
         // And the body is taken back out of everyone else's world: the player destroyed, then its agent
         // removed, in that order (`ASURA/crates/asura-world/src/instance.rs:466-473`, `farewell`).
-        if let Ok(mut peers) = self.peers.lock()
-            && let Some(peer) = peers.leave(self.player_id())
+        if let Ok(mut peers) = self.world.peers().lock()
+            && let Some(peer) = peers.leave(state.player_id())
         {
             let frames = crate::districts::farewell(peer.player_id, peer.agent_id);
             peers.broadcast(peer.player_id, peer.map_id, peer.district, &frames);
@@ -2024,14 +1767,14 @@ impl WorldSession {
     /// first, and **the doorway is tested on the segment the advance walked** - `before` to `after`,
     /// where both are this server's own copy - because that is the position the client is drawn from. A
     /// crossing found here is served immediately (`connection.rs:498-502`, biased ahead of everything).
-    fn step_map(&self, elapsed: std::time::Duration) -> StepOutcome {
-        let map_id = self.map_id();
-        self.with_agent(|agent| {
+    fn step_map(&self, state: &mut Connection, elapsed: std::time::Duration) -> StepOutcome {
+        let map_id = state.map_id();
+        self.with_agent(state, |agent| {
             let before = agent.position;
             let waypoint = agent.advance(elapsed.as_secs_f32());
             let after = agent.position;
             let crossed = if before != after {
-                self.portals.crossed(map_id, before, after)
+                self.world.portals().crossed(map_id, before, after)
             } else {
                 None
             };
@@ -2055,21 +1798,21 @@ impl WorldSession {
     /// when the connection was moved by a travel (the seat and the position belong to the connection
     /// the client is about to open), and never from the creation instance - that map is a conversation
     /// rather than a place, and saving it would strand the character there on the next login.
-    fn save_position(&self) {
-        let moved = self.moved.lock().map(|moved| *moved).unwrap_or(true);
-        if moved {
+    fn save_position(&self, state: &mut Connection) {
+        if state.moved {
             return;
         }
-        let Some(map) = self.map() else {
+        let Some(map) = self.map(state) else {
             return;
         };
         if map.is_creation() {
             return;
         }
-        let Some(uuid) = self.character.lock().ok().and_then(|character| *character) else {
+        let Some(uuid) = state.character else {
             return;
         };
-        let Some(((x, y), plane)) = self.with_agent(|agent| (agent.position, agent.plane)) else {
+        let Some(((x, y), plane)) = self.with_agent(state, |agent| (agent.position, agent.plane))
+        else {
             return;
         };
         let Some(pool) = self.characters.as_ref() else {
@@ -2096,9 +1839,9 @@ impl WorldSession {
     }
 
     /// The map this connection loaded, when it loaded one.
-    fn map(&self) -> Option<crate::world::MapEntry> {
-        let map_id = self.map_id();
-        self.maps.iter().find(|map| map.id == map_id).cloned()
+    fn map(&self, state: &Connection) -> Option<crate::world::MapEntry> {
+        let map_id = state.map_id();
+        self.world.maps().iter().find(|map| map.id == map_id).cloned()
     }
 }
 
@@ -2107,7 +1850,7 @@ mod tests {
     use super::*;
     use crate::handlers::character::creation_player_block;
     use crate::server::packets::creation_load_block;
-    use crate::server::packets::character_packets;
+    use crate::server::packets::{character_packets, item_packets, title_packets};
     use crate::server::protocol::GameVersion;
     use crate::world::{map_kind, MapEntry};
     use shared::cryptography::handshake::{self, CLIENT_SEED_HEADER, KEY_LEN, MASTER_SECRET_LEN};
@@ -2162,7 +1905,7 @@ mod tests {
 
     fn factory(log: Log, world: std::sync::Arc<World>, master: [u8; MASTER_SECRET_LEN]) -> shared::network::socket::SessionFactory {
         Arc::new(move || {
-            Box::new(WorldSession::with_master(log.clone(), &world, master)) as Box<dyn Session>
+            Box::new(WorldSession::new(log.clone(), &world).with_master(master)) as Box<dyn Session>
         })
     }
     /// A session the listener has told the world is closing answers nothing and ends (`KickAll`,
@@ -2178,8 +1921,8 @@ mod tests {
             let world = Arc::clone(&world);
             let closing = Arc::clone(&closing);
             Arc::new(move || {
-                let mut session =
-                    WorldSession::with_master(log.clone(), &world, [0x5Bu8; MASTER_SECRET_LEN]);
+                let mut session = WorldSession::new(log.clone(), &world)
+                    .with_master([0x5Bu8; MASTER_SECRET_LEN]);
                 session.set_closing(Arc::clone(&closing));
                 Box::new(session) as Box<dyn Session>
             })
@@ -2236,10 +1979,8 @@ mod tests {
         prepared.set_portals(crate::maps::Portals::new(vec![arch], 250.0));
         let prepared = std::sync::Arc::new(prepared);
         let session = WorldSession::new(Log::new(), &prepared);
-        {
-            let mut entered = session.entered.lock().unwrap();
-            *entered = Some((148, 1));
-        }
+        let mut state = Connection::new();
+        state.entered = Some((148, 1));
         // The agent is on the near side of the arch, walking a straight line through it, at the world's
         // own speed.
         let speed = prepared.settings().agent_speed;
@@ -2253,11 +1994,11 @@ mod tests {
             trap_id: 0,
         }]);
         assert!(walked.is_some(), "the walk starts");
-        *session.agent.lock().unwrap() = Some(agent);
+        state.place_agent(agent);
 
         // One step of the clock, long enough to carry the agent over the wall - and no client report
         // anywhere near it.
-        let (crossed, _) = session.step_map(std::time::Duration::from_millis(500));
+        let (crossed, _) = session.step_map(&mut state, std::time::Duration::from_millis(500));
         let (from, to) = crossed.expect("the clock crossed the arch the walk reached");
         assert!(from != to, "the segment is the advance's own");
         assert!(
@@ -2274,8 +2015,7 @@ mod tests {
     /// the reports must not shorten it, which is why the segment is kept beside the agent.
     #[test]
     fn a_reported_step_is_the_segment_between_two_reports_and_is_consumed_once() {
-        let world = std::sync::Arc::new(world());
-        let session = WorldSession::new(Log::new(), &world);
+        let mut session = Connection::new();
         session.start_portal_position((7277.4, 5417.9));
         session.record_portal_step((7277.4, 5417.9));
         assert!(
@@ -2301,8 +2041,8 @@ mod tests {
 
     #[test]
     fn a_travel_request_names_the_instance_in_its_first_two_bytes() {        // The client's own frame, as the working implementation's log records it: `B1 80 | 94 00 | 02 |
-        // 00 00 | 0...` - the header `0x80B1`, then the instance. This tree read it as `0x00B1` (the
-        // server's own party message) and parsed five fields the working implementation does not read.
+        // 00 00 | 0...` - the header `0x80B1`, then the instance. `0x00B1` is another message (the
+        // server's own party update).
         let mut message = vec![0xB1, 0x80];
         message.extend_from_slice(&148u16.to_le_bytes());
         message.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00]);
@@ -2522,7 +2262,7 @@ mod tests {
         assert!(item_count > 9, "the screen is sent the profession's equipment too");
 
         // 6. The screen chooses another campaign and profession (`0x8060`: campaign, profession).
-        // The reference answers `GameSrv_HandleCharCreationChangeProf`'s own way, and this is the
+        // GWPS answers `GameSrv_HandleCharCreationChangeProf`'s own way, and this is the
         // step whose omission crashed the client: it keeps holding a set the server no longer names,
         // so the old pieces come off (`0x014D`) before the new ones are created (`0x0161`) and placed
         // (`0x013E`). The profession is told in between (`0x00B7`), and nothing else is.
@@ -2950,8 +2690,8 @@ Logger.root = 6,Console
         client.write_all(&movement).unwrap();
 
         // The client's own travel request: `0x80B1`, nine bytes - `B1 80 | 94 00 | 02 | 00 00 | 00 | 01`
-        // when the client asks for map 148 (the measured frame). This test sent it as `0x00B1`, which is
-        // the *server's* party message, and the table carried a row for that mistake until round 20.
+        // when the client asks for map 148 (the measured frame). `0x00B1` without the client bit is the
+        // *server's* party message, a different row of the table.
         let mut travel = vec![0xB1, 0x80];
         travel.extend_from_slice(&148u16.to_le_bytes());
         travel.push(0xFE); // territory -2
@@ -3250,13 +2990,12 @@ Logger.root = 6,Console
             let characters = Arc::clone(&characters);
             let login = Arc::clone(&login);
             Arc::new(move || {
-                Box::new(WorldSession::with_master_and_characters_and_login(
-                    log.clone(),
-                    &world,
-                    master,
-                    Arc::clone(&characters),
-                    Arc::clone(&login),
-                )) as Box<dyn Session>
+                Box::new(
+                    WorldSession::new(log.clone(), &world)
+                        .with_master(master)
+                        .with_characters(Arc::clone(&characters))
+                        .with_login(Arc::clone(&login)),
+                ) as Box<dyn Session>
             })
         };
         let mut manager = shared::network::socket_mgr::SocketMgr::new(factory);
@@ -3302,7 +3041,7 @@ Logger.root = 6,Console
             instance_packets::instance_load_head(),
             instance_packets::instance_player_data_start(),
             instance_packets::instance_load_player_name("Travelled One"),
-            instance_packets::instance_load_info(1, 148, 0, 3, 2, 0),
+            instance_packets::instance_load_info(1, 148, 1, 3, 2, 0),
         ];
         expected.extend(grid);
         expected.extend(table.frames());
@@ -3376,7 +3115,6 @@ Logger.root = 6,Console
             &113_021u32.to_le_bytes(),
             "the outpost's file, so the record decided the map"
         );
-        assert_eq!(&spawn[26..32], &[0x1E, 0x00, 0xF4, 0x01, 0x00, 0x00], "the first tick");
 
         // 4c. A drag in the inventory: the item's row moves, and the client is told the placement.
         let mut ask = vec![0x72, 0x80];
@@ -3502,12 +3240,12 @@ Logger.root = 6,Console
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
         // **No answer**: the next thing the connection says is the answer to what is asked next -
-        // here the entry position, which is `0x0196` and the first tick. A drop puts nothing on the
-        // wire at all (`ASURA/crates/asura-world/src/item.rs:236-246`).
+        // here the entry position, which is the one `0x0196` frame. A drop puts nothing on the wire
+        // at all (`ASURA/crates/asura-world/src/item.rs:236-246`).
         let mut ask = vec![0x88, 0x80];
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
-        let mut next = vec![0u8; 32];
+        let mut next = vec![0u8; 26];
         client.read_exact(&mut next).unwrap();
         reading.apply(&mut next);
         assert_eq!(
@@ -3550,9 +3288,9 @@ Logger.root = 6,Console
     #[test]
     #[ignore = "needs the login and character databases"]
     fn an_arrival_unlocks_the_map_it_reaches() {
-        // R12 is not a gate the server applies, and this test used to assert the opposite: it closed
-        // the connection for a claimed map the character had not unlocked, which is what a doorway
-        // crossing into a new map met (the client's `007`). `ASURA/crates/asura-world/src/player.rs:442-471`
+        // R12 is not a gate the server applies: a connection closed for a claimed map the character
+        // had not unlocked is what a doorway crossing into a new map would meet (the client's `007`).
+        // `ASURA/crates/asura-world/src/player.rs:442-471`
         // is the rule: "the instance the character is standing in is reached, so it is unlocked - the
         // walk sets the bit, the bit never gates the walk". The character here has unlocked 148; the
         // login records a travel to 147; the load proceeds, and answering the players ask writes 147
@@ -3605,8 +3343,8 @@ Logger.root = 6,Console
             })
             .expect("the travel is recorded");
 
-        // The character: one row, one unlock (148), no items needed - the gate decides before any of
-        // the load's own messages.
+        // The character: one row, one unlock (148), no items needed - the load falls back to the
+        // creation record's set.
         let character = [0xDDu8; 16];
         let character_text = crate::characters::uuid_text(&character);
         {
@@ -3644,7 +3382,7 @@ Logger.root = 6,Console
             .unlock_map(&character_text, 148)
             .expect("the character has one unlock");
 
-        // The world hosts both outposts, so the claim is accepted and the gate is what refuses.
+        // The world hosts both outposts, so the claim is accepted and map 147 is loaded.
         let mut prepared = world();
         let mut maps = prepared.maps().to_vec();
         maps.push(crate::world::MapEntry {
@@ -3673,13 +3411,12 @@ Logger.root = 6,Console
             let characters = Arc::clone(&characters);
             let login = Arc::clone(&login);
             Arc::new(move || {
-                Box::new(WorldSession::with_master_and_characters_and_login(
-                    log.clone(),
-                    &world,
-                    master,
-                    Arc::clone(&characters),
-                    Arc::clone(&login),
-                )) as Box<dyn Session>
+                Box::new(
+                    WorldSession::new(log.clone(), &world)
+                        .with_master(master)
+                        .with_characters(Arc::clone(&characters))
+                        .with_login(Arc::clone(&login)),
+                ) as Box<dyn Session>
             })
         };
         let mut manager = shared::network::socket_mgr::SocketMgr::new(factory);
@@ -3834,12 +3571,11 @@ Logger.root = 6,Console
             let world = Arc::clone(&world);
             let pool = Arc::clone(&pool);
             Arc::new(move || {
-                Box::new(WorldSession::with_master_and_characters(
-                    log.clone(),
-                    &world,
-                    master,
-                    Arc::clone(&pool),
-                )) as Box<dyn Session>
+                Box::new(
+                    WorldSession::new(log.clone(), &world)
+                        .with_master(master)
+                        .with_characters(Arc::clone(&pool)),
+                ) as Box<dyn Session>
             })
         };
 

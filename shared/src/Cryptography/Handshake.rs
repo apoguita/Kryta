@@ -21,9 +21,9 @@
 //! client's number to a fixed exponent. The risk here is transcription, not key management: the
 //! constants below must be identical or the client fails the exchange and reports an opaque error.
 //!
-//! Not here yet, and deliberately: the 20-byte digest, because no record of it holds an input and
-//! its expected output, so nothing but a running client can say a transcription is right. It lands
-//! with a test that can prove it, not before.
+//! The 20-byte digest is [`derive_key`], and it is a transcription: no record of it holds an input
+//! and its expected output, so nothing but a running client can say the transcription is right. Its
+//! tests check its shape, not its answer.
 
 /// The header of the client's seed message.
 ///
@@ -52,7 +52,7 @@ pub const KEY_LEN: usize = 20;
 
 /// The prime modulus, in decimal.
 ///
-/// Evidence: the reference server's own `main.c`, which five public reimplementations of this
+/// Evidence: OpenTyria's own `main.c`, which five public reimplementations of this
 /// protocol carry verbatim; the patched client's matching parameter makes any other value fail the
 /// exchange. A 512-bit number, quoted as digits rather than as bytes so a transcription error is
 /// visible.
@@ -147,11 +147,6 @@ pub fn server_seed(master: &[u8; MASTER_SECRET_LEN], shared: &[u8; PUBLIC_LEN]) 
     out
 }
 
-/// A master secret drawn from the operating system's entropy.
-///
-/// Both conversations draw one per connection. A machine with no entropy gets zeros and a complaint
-/// from the caller: the protocol cannot tell a zero master from a real one, so it is spoken aloud
-/// rather than hidden.
 /// Fill a buffer from the operating system's entropy.
 ///
 /// One call, so every caller that needs a random identifier or secret draws from the same place.
@@ -160,6 +155,10 @@ pub fn random_into(bytes: &mut [u8]) -> Result<(), String> {
 }
 
 /// The 20-byte master secret one connection draws, from the operating system's entropy.
+///
+/// Both conversations draw one per connection. A machine with no entropy answers an error here, and
+/// the caller says so in the log and carries on with zeros: the protocol cannot tell a zero master
+/// from a real one, so it is spoken aloud rather than hidden.
 pub fn random_master() -> Result<[u8; MASTER_SECRET_LEN], String> {
     let mut master = [0u8; MASTER_SECRET_LEN];
     getrandom::getrandom(&mut master).map_err(|error| format!("no entropy: {error}"))?;
@@ -174,8 +173,8 @@ pub fn random_master() -> Result<[u8; MASTER_SECRET_LEN], String> {
 /// f functions, and a digest that *adds* the working state back onto the input words instead of
 /// emitting a chaining value. No padding, no length encoding, one block, always the same size.
 ///
-/// It is recorded in ASURA's `client/handshake.rs` (`derive_key`), itself ported from the reference
-/// server's `AuthSrv.c`, and there is no other record of it here. That is why it is transcribed
+/// It is recorded in ASURA's `client/handshake.rs` (`derive_key`), itself ported from OpenTyria's
+/// `AuthSrv.c`, and there is no other record of it here. That is why it is transcribed
 /// rather than derived: a different digest means a keystream the client does not recognise, and the
 /// client answers with an opaque `007` and nothing else.
 ///

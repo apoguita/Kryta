@@ -485,10 +485,9 @@ pub fn create(manage: &Manage, request: &Request) -> Response {
             return Err(format!("The world pack cannot host starting map {map}."));
         }
 
-        let templates = manage
-            .items()
-            .ok_or("The world database is not configured, so item templates are not available.")?
-            .list()?;
+        // The item definitions are the creation content's own, as the world builds them at start-up
+        // (`worldserver/src/main.rs`, `definitions_as_templates`): the pack says what an item is.
+        let templates = game::data_stores::definitions_as_templates(tables.definitions());
         let mut id = [0u8; 16];
         getrandom::getrandom(&mut id).map_err(|error| format!("Cannot create a player id: {error}"))?;
         let uuid = game::characters::uuid_text(&id);
@@ -606,7 +605,8 @@ pub fn delete(manage: &Manage, request: &Request, uuid: &str) -> Response {
     }
 }
 
-/// The creation form, drawn from the creation record's own choices.
+/// The creation form: the accounts to choose from, the campaigns of `CREATION_CAMPAIGNS`, and the
+/// professions and appearance ranges this panel states itself.
 fn create_form(accounts: &[game::accounts::Account], selected: Option<&game::accounts::Account>) -> String {
     if accounts.is_empty() {
         return components::note(

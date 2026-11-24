@@ -5,9 +5,10 @@
 //! a program - `worldserver` starts it - which is why one process owns one listener and still keeps
 //! the network as a subsystem (`AGENTS.md`).
 //!
-//! Here now: `Protocol/` (the gameplay connection's version message), `Packets/` (one file per
-//! message family - the instance family first), `WorldSession` (the conversation) and
-//! `WorldSocketMgr` (the listener). The world socket object itself, with its socket options and its
+//! Here now: `Protocol/` (the game table and the gameplay connection's version message), `Packets/`
+//! (one file per message family, eight of them), `Capture` (the server-side packet capture),
+//! `WorldSession` (the conversation) and `WorldSocketMgr` (the listener). The world socket object
+//! itself, with its socket options and its
 //! packet queue, arrives with the map that needs them.
 
 #[path = "Capture.rs"]

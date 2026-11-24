@@ -1,7 +1,7 @@
 //! The account settings block: the 591 bytes a client is handed on every login.
 //!
 //! **A protocol payload, not a configuration option.** Nobody configures it: it is what this client
-//! expects, byte for byte, and the reference builds the same message out of its own structs. It is a
+//! expects, byte for byte, and GWPS builds the same message out of its own structs. It is a
 //! constant here for that reason - a server holds what its client demands, an operator holds what it
 //! chooses (`docs/port/04-configuration.md`).
 //!
@@ -10,11 +10,11 @@
 //! message's header out of the middle of this one.
 //!
 //! To refresh it: capture the block a live client accepts, replace the literal below, rebuild. That is
-//! the cost of a protocol change, and it is the same cost the reference pays.
+//! the cost of a protocol change, and it is the same cost GWPS pays.
 
 /// The block, as a capture prints it.
 ///
-/// Source: the reference's own send trace of one login (`recordings/gwps/world/load-stream.log`),
+/// Source: GWPS's own send trace of one login (`recordings/gwps/world/load-stream.log`),
 /// written up in `docs/port/02-wire.md`. One hex string rather than a byte array, so comparing it with
 /// a trace is a text comparison.
 const BLOCK_HEX: &str = concat!(
@@ -37,7 +37,7 @@ const BLOCK_HEX: &str = concat!(
 
 /// How many bytes the block must be, or the client reads the next header out of the middle of it.
 ///
-/// Evidence: the reference's reply is a 599-byte wire frame - two of header, four of request id, two
+/// Evidence: GWPS's reply is a 599-byte wire frame - two of header, four of request id, two
 /// of count, then this (`docs/port/02-wire.md`).
 pub const LEN: usize = 591;
 

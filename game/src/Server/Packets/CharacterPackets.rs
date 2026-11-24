@@ -29,7 +29,7 @@ pub const CHAR_CREATION_SUCCESS: u16 = 0x0188;
 pub const CHAR_CREATION_ERROR: u16 = 0x018B;
 /// The error code a taken name is answered with.
 ///
-/// Evidence: `ASURA`'s `GM_ERROR_CHARACTER_NAME_ALREADY_EXIST`, read from the reference's
+/// Evidence: `ASURA`'s `GM_ERROR_CHARACTER_NAME_ALREADY_EXIST`, read from GWPS's
 /// `GmError.h` (`GameSrv.c:1939`).
 pub const GM_ERROR_CHARACTER_NAME_ALREADY_EXIST: u32 = 0x0106;
 /// The cap on the Kurzick faction.
@@ -43,7 +43,7 @@ pub const FACTION_MAX_IMPERIAL: u16 = 0x00ED;
 
 /// The profession a fresh creation screen starts on: Warrior.
 ///
-/// Evidence: `ASURA`'s `DEFAULT_PRIMARY_PROFESSION`, recorded from the reference's
+/// Evidence: `ASURA`'s `DEFAULT_PRIMARY_PROFESSION`, recorded from GWPS's
 /// `HandleCharCreationRequestPlayer`, which sets Warrior and nothing else until the client says so.
 pub const DEFAULT_PROFESSION: u8 = 1;
 
@@ -77,7 +77,7 @@ fn dwords(values: &[u32]) -> Vec<u8> {
 /// Layout from the reference's message table: header, a sixteen-byte blob, a `String16` whose field
 /// holds twenty units, a word, and a counted byte array (`ASURA`,
 /// `crates/asura-protocol/src/packets.rs`, the row whose fields are `MsgHeader`, `Blob(16)`,
-/// `String16(20)`, `Word`, `Array8(1024)`). The constant `0x2211` is the reference's own and
+/// `String16(20)`, `Word`, `Array8(1024)`). The constant `0x2211` is GWPS's own and
 /// unexplained there too (`GameSrv.c:1951`); it is carried because the message carries it.
 pub fn char_creation_success(character: [u8; 16], name: &str, settings: &[u8]) -> Vec<u8> {
     let units: Vec<u16> = name.encode_utf16().take(20).collect();
@@ -134,8 +134,7 @@ pub fn skillbar_update(agent: u32, skills: &[u32], pvp_masks: &[u32], unknown: u
 /// How many dwords a character's progress record is.
 ///
 /// Evidence: `ASURA/crates/asura-protocol/src/game/mod.rs`, `character_update_factions`, which writes
-/// all fifteen fields of `CharacterProgress` (`GameSrv_UpdatePlayerFactions`). This tree sent thirteen
-/// dwords until 2026-11-12.
+/// all fifteen fields of `CharacterProgress` (`GameSrv_UpdatePlayerFactions`).
 pub const FACTIONS_DWORDS: usize = 15;
 
 /// `0x00E9`: a character's progress record - fifteen dwords, in the reference's own order.

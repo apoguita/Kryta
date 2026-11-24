@@ -11,8 +11,8 @@
 //!   Support <- Tickets, plus Maps, Guilds and Quests keeping their own names.
 //! - 5 have no reference directory: FileCheck, Portal, Pack, Heroes, Cinematics.
 //!
-//! Nothing in here is ported yet. The directory exists so the boundary exists: a change
-//! to one noun moves one directory, and no game behaviour is written into `shared/`.
+//! Each noun has its directory so the boundary exists: a change to one noun moves one
+//! directory, and no game behaviour is written into `shared/`.
 
 #[path = "Accounts/mod.rs"]
 pub mod accounts;

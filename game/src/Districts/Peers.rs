@@ -253,7 +253,7 @@ mod tests {
         assert!(rx3.try_recv().is_err(), "another district is another place");
     }
 
-    /// The introduction is the reference's four messages in its order: the player, its party size, its
+    /// The introduction is OpenTyria's four messages in its order: the player, its party size, its
     /// party, and the agent itself.
     #[test]
     fn an_introduction_is_four_messages_in_the_references_order() {

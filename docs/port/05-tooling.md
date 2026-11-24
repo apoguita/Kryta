@@ -296,6 +296,9 @@ python tools/client/hosts-redirect.py status
 & 'F:\GW\GW1\Gw.custom.exe' -authsrv 127.0.0.1 -portal 127.0.0.1
 ```
 
+This is how the client is built today. It is to be replaced: the patch is to redirect and load the
+DLL only, with everything else in the DLL - `docs/port/22-client-platform.md`.
+
 The patcher expects stock build 39167 and builds `KrytaTitles.dll` with Visual
 Studio's x86 tools. It finds `nlohmann/json.hpp` in
 `Py4GW_Reforged_Native/third_party` under the user profile or in the directory
@@ -326,6 +329,8 @@ python tools/client/sniff-capture.py --self-test        # needs neither a client
 
 Proved: the self-test passes from this tree (masking, record writing, the capture header), and the
 copy carries the same records ASURA's did.
+
+The capture tooling stays, in Python: many more recordings will be made (owner, 2026-11-23).
 
 **Py4GW_Stealth is a declared dependency of this tool and of nothing else here.** It is a separate
 project that injects into the client (`--py4gw-root`, or `PY4GW_STEALTH`); no program in this

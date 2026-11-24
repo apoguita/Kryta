@@ -123,9 +123,9 @@ pub struct HeldItem {
     pub dye_tint: u8,
     /// The four packed dye colours.
     pub dye_colors: u16,
-    /// Crafting materials, as the reference packs them.
+    /// Crafting materials, as GWPS packs them.
     pub materials: u16,
-    /// The reference's own unverified byte.
+    /// GWPS's own unverified byte.
     pub unk1: u8,
     /// Item flags.
     pub flags: u32,
@@ -386,9 +386,8 @@ impl DatabaseCharacters {
     /// cannot be read.
     ///
     /// Reference: `Player::LoadFromDB` (`src/server/game/Entities/Player/Player.cpp`), the row a
-    /// session reads before it draws the player it is about to put in a map. This lived in
-    /// `WorldSession::character_sheet` until 2026-11-14: the statement, and the sheet a failure is
-    /// replaced by, are the noun's. A row that cannot be read is not an error to the caller - a load
+    /// session reads before it draws the player it is about to put in a map. The statement is here, and the
+    /// sheet a failure is replaced by is `CharacterSheet::missing` (`Characters/Sheet.rs`). A row that cannot be read is not an error to the caller - a load
     /// gives the client a body either way (`CharacterSheet::missing`).
     pub fn sheet(&self, uuid: &str, character: [u8; 16]) -> crate::characters::CharacterSheet {
         let missing = crate::characters::CharacterSheet::missing(character);
@@ -580,8 +579,8 @@ impl DatabaseCharacters {
     ///
     /// The list comes from the creation record set the screen drew (`Inventory`), which is a setting;
     /// what this writes is the character's own state - the rows the load then draws from. An item the
-    /// templates do not describe is reported and not written: the client cannot be drawn an item the
-    /// world does not know.
+    /// templates do not describe is reported in the log and still written, with template id 0: the
+    /// row carries the whole item.
     pub fn write_starting_items(
         &self,
         uuid: &str,
@@ -730,7 +729,7 @@ impl DatabaseCharacters {
     /// `ITEM_MOVE_TO_LOCATION` for where the item really is"). Equipping is a move into the
     /// equipped-items bag, so it goes through here too.
     ///
-    /// The bags are this tree's content (`game/src/creation/mod.rs`, `Bag`), not rows: their ids, models
+    /// The bags are this tree's content (`game/src/Creation/mod.rs`, `Bag`), not rows: their ids, models
     /// and slot counts are the same for every character, so the list the caller holds is the list that
     /// decides. ASURA keeps them as `t_bag` rows and asks the database; the rules are its own either way.
     pub fn move_item(
@@ -810,7 +809,7 @@ impl DatabaseCharacters {
     /// Ported from `ASURA/crates/asura-store/src/state/inventory.rs:977-1007`,
     /// `first_free_carrying_slot`: the search covers the bags from [`BACKPACK_MODEL`] to
     /// [`LAST_CARRYING_MODEL`], ordered by model and then by id and slot. The working implementation says
-    /// why this exists at all: the reference's own `GmBag_TryAddToBag` tests `items[idx] != 0` where it
+    /// why this exists at all: GWPS's own `GmBag_TryAddToBag` tests `items[idx] != 0` where it
     /// means `== 0`, so it overwrites an occupied slot instead of finding an empty one. This is the
     /// intent, not the bug - unequipping something has to have somewhere to put it.
     pub fn first_free_carrying_slot(
@@ -1066,9 +1065,9 @@ impl DatabaseCharacters {
                 is_pvp: row.get("is_pvp"),
                 secondary_profession: secondary as u8,
                 helm_status: helm as u8,
-                // The armour pieces are the equipped bag's, and this tree has no items yet: a
-                // character wearing nothing sends five empty slots, which is what the reference's
-                // own record does.
+                // The armour pieces are the equipped bag's rows, which this list does not read:
+                // every character is listed with five empty slots, which is what GWPS's own
+                // record sends for a character wearing nothing.
                 pieces: Vec::new(),
             },
         })
@@ -1198,20 +1197,6 @@ mod tests {
         }
     }
 
-    /// The live world database, when this machine has one: the item templates live there.
-    fn world_source() -> Option<crate::data_stores::DatabaseItems> {
-        let log = Log::new();
-        let config =
-            Config::load_json("../worldserver/worldserver.json", false, Policy::default()).ok()?;
-        let settings = read_settings(&config, DatabaseKind::World).ok()?;
-        let mut pool = DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log).ok()?;
-        pool.ping().ok()?;
-        Some(crate::data_stores::DatabaseItems::new(
-            Arc::new(Mutex::new(pool)),
-            log,
-        ))
-    }
-
     #[test]
     #[ignore = "needs the character database"]
     fn a_starting_item_write_answers_the_rows_it_wrote() {
@@ -1222,12 +1207,8 @@ mod tests {
         // Serialized with the other live tests that apply schemas to the same databases, so a run
         // of the whole suite cannot interleave a DDL pass with this write.
         let _serial = database::updater::apply::test_lock("characters");
-        let _serial_world = database::updater::apply::test_lock("world");
         let Some(source) = source() else {
             panic!("the character database is not reachable");
-        };
-        let Some(items) = world_source() else {
-            panic!("the world database is not reachable");
         };
         let log = Log::new();
         let mut world = crate::world::World::new(2);
@@ -1243,13 +1224,10 @@ mod tests {
         let inventory = tables.inventory(0, 1);
         assert!(!inventory.items.is_empty(), "the set has items");
 
-        // The templates the program reads back at start-up, from the same rows in the world database.
-        items
-            .seed(&tables.definitions())
-            .expect("the definitions are seeded");
-        let templates = items.list().expect("the templates are readable");
+        // The definitions the program builds at start-up, from the same creation content.
+        let templates = crate::data_stores::definitions_as_templates(tables.definitions());
 
-        let uuid = "00000000-0000-0000-0000-0000000000AB";
+let uuid = "00000000-0000-0000-0000-0000000000AB";
         let account = "00000000-0000-0000-0000-00000000C10D";
         {
             let mut pool = source.pool.lock().unwrap();

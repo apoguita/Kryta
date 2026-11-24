@@ -8,9 +8,9 @@
 //!
 //! Here now:
 //!
-//! - [`tables`] - the whole client protocol, ported: 782 rows of header, direction, index, declared
-//!   size, name and field layout, both families. It is the table a session asked for
-//!   (`tools/adapt-protocol-table.py` records how it was moved into place).
+//! - [`tables`] - the game family of the client protocol, ported: 682 rows of header, direction,
+//!   index, declared size, name and field layout. The login family's rows live in the program that
+//!   serves that connection (`tools/split-protocol-table.py` split ASURA's table in two).
 //! - `GAME_CMSG_VERSION`, the 64-byte message a client sends when it opens its gameplay connection.
 //!   It is the message the front door reads to learn which world a client was sent to, and the first
 //!   one the world program reads itself (`docs/decisions/0004`).

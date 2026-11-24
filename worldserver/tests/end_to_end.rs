@@ -39,6 +39,29 @@ const PORT_ENV: &str = "AC_WORLD_SERVER_PORT";
 /// The status interval, so the program's own liveness reaches this test's log quickly.
 const STATUS_ENV: &str = "AC_STATUS_INTERVAL";
 
+/// The configuration this run starts the program with: the machine's own `worldserver.json`, with
+/// the program's logger and its console appender raised to `Debug`.
+///
+/// What one connection did - "is loading", a redirect, a refusal - is a `Debug` line
+/// (`docs/port/03-tracing.md`), and these tests read block sizes out of those lines. A logger's level
+/// is read from the file and has no environment override, so the run gets a file of its own under
+/// `target/`. Answers the path, relative to the workspace root the program is started in.
+fn debug_config() -> String {
+    let text = std::fs::read_to_string("worldserver.json")
+        .expect("the world program's own configuration");
+    let mut document: serde_json::Value =
+        serde_json::from_str(&text).expect("worldserver.json is JSON");
+    document["Logger"]["server"]["value"][0] = serde_json::json!(5);
+    document["Appender"]["Console"]["value"][1] = serde_json::json!(5);
+    let relative = "target/end-to-end-worldserver.json";
+    std::fs::write(
+        std::path::Path::new("..").join(relative),
+        serde_json::to_string_pretty(&document).expect("the document writes"),
+    )
+    .expect("the run's configuration is written under target/");
+    relative.to_string()
+}
+
 /// Wait for one line of the program's output that contains `needle`, and answer it.
 fn wait_for(reader: &Receiver<String>, needle: &str, timeout: Duration) -> String {
     let deadline = Instant::now() + timeout;
@@ -60,7 +83,7 @@ fn start_world() -> (Child, Receiver<String>, u16) {
     let exe = env!("CARGO_BIN_EXE_worldserver");
     let mut child = Command::new(exe)
         .arg("-c")
-        .arg("worldserver/worldserver.json")
+        .arg(debug_config())
         .current_dir("..")
         .env(PORT_ENV, "0")
         .env(STATUS_ENV, "1")
@@ -122,6 +145,40 @@ fn read_exact(stream: &mut TcpStream, size: usize) -> Vec<u8> {
         .read_exact(&mut buffer)
         .unwrap_or_else(|error| panic!("expected {size} byte(s), failed: {error}"));
     buffer
+}
+
+/// Read exactly one frame, decrypted: its header and its bytes. Nothing past the frame is read, so
+/// the cipher stays in step with the stream for whatever is read next.
+fn next_frame(stream: &mut TcpStream, reading: &mut common::cryptography::Arc4) -> (u16, Vec<u8>) {
+    let mut pending: Vec<u8> = Vec::new();
+    loop {
+        match game::server::protocol::decode_game_message(&pending, false) {
+            Ok((frame, used)) => {
+                assert_eq!(pending.len(), used, "one frame and nothing after it");
+                return (frame.header(), pending);
+            }
+            Err(shared::packets::FrameError::Incomplete { needed }) => {
+                let present = pending.len();
+                pending.resize(needed, 0);
+                stream
+                    .read_exact(&mut pending[present..])
+                    .expect("the frame keeps arriving");
+                reading.apply(&mut pending[present..]);
+            }
+            Err(error) => panic!("a frame did not frame: {error}"),
+        }
+    }
+}
+
+/// The next frame that is not a simulation tick: the ticker sends `0x001E` on its own interval,
+/// between whatever a request is answered with.
+fn next_answer(stream: &mut TcpStream, reading: &mut common::cryptography::Arc4) -> (u16, Vec<u8>) {
+    loop {
+        let (header, bytes) = next_frame(stream, reading);
+        if header != 0x001E {
+            return (header, bytes);
+        }
+    }
 }
 
 /// Read complete frames until the header `terminal` has been seen `count` times, answering every
@@ -326,6 +383,35 @@ type Pools = (
     Arc<Mutex<DatabaseWorkerPool>>,
 );
 
+/// The world pack the program serves from: its map records and its entry points, in file order.
+///
+/// The world's content is the pack's files (`docs/decisions/0014-the-world-content-is-a-pack.md`), so
+/// a test that needs a map's file id or its spawn points reads them where the program does.
+fn world_pack() -> (Vec<game::world::MapEntry>, Vec<game::maps::MapSpawn>) {
+    game::maps::pack::Pack::load("../config/World/Vanilla", &Log::new())
+        .expect("the world pack reads")
+        .load_maps()
+        .expect("the pack's maps")
+}
+
+/// Whether the shipped path-graph cache holds a graph for `map_id`: the walk step is skipped when it
+/// does not, because a map with no graph answers `NoGraph` by design
+/// (`docs/decisions/0015-headless-navigation-assets.md`).
+fn cache_has_graph(map_id: u32) -> bool {
+    let config = Config::load_json("worldserver.json", false, Policy::default())
+        .expect("the world program's own configuration");
+    let (dump, _) = config
+        .value_string("PathGraphs", "data/path-graphs.bin")
+        .expect("PathGraphs is a string");
+    let path = std::path::Path::new("..").join(&dump);
+    let Ok(graphs) = game::terrain::pathfind::PathGraphs::from_dump(&path.to_string_lossy()) else {
+        return false;
+    };
+    let (maps, _) = world_pack();
+    graphs.bind(&maps);
+    graphs.maps().contains(&(map_id as i32))
+}
+
 /// Open the pools the program's configuration names: characters, world and login.
 fn open_pools() -> Pools {
     let log = Log::new();
@@ -461,9 +547,10 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         // and the instance table - right after the record, which is where a live server sends them
         // (`ASURA/crates/asura-world/src/map.rs:22-58`).
         let grid = game::maps::cartography::init_frames(game::maps::cartography::grid_for(148));
-        let hosted = game::maps::DatabaseMaps::new(Arc::clone(&world_pool), Log::new())
-            .load()
-            .expect("the maps are readable")
+        let hosted = game::maps::pack::Pack::load("../config/World/Vanilla", &Log::new())
+            .expect("the world pack reads")
+            .load_maps()
+            .expect("the pack's maps")
             .0;
         let (table, notes) = game::maps::instance_table::table_for(&hosted);
         assert!(notes.is_empty(), "no map id fails the wire's width: {notes:?}");
@@ -540,12 +627,7 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             &Log::new(),
         )
         .expect("the creation data");
-        let templates = game::data_stores::DatabaseItems::new(
-            Arc::clone(&world_pool),
-            Log::new(),
-        )
-        .list()
-        .expect("the item templates are readable");
+        let templates = game::data_stores::definitions_as_templates(tables.definitions());
         let held = game::characters::DatabaseCharacters::new(
             Arc::clone(&characters),
             Log::new(),
@@ -683,16 +765,11 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         assert_eq!(&tick[..2], &[0x1E, 0x00], "the simulation tick");
 
         // 8. A click in the outpost (`GAME_CMSG_MOVE_TO_COORD`, `0x803E`: the point and its plane).
-        // The world answers from map 148's own path graph, which it imports out of `Gw.dat` at
+        // The world answers from map 148's own path graph, which it loads from the shipped cache at
         // start-up (`ASURA/crates/asura-world/src/agent.rs:802-856`): the finder's first waypoint in
-        // `0x0029`, and nothing at all when it refuses. Skipped on a machine with no archive, where
-        // every walk is `NoGraph` by design.
-        let archive = Config::load_json("worldserver.json", false, Policy::default())
-            .expect("the world program's own configuration")
-            .value_string("GwDat", "Gw.dat")
-            .expect("GwDat is a string")
-            .0;
-        if std::path::Path::new(&archive).exists() {
+        // `0x0029`, and nothing at all when it refuses. Skipped when the cache holds no graph for
+        // map 148, where every walk is `NoGraph` by design.
+        if cache_has_graph(148) {
             let mut walk = vec![0u8; 14];
             walk[0..2].copy_from_slice(&0x803Eu16.to_le_bytes());
             // Twenty units from where the character was put rather than across the map: the walk is
@@ -720,7 +797,7 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
                 "the first waypoint ({wx}, {wy}) is the path's, not a point across the map"
             );
         } else {
-            eprintln!("skipped the walk step: no client archive at {archive}");
+            eprintln!("skipped the walk step: the path-graph cache holds no graph for map 148");
         }
 
         // The item operations the manual test's steps 10 to 12 do, against the program: a drag, an
@@ -733,12 +810,7 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             &Log::new(),
         )
         .expect("the creation data");
-        let templates = game::data_stores::DatabaseItems::new(
-            Arc::clone(&world_pool),
-            Log::new(),
-        )
-        .list()
-        .expect("the item templates are readable");
+        let templates = game::data_stores::definitions_as_templates(tables.definitions());
         let held = game::characters::DatabaseCharacters::new(
             Arc::clone(&characters),
             Log::new(),
@@ -970,21 +1042,45 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         assert_eq!(u16::from_le_bytes([said[22], said[23]]), 1, "the speaker");
         assert_eq!(said[24], 3, "Channel_All, the channel `!` speaks on");
 
-        // The commands the reference answers in its log and nowhere else, and a channel it drops:
-        // `/maps` prints the alias table, `/tp ascalon` is the command's own "You are already here."
-        // (this connection is in map 148), and `@` is one of the three channels the reference ignores.
-        // Every one of them leaves the wire to the simulation tick
+        // The answers the server composes are sent, not only logged (`docs/decisions/0012-chat-text-is-sent.md`):
+        // each line is a `0x005D` body and then a five-byte `0x005E` tag. `/maps` is the alias table,
+        // several lines of it; `/tp ascalon` is the command's own "You are already here." (this
+        // connection is in map 148); an unknown command is told so; and `@` is one of the channels
+        // the reference ignores, which is answered with nothing
         // (`ASURA/crates/asura-world/src/chat.rs:288-352`).
-        for silent in ["/maps", "/tp ascalon", "@/ignored", "/nonsense"] {
-            let mut ask = speak(silent);
-            sending.apply(&mut ask);
-            stream.write_all(&ask).expect("a command");
-            let mut tick = read_exact(&mut stream, 6);
-            reading.apply(&mut tick);
+        //
+        // A `/stuck` is sent behind each one as a marker: its `0x002C` says the command's own
+        // answer is over, however many lines that was. The tag is read by its measured size, because
+        // the table's row for `0x005E` is ASURA's two dwords and the wire carries three bytes (0012).
+        for (command, expects_lines) in [
+            ("/maps", true),
+            ("/tp ascalon", true),
+            ("/nonsense", true),
+            ("@/ignored", false),
+        ] {
+            for line in [command, "/stuck"] {
+                let mut ask = speak(line);
+                sending.apply(&mut ask);
+                stream.write_all(&ask).expect("a command");
+            }
+            let mut lines = 0;
+            loop {
+                let (header, _) = next_answer(&mut stream, &mut reading);
+                match header {
+                    0x005D => {
+                        let mut tag = read_exact(&mut stream, 5);
+                        reading.apply(&mut tag);
+                        assert_eq!(&tag[..2], &[0x5E, 0x00], "{command}: a body is followed by its tag");
+                        lines += 1;
+                    }
+                    0x002C => break,
+                    other => panic!("{command} was answered with 0x{other:04X}, not a chat line"),
+                }
+            }
             assert_eq!(
-                &tick[..2],
-                &[0x1E, 0x00],
-                "{silent} is answered in the log and not on the wire"
+                lines > 0,
+                expects_lines,
+                "{command} was answered with {lines} line(s)"
             );
         }
 
@@ -993,8 +1089,8 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         let mut ask = speak("/stuck");
         sending.apply(&mut ask);
         stream.write_all(&ask).expect("the stuck command");
-        let mut stood = read_exact(&mut stream, 16);
-        reading.apply(&mut stood);
+        let (_, stood) = next_answer(&mut stream, &mut reading);
+        assert_eq!(stood.len(), 16, "one position frame");
         assert_eq!(&stood[..2], &[0x2C, 0x00], "the agent's position");
         assert_eq!(
             &stood[2..6],
@@ -1141,7 +1237,7 @@ fn a_second_outpost_loads_with_its_own_file_id_and_a_point_of_its_own_list() {
     let token: u32 = 0x4242;
     let (mut child, lines, port) = start_world();
     println!("the world program is listening on port {port}");
-    let (characters, world_pool, login) = open_pools();
+    let (characters, _world_pool, login) = open_pools();
 
     let account = [0x99u8; 16];
     let account_text = game::characters::uuid_text(&account);
@@ -1149,31 +1245,20 @@ fn a_second_outpost_loads_with_its_own_file_id_and_a_point_of_its_own_list() {
     let uuid_text = game::characters::uuid_text(&character);
 
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // What the world's own row says about the destination: the archive file and the points.
-        let (file_id, spawn_points): (i64, Vec<(f64, f64)>) = {
-            let mut pool = world_pool.lock().unwrap();
-            let row = pool
-                .query_with(
-                    "SELECT \"file_id\"::bigint FROM \"map\" WHERE \"id\" = $1::bigint::int",
-                    &[&(MAP as i64)],
-                )
-                .expect("the map row reads")
-                .into_iter()
-                .next()
-                .expect("map 163 is in the catalogue");
-            let file_id: i64 = row.get(0);
-            let points = pool
-                .query_with(
-                    "SELECT \"x\"::text::float8, \"y\"::text::float8 FROM \"map_spawn\" \
-                     WHERE \"map_id\" = $1::bigint::int ORDER BY \"idx\"",
-                    &[&(MAP as i64)],
-                )
-                .expect("the spawn rows read")
+        // What the world pack says about the destination: the archive file and the points.
+        let (pack_maps, pack_spawns) = world_pack();
+        let file_id = i64::from(
+            pack_maps
                 .iter()
-                .map(|row| (row.get::<usize, f64>(0), row.get::<usize, f64>(1)))
-                .collect();
-            (file_id, points)
-        };
+                .find(|map| map.id == MAP)
+                .expect("map 163 is in the catalogue")
+                .file_id,
+        );
+        let spawn_points: Vec<(f64, f64)> = pack_spawns
+            .iter()
+            .filter(|spawn| spawn.map_id == MAP)
+            .map(|spawn| (f64::from(spawn.x), f64::from(spawn.y)))
+            .collect();
         assert!(
             spawn_points.len() >= 2,
             "map {MAP} states its own points: {spawn_points:?}"
@@ -1218,43 +1303,11 @@ fn a_second_outpost_loads_with_its_own_file_id_and_a_point_of_its_own_list() {
         // `NestedStruct` of sixteen-byte units (`Tables.rs`, the row is ASURA's own) while the frame
         // carries `u8` count and six-byte pairs, so a walker cannot split it. The pairs come from the
         // same builder the world used.
-        let table_batches = {
-            let mut pool = world_pool.lock().unwrap();
-            let row = pool
-                .query_with(
-                    "SELECT count(*)::bigint FROM \"map\" WHERE \"instance_value\" IS NOT NULL",
-                    &[],
-                )
-                .expect("the catalogue counts")
-                .into_iter()
-                .next()
-                .expect("one row");
-            let pairs: i64 = row.get(0);
-            (pairs as usize).div_ceil(15)
-        };
-        let table_bytes = {
-            let mut pool = world_pool.lock().unwrap();
-            let rows = pool
-                .query_with(
-                    "SELECT \"id\"::bigint, \"instance_value\"::bigint FROM \"map\" \
-                     WHERE \"instance_value\" IS NOT NULL ORDER BY \"id\"",
-                    &[],
-                )
-                .expect("the pairs read");
-            let pairs: Vec<(u16, u32)> = rows
-                .iter()
-                .filter_map(|row| {
-                    let id: i64 = row.get(0);
-                    let value: i64 = row.get(1);
-                    u16::try_from(id).ok().map(|id| (id, value as u32))
-                })
-                .collect();
-            pairs
-                .chunks(15)
-                .map(instance_packets::instance_table)
-                .map(|frame| frame.len())
-                .sum::<usize>()
-        };
+        let (table, notes) = game::maps::instance_table::table_for(&pack_maps);
+        assert!(notes.is_empty(), "no map id fails the wire's width: {notes:?}");
+        let table_frames = table.frames();
+        let table_batches = table_frames.len();
+        let table_bytes = table_frames.iter().map(Vec::len).sum::<usize>();
         // The block the program says it sent is the block that arrives: it logs the size before it
         // writes, so reading that many bytes is exact - and it is the program's own statement, not
         // this test's arithmetic.
@@ -1388,7 +1441,7 @@ fn a_reconnect_to_an_explorable_resumes_where_the_character_left() {
     let name = "E2E Kryta Three";
     let (mut child, lines, port) = start_world();
     println!("the world program is listening on port {port}");
-    let (characters, world_pool, login) = open_pools();
+    let (characters, _world_pool, login) = open_pools();
 
     let account = [0x55u8; 16];
     let (character, _written) = create_character(port, account, name);
@@ -1400,20 +1453,12 @@ fn a_reconnect_to_an_explorable_resumes_where_the_character_left() {
         assert!(repository.unlock_map(&uuid_text, MAP).expect("the unlock writes"));
 
         // The map's own first spawn point: what the entry rule answers with no saved position.
-        let own_point: (f64, f64) = {
-            let mut pool = world_pool.lock().unwrap();
-            let row = pool
-                .query_with(
-                    "SELECT \"x\"::text::float8, \"y\"::text::float8 FROM \"map_spawn\" \
-                     WHERE \"map_id\" = $1::bigint::int ORDER BY \"idx\" LIMIT 1",
-                    &[&(MAP as i64)],
-                )
-                .expect("the spawn rows read")
-                .into_iter()
-                .next()
-                .expect("map 43 states a spawn point");
-            (row.get::<usize, f64>(0), row.get::<usize, f64>(1))
-        };
+        let own_point: (f64, f64) = world_pack()
+            .1
+            .iter()
+            .find(|spawn| spawn.map_id == MAP)
+            .map(|spawn| (f64::from(spawn.x), f64::from(spawn.y)))
+            .expect("map 43 states a spawn point");
 
         // The first connection: the travel record, then the load, then the entry point.
         game::maps::DatabaseTravels::new(Arc::clone(&login), Log::new())

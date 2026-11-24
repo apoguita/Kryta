@@ -2,8 +2,9 @@
 //! programs keep.
 //!
 //! It is not a server. No client talks to it, it serves no game protocol, and neither server program
-//! knows it exists. What it does is read and write the state the two programs already keep: rows in the
-//! login, character and world databases, and the JSON content files. The data access is the nouns'
+//! knows it exists. What it does is read the state the two programs already keep - rows in the login,
+//! character and world databases, the world pack and the settings files - and write three parts of
+//! it: account rows, character rows, and the path-graph cache. The data access is the nouns'
 //! own code (`game::accounts`, `game::characters`, `game::maps`, ...), so what this page changes is
 //! exactly what the server reads.
 //!
@@ -17,8 +18,8 @@
 //! - this file - the routing table, the data sources, and the two owners the manager asks (the
 //!   supervisor for process lifecycle, the running world for operations).
 //!
-//! Why a page rather than SQL by hand: the state is spread over two databases and four content files,
-//! and a wrong `UPDATE` against a live account is not something a person should be doing from memory.
+//! Why a page rather than SQL by hand: the state is spread over three databases and the world pack's
+//! files, and a wrong `UPDATE` against a live account is not something a person should be doing from memory.
 //!
 //! Settings are in `manage.json` (`docs/port/05-tooling.md`); the tool refuses to start without a
 //! database to point at.
@@ -64,9 +65,6 @@ pub struct Manage {
     accounts: Arc<game::accounts::DatabaseAccounts>,
     /// The character database, when the tool opened one: the characters page.
     characters: Option<Arc<game::characters::DatabaseCharacters>>,
-    /// The world database's item templates, when the world database is open: what a creation
-    /// confirmation points a written item row at.
-    items: Option<Arc<game::data_stores::DatabaseItems>>,
     /// The instance table, when the world database is open: what the content page shows running.
     instances: Option<Arc<game::districts::DatabaseInstances>>,
     /// The world list, read from `realmlist` and merged with `data/realms.json`.
@@ -83,7 +81,8 @@ pub struct Manage {
     /// An explicit client archive used only by the manager's offline dump action.
     map_archive_file: String,
     /// The running world's local control endpoint, when `manage.json` names one: the status page asks
-    /// it for `world.status`. This is the manager's connection to the world, never a second world.
+    /// it for `world.status` and the console sends it the operation a form names. This is the
+    /// manager's connection to the world, never a second world.
     control: Option<Control>,
     /// The running stack's own loopback channel, discovered from its `stack.json`. The manager is a
     /// client of this channel and never starts or watches a process itself.
@@ -98,7 +97,7 @@ pub struct Control {
     port: u16,
     /// The service credential the world program requires, read from its restricted file.
     credential: String,
-    /// How long the status page waits for the world before reporting it unavailable.
+    /// How long a request waits for the world before reporting it unavailable.
     timeout: Duration,
 }
 
@@ -133,8 +132,9 @@ impl Manage {
     /// The pages a `GET` opens.
     ///
     /// The hierarchy is the routing: an account is a page with a row id, a player is a page with
-    /// the id the client knows it by, and the two old addresses (`/accounts?account=`,
-    /// `/characters?account=`) are redirects into it.
+    /// the id the client knows it by, and the panel's other addresses (`/accounts?account=`,
+    /// `/characters`, a numeric `/players/{id}`, `/players/{account}/characters` and
+    /// `/players/{account}/characters/{uuid}`) are redirects into it.
     fn get(&self, segments: &[&str], request: &Request) -> Response {
         match segments {
             [] => pages::overview::page(self),
@@ -272,11 +272,6 @@ impl Manage {
     /// The character database, when `manage.json` names one.
     pub fn characters(&self) -> Option<&game::characters::DatabaseCharacters> {
         self.characters.as_deref()
-    }
-
-    /// The world database's item templates.
-    pub fn items(&self) -> Option<&game::data_stores::DatabaseItems> {
-        self.items.as_deref()
     }
 
     /// The world database's instance table.
@@ -892,8 +887,8 @@ fn run(config_path: &std::path::Path, port_override: Option<u16>) -> Result<(), 
         ))
     });
 
-    // The world database: the item templates a creation confirm points at, and the running copies
-    // its tick disposes. The world's maps and items are the pack's, read through `world_pack`.
+    // The world database: the running copies its tick disposes, and its schema record. The world's
+    // maps are the pack's, read through `world_pack`, and its items the creation content's.
     let world_pool = match config.value_string("WorldDatabaseInfo", "") {
         Ok((info, _)) if !info.is_empty() => {
             let settings = read_settings(&config, DatabaseKind::World)?;
@@ -915,12 +910,6 @@ fn run(config_path: &std::path::Path, port_override: Option<u16>) -> Result<(), 
         }
         _ => None,
     };
-    let items = world_pool.as_ref().map(|pool| {
-        Arc::new(game::data_stores::DatabaseItems::new(
-            Arc::clone(pool),
-            log.clone(),
-        ))
-    });
     let instances = world_pool.as_ref().map(|pool| {
         Arc::new(game::districts::DatabaseInstances::new(
             Arc::clone(pool),
@@ -1031,7 +1020,6 @@ fn run(config_path: &std::path::Path, port_override: Option<u16>) -> Result<(), 
     let manage = Arc::new(Manage {
         accounts,
         characters,
-        items,
         instances,
         worlds: Some(Arc::new(world_list)),
         schemas,

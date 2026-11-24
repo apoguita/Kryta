@@ -73,11 +73,11 @@ pub struct Agent {
 
 /// The walk an agent is in: one segment being walked, and the waypoints after it.
 ///
-/// The reference's `GmAgent` walking state (`ASURA/crates/asura-world/src/agent.rs:111`).
+/// GWPS's `GmAgent` walking state (`ASURA/crates/asura-world/src/agent.rs:111`).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Motion {
     /// The path the server chose. The segment being walked has already been taken off the front of it,
-    /// exactly as `waypoint_idx` does in the reference.
+    /// exactly as `waypoint_idx` does in GWPS.
     pub waypoints: Vec<Waypoint>,
     /// The next waypoint to take when the current segment ends.
     pub waypoint_idx: usize,
@@ -125,9 +125,9 @@ impl Agent {
 
     /// Begin walking a path the finder produced (`agent.rs:164`).
     ///
-    /// The reference takes the first waypoint as the destination and leaves the rest in the list; this
+    /// GWPS takes the first waypoint as the destination and leaves the rest in the list; this
     /// is that, and it returns the waypoint so the caller can broadcast it. `None` when the path is
-    /// empty, which the reference also ignores (`if (0 < agent->waypoints.len)`).
+    /// empty, which GWPS also ignores (`if (0 < agent->waypoints.len)`).
     pub fn begin_walk(&mut self, waypoints: Vec<Waypoint>) -> Option<Waypoint> {
         self.motion.waypoints = waypoints;
         self.motion.waypoint_idx = 0;
@@ -139,7 +139,7 @@ impl Agent {
 
     /// Point at `destination` and start moving (`agent.rs:180`).
     ///
-    /// The reference divides by the distance without checking it, so a destination equal to the
+    /// GWPS divides by the distance without checking it, so a destination equal to the
     /// current position produces a NaN direction and then a NaN position - which would be saved and
     /// reloaded on the next visit. This keeps the direction it had instead, which makes such a walk a
     /// no-op that the arrival test clears on the next tick. That is the working implementation's own
@@ -178,7 +178,7 @@ impl Agent {
     /// Replace the previous order and announce a manual walk (`agent.rs:222`).
     ///
     /// The reply order is the live capture's (direction, type, destination), and the types carry the
-    /// speed factors the reference's own table does: 4-6 walk at 0.66, 7-8 at 0.75, everything else at
+    /// speed factors GWPS's own table does: 4-6 walk at 0.66, 7-8 at 0.75, everything else at
     /// 1.0.
     pub fn begin_manual_walk(
         &mut self,
@@ -261,7 +261,7 @@ impl Agent {
     ///
     /// Returns the waypoint that became the new destination, if the agent crossed one during the tick -
     /// the caller broadcasts it, because every client is drawing this agent from the last destination it
-    /// was told. Arrival clears the walk, as the reference does.
+    /// was told. Arrival clears the walk, as GWPS does.
     pub fn advance(&mut self, delta: f32) -> Option<Waypoint> {
         if self.motion.speed == 0.0 {
             return None;
@@ -310,7 +310,7 @@ impl Agent {
     /// Adopt a position the client reported (`agent.rs:339`).
     ///
     /// The first report of a session gets the full budget rather than none: the client has been standing
-    /// still while it loaded, and the reference makes the same choice. A report farther than the budget
+    /// still while it loaded, and GWPS makes the same choice. A report farther than the budget
     /// is walked back to the budget's edge along its own direction; a report that changes the plane and
     /// is farther than the budget is refused.
     pub fn adopt_report(&mut self, position: (f32, f32), plane: u16, now: Instant) -> Adopted {
@@ -389,7 +389,7 @@ impl Agent {
     }
 }
 
-/// The real square root, which is what the reference's movement uses (`agent.rs:411`).
+/// The real square root, which is what GWPS's movement uses (`agent.rs:411`).
 pub fn distance_between(left: (f32, f32), right: (f32, f32)) -> f32 {
     let dx = right.0 - left.0;
     let dy = right.1 - left.1;
@@ -407,7 +407,7 @@ pub const LIVE_CADENCE_STEP: f32 = 145.0;
 /// produced and adding the intermediate ones on the same straight segment (`agent.rs:646`).
 ///
 /// The added points carry the plane the segment **starts** on, and only the finder's own point carries
-/// its plane: that is the reference's own stamping, so a plane change is announced once, at the corner.
+/// its plane: that is GWPS's own stamping, so a plane change is announced once, at the corner.
 pub fn densify(waypoints: Vec<Waypoint>, from: Pos, step: f32) -> Vec<Waypoint> {
     if waypoints.is_empty() || step <= 0.0 {
         return waypoints;

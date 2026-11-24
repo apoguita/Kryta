@@ -167,8 +167,8 @@ pub async fn write_response(io: &mut SessionIo, response: &Response) -> std::io:
     let mut bytes = head.into_bytes();
     bytes.extend_from_slice(&response.body);
     match io.write_all(&bytes).await {
-        // SessionIo::write_all already retries an interrupted write; a second loop here would be a
-        // second retry policy.
+        // The answer is SessionIo::write_all's own, handed back unchanged: nothing is retried
+        // here.
         Ok(()) => Ok(()),
         Err(error) => Err(error),
     }
@@ -317,7 +317,8 @@ mod tests {
     #[test]
     fn something_that_is_not_http_is_refused() {
         assert!(parse_head("hello\r\n\r\n").is_none());
-        // A version this reader does not speak is refused: it only ever writes HTTP/1.1.
+        // A request line needs a method, a target and a version that starts with `HTTP/`; a lone
+        // word has none of the last two.
     }
 
     #[test]

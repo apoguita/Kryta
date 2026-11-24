@@ -8,7 +8,8 @@
 //!
 //! The keys follow the families in `docs/port/19-title-research.md`: character progress, faction,
 //! missions and vanquishes, cartography, skills, items and activities, PvP, and the one test
-//! counter. The title layer reads `jumps`; every other value is waiting for its source.
+//! counter. No title reads a metric yet (`Titles.rs` keeps a title's `metric` as a label only);
+//! every value is waiting for its source.
 
 use std::collections::BTreeMap;
 

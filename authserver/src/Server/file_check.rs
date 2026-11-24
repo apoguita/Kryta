@@ -71,12 +71,8 @@ impl FileCheck {
         })
     }
 
-    /// A file check built from bytes, for a test or a caller that holds them already.
-    pub fn from_bytes(request: Vec<u8>, answer: Vec<u8>) -> Self {
-        Self { request, answer }
-    }
-
     /// The question.
+    #[cfg(test)]
     pub fn request(&self) -> &[u8] {
         &self.request
     }

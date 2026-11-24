@@ -22,7 +22,8 @@ use game::portal::{Account, Accounts};
 const SELECT_ACCOUNT: &str =
     "SELECT \"user_id\", \"token\" FROM \"account\" WHERE \"username\" = $1 AND \"active\"";
 
-/// How many accounts the table holds, for the startup line.
+/// How many accounts the table holds: what the live test below checks before it resolves one.
+#[cfg(test)]
 const COUNT_ACCOUNTS: &str = "SELECT COUNT(*) FROM \"account\"";
 
 /// The accounts a client may log in as, read from the login database.
@@ -37,15 +38,8 @@ impl DatabaseAccounts {
         Self { pool, log }
     }
 
-    /// The pool, for a program that also reads something else through it.
-    pub fn pool(&self) -> Arc<Mutex<DatabaseWorkerPool>> {
-        Arc::clone(&self.pool)
-    }
-
     /// How many accounts are there.
-    ///
-    /// The number is reported at startup, so "the client cannot log in" is answerable from the log:
-    /// an empty table and a client typing the wrong name look nothing alike.
+    #[cfg(test)]
     pub fn count(&self) -> Result<usize, String> {
         let mut pool = self
             .pool

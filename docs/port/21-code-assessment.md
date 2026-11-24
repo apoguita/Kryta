@@ -198,8 +198,8 @@ Size of fix: medium to large.
 
 ### 10. The title client patch
 
-Out of scope for now; it is `docs/port/20-open-issues.md` item 10. How it works today, for when it is
-taken up:
+It is `docs/port/20-open-issues.md` item 10, and the direction for replacing it is
+`docs/port/22-client-platform.md`. How it works today:
 
 - `tools/client/patch-gw.py` applies the connection patch, then always calls `patch_titles`, which
   refuses any file that is not the one stock build 39167 by its SHA-256 (`title_patch.py:99-100`,
@@ -211,6 +211,171 @@ taken up:
   seconds while titles are drawn.
 - The DLL itself is small and careful. The weakness is how it is loaded and called.
 
+## Progress
+
+Steps 1 to 5 are done and confirmed by the owner's live test. This section says what was done; the
+findings above are as they were read on 2026-11-23, before any change.
+
+### Step 1 - done, 2026-11-23
+
+Removed:
+
+- `DatabaseMaps`, the `MapSource` trait and their three database tests (`game/src/Maps/mod.rs`).
+  `World::load_maps` takes the pack.
+- `DatabaseItems`, its SQL and its seeding (`game/src/DataStores/Items.rs`). The panel's character
+  creation was reading item definitions from the empty `item_template` table through it; it now builds
+  them from the creation content, as the world does (`tools/manage/src/pages/players.rs`).
+- The old size table and its helpers in the login framing (`authserver/src/Server/stream.rs`), and the
+  `#[allow(dead_code)]` on the whole `server` module. What the compiler then reported was removed
+  (`DatabaseAccounts::pool`, `FileCheck::from_bytes`) or scoped to tests (`count`, `request`, `refusal`,
+  `GM_ERROR_AUTH_ERROR`).
+
+Tests repaired:
+
+- `worldserver/tests/end_to_end.rs`: all four tests were failing before any change. They waited for
+  an "is loading" log line the program prints only at `Debug`, read maps and items from tables that are
+  empty by design, and asserted that `/maps` is not sent (decision 0012 sends it). They now start the
+  program with a configuration of their own under `target/` that raises the log level, read the world
+  pack, and read the chat answers by their measured size. All four pass.
+- `worldserver/tests/fresh_world.rs` asserts the lines the program prints today. It cannot be run on
+  this machine: the database role may not create a database, so the test skips.
+- `game/src/Server/WorldSession.rs`, `a_travel_record_decides_the_map_and_the_district`: three stale
+  expectations (the explorable byte, a tick after the entry position, twice).
+- `game/src/Accounts/mod.rs`: the account test set the EULA by a name it had just renamed away.
+- `game/src/World/mod.rs`, `every_hosted_map_walks_from_one_of_its_own_spawn_points`: reads the pack,
+  and finds the archive by `KRYTA_GW_DAT` like the other archive tests.
+- `common/src/Logging/Logger.rs`: three tests asserted nothing; they now assert what their names say.
+
+Kept, each for a recorded reason:
+
+- `shared/src/Packets/ByteBuffer.rs`. Nothing uses it, but it is the reference's byte buffer, and
+  `AGENTS.md` names it as part of the structure. Removing it is a deviation that needs the owner's word.
+- The `Key = value` configuration parser. `docs/decisions/0005-json-configuration.md` keeps it.
+- The pool's synchronous calls. `docs/decisions/0002-worker-pool-threads.md` describes them as part of
+  the arrangement.
+- The unused functions inside Terrain and Pack. They are whole ports of ASURA's files.
+
+State after the step: the workspace builds with no warnings; 506 tests pass; of the 22 ignored tests,
+the 21 that need this machine's databases or archive were run and pass (10 in `game`, 3 in `authserver`,
+4 in `worldserver`, 4 in `database`), and 1 skips.
+
+### Step 2 - done, 2026-11-23
+
+The stale and history-telling comments were corrected in 70 files, comment lines only. A comparison of
+every source file with a copy taken before the step, ignoring comment lines, shows no code line
+changed; the workspace builds with no warnings and the same 506 tests pass.
+
+- Headers that said something was "not here yet" now say what the file holds and who calls it
+  (`Terrain/Pathfind.rs`, `Terrain/MapData.rs`, `Pack/Gwdat.rs`, `shared/src/Cryptography/Handshake.rs`,
+  both programs' `main.rs`, `game/src/lib.rs`).
+- Comments that told the history of a bug now state what the code does.
+- Comments on the wrong item were moved to the item they describe.
+- "The reference" now means AzerothCore only. Where it meant the C Guild Wars server, the comment
+  names GWPS or OpenTyria, the project GWPS was forked from; where the readers could not tell which
+  project a comment meant, it was left (about 60 places).
+- `game/src/Maps/Portals.rs` claimed a whole port and now declares itself ported thin, listing what is
+  not here; `docs/port/09-parity-audit.md` carries the same verdict.
+- `campaign` is the client's chapter byte: 0 is no campaign (a PvP character), 1 to 3 are Prophecies,
+  Factions and Nightfall. Two comments said 0 was Prophecies.
+
+Found while doing it and not changed, because each is code or text the program prints
+(`docs/port/20-open-issues.md`, "Code defects found while reading"):
+
+- `CharacterSheet::missing` gives the fallback character campaign 0, which is PvP; its test calls it
+  Prophecies.
+- `World.MaxAllowedCorrection` defaults to 250 and cites OpenTyria's constant, which is 100 in the
+  copy under `research/OpenTyria`.
+- Log and page text that is wrong: "the first administrator" (`authserver/src/main.rs`), "until the
+  map_arch table is readable" (`worldserver/src/main.rs`), "needs 16" where the check is 14
+  (`MovementHandler.rs`), the `/stuck` help text, and six strings in the panel.
+
+### Step 3 - done, 2026-11-23
+
+The gameplay connection has one message loop and one dispatch (`game/src/Server/WorldSession.rs`).
+
+- `Phase` says where a connection is: the creation screen, a map loading, a map loaded. It replaces
+  the two separate loops and the `loaded` flag.
+- `serve` is the one loop: it reads and frames messages in every phase, and runs the map's clock and
+  the outbox only on a loaded map, as before.
+- `dispatch` is the one `match`, on the header and the phase. Every arm is one call into
+  `game/src/Handlers/`; a message that arrives in a phase it has no meaning in is reported as
+  unanswered, as before.
+- The three arms that were written in place are handlers now: `Handlers/InstanceHandler.rs` (the three
+  asks of a map load) and `Handlers/TitleHandler.rs` (the title display, with a length check where the
+  file's only `unwrap` was).
+- `converse` went from 510 lines to 328 and `load_map` from 549 to 179.
+
+One behaviour changed, on purpose: a disconnect message (`0x8008`) ends the connection in every phase,
+as ASURA's does (`dispatch.rs:86`). It was handled on the creation screen only.
+
+Left as it was, so the log does not change: inbound trace lines and the "closed" line are still printed
+on the creation screen only. One thing is new: a message that sits half-arrived for 900 ms is now
+reported on a map too, where before only the creation screen reported it.
+
+### Step 4 - done, 2026-11-23
+
+Each program's `run` is a list of named stages (`authserver/src/main.rs` from 756 lines to 112,
+`worldserver/src/main.rs` from 764 to 66). The stages are functions in the same file, in the order the
+code ran before.
+
+- The block that read one setting and reported its notes, written 17 and 21 times, is one helper per
+  value type in `common/src/Configuration/Startup.rs`, with `report`, the `--config-policy` block and
+  the usage text, which were the same in both programs.
+- `Options` and its parser, the logging, PID and READY stages stay one per program: each carries its
+  program's name or log category, and the reference keeps a `Main.cpp` per program too.
+- Removed from the world's database stage, shown unreachable by reading: an `else` branch no database
+  kind reached, the list it filled, and the warning for a world database that was never absent.
+
+The login program prints the same start-up lines as before, line for line. The world program prints
+the same lines, with two adjacent ones - the `CaptureFile` warning and the "Chat commands" line -
+sometimes in the other order from one run of the same binary to the next: one is printed directly and
+the other through the log's worker.
+
+State after steps 3 and 4: the workspace builds with no warnings, the 506 tests pass, and the 21
+database and end-to-end tests pass, run one program at a time.
+
+### Step 5 - done, 2026-11-23
+
+The gameplay connection is two things now (`game/src/Server/WorldSession.rs`):
+
+- `WorldSession`, six fields that are fixed for the connection's life: the log, the world, the two
+  database pools it was given, a master secret a test supplies, and the closing flag.
+- `Connection`, ten fields of plain data with no lock: the account, the travel-in-flight flag, the
+  character, the landing, the last portal step, the district entered, the agent, the outbox, the player
+  id, and the count of unanswered messages. `run` creates it and hands it to the loop, the dispatch
+  and the handlers.
+
+What went:
+
+- The ten separate locks, and with them the places where a failed lock quietly made a player "player
+  1" or skipped a write. The thirteen locks that remain in the session and the handlers are on state
+  that really is shared between connections: the districts and the peer registry.
+- The copies of the world each connection carried - maps, spawn points, arrivals, commands, settings,
+  item definitions, creation tables. A connection reads them from the world.
+- Six of the seven constructors. There is `WorldSession::new` and three builders: `with_characters`,
+  `with_login`, `with_master`.
+
+Before a lock was removed, each field was checked for use outside the connection's own task; none was.
+
+State after the step: the workspace builds with no warnings, the 506 tests pass, and the 21 database
+and end-to-end tests pass, run one program at a time. No test's expected bytes, log text or rows
+changed in steps 3 to 5; test set-up changed where a constructor did.
+
+### Not done in these five steps
+
+- The findings in sections 4 and 10 (titles and the title client patch) are the next phase
+  (`docs/port/22-client-platform.md`).
+- Section 8 (the asynchronous code waiting on the database) and the table in section 9 are untouched,
+  except where a step happened to remove an item: the title `unwrap`, the seven constructors, the
+  item-template duplicate.
+- `World` is still the bag section 9 describes, and the three names for the same opcodes remain.
+
+### Confirmed, 2026-11-23
+
+The owner ran the five steps against a real client and the live tests succeeded. Steps 1 to 5 are
+confirmed. Step 6, titles, is the next phase; how the client side of it is to be handled changed, and
+is `docs/port/22-client-platform.md`.
+
 ## What this means for changing the code
 
 The order the findings suggest, cheapest and safest first:
@@ -220,7 +385,8 @@ The order the findings suggest, cheapest and safest first:
 3. Give the gameplay connection one message loop and move the inline arms into handlers.
 4. Split the two start-up functions into named stages and share what is copied.
 5. Turn the session's state into one plain structure and stop copying the world into it.
-6. Rework titles: definitions in the files, values per character.
+6. Rework titles: definitions in the files, values per character, and the client side on the DLL
+   platform of `docs/port/22-client-platform.md`.
 
 Each step leaves what the client sees unchanged, and the packet tests and the manual client test are
 what would show it.

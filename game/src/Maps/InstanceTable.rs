@@ -4,12 +4,13 @@
 //! it does not know exists: `0x01A0` is how it learns, as `{instance, value}` pairs, ten batches of
 //! them in the load of one map (`recordings/client/feature/maps/pre-searing-load-3.jsonl`, seq 751-...).
 //!
-//! Where the working implementation walks a pack of `maps/<campaign>/<area>/<subarea>/<map id>/basic.json`
-//! files, this tree's map content is rows (`docs/port/04-configuration.md`, "three kinds of data"), so
-//! the value a map states is a column: `map.instance_value` (`data/sql/base/db_world/0007-map-instance-value.sql`).
+//! As the working implementation does, this tree walks a pack of
+//! `maps/<campaign>/<area>/<kind>/<map id>/basic.json` files (`game/Maps/Pack.rs`,
+//! `docs/decisions/0014-the-world-content-is-a-pack.md`), and the value a map states is its record's
+//! `instance_value`.
 //!
-//! **What a map without a value means:** it is left out, and the log says so. Answering with a wrong
-//! value is worse than a destination the client cannot resolve yet.
+//! **What a map without a value means:** it is left out, and `table_for` writes no note for it.
+//! Answering with a wrong value is worse than a destination the client cannot resolve yet.
 
 use crate::server::packets::instance_packets;
 use crate::world::MapEntry;
@@ -35,7 +36,7 @@ impl InstanceTable {
     }
 }
 
-/// The table this world sends: every map whose row states a value, in map-id order, in the batches a
+/// The table this world sends: every map whose record states a value, in map-id order, in the batches a
 /// load uses. `ASURA/crates/asura-world/src/instance_table.rs:131-142` (`table_for`).
 ///
 /// A map id that does not fit the wire's `u16` is reported and left out, as a map without a value is -

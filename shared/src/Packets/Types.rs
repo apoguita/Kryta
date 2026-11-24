@@ -33,16 +33,18 @@ impl Conn {
 /// progress line can be read as a bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Status {
-    /// The reference does not name this header (342 of the game rows). It is still framed, so an
+    /// OpenTyria's `opcodes.h` does not name this header. It is still framed, so an
     /// unexpected-but-real message is recognised rather than mistaken for a malformed one.
     Unnamed = 0,
-    /// The reference names it, and nothing else is proven yet.
+    /// OpenTyria's `opcodes.h` names it, and nothing else is proven yet.
     Known = 1,
     /// Seen in a capture. Nothing acts on it.
     Observed = 2,
-    /// This server sends it (`crate::game` builders, `client::messages` reply builders).
+    /// This server sends it. In ASURA, where the rows were ported from, that was its `crate::game`
+    /// builders and `client::messages` reply builders.
     Emitted = 3,
-    /// This server acts on the client's message (`asura-world`'s `answer`, `asura-auth`'s dispatch).
+    /// This server acts on the client's message. In ASURA, where the rows were ported from, that
+    /// was `asura-world`'s `answer` and `asura-auth`'s dispatch.
     Handled = 4,
     /// The name or the function was inferred rather than read: the evidence column must say from
     /// what.
@@ -63,16 +65,16 @@ impl Status {
     }
 }
 
-/// A field kind, as `msgdefs.c` names it (`FieldType` in `msgdefs.h`). One enum for both
-/// families: the reference uses one field vocabulary for both, and the counted kinds are the same
+/// A field kind, as OpenTyria's `msgdefs.c` names it (`FieldType` in `msgdefs.h`). One enum for both
+/// families: OpenTyria uses one field vocabulary for both, and the counted kinds are the same
 /// on the wire -- a `u16` count and that many units, with no padding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FieldKind {
     /// `TYPE_MSG_HEADER`: the u16 header, two bytes on the wire.
     MsgHeader,
     /// `TYPE_MSG_HEADER_GAME`: the header plus a zero u16 -- four bytes on the wire. Defined,
-    /// packed and unpacked in the reference, but no row of either family uses it; kept so a
-    /// capture that shows one can be named.
+    /// packed and unpacked in the reference. Four rows of the game table use it
+    /// (`game/src/Server/Protocol/Tables.rs`); no row of the login table does.
     MsgHeaderGame,
     /// `TYPE_AGENT_ID`.
     AgentId,
@@ -108,7 +110,7 @@ pub enum FieldKind {
 pub struct Field {
     /// What the field holds and how it is counted.
     pub kind: FieldKind,
-    /// `field.length` in the reference: the unit capacity, the blob size, or 0 when unused.
+    /// `field.length` in OpenTyria (`msgdefs.h`): the unit capacity, the blob size, or 0 when unused.
     pub length: u16,
 }
 
@@ -156,7 +158,7 @@ impl Field {
             FieldKind::Word => Some(2),
             FieldKind::Blob => Some(n),
             // The capacity is only a maximum; the count the body carries decides the wire, and the
-            // reference rejects a count above the capacity (`pack_helper`).
+            // OpenTyria rejects a count above the capacity (`pack_helper`, `msgpack.c`).
             FieldKind::String16 | FieldKind::Array16 => Some(2 + count * 2),
             FieldKind::Array8 => Some(2 + count),
             FieldKind::Array32 => Some(2 + count * 4),

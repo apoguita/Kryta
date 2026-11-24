@@ -1,23 +1,25 @@
-//! A map's path graph: the types the reference's A* consumes, and the box its trapezoids occupy.
+//! A map's path graph: the types OpenTyria's A* consumes, the box its trapezoids occupy, and the
+//! importer that builds the graph from a `Gw.dat` map blob.
 //!
-//! Ported from `ASURA/crates/asura-world/src/map_data.rs`, first section, **every type with its own
-//! name, its own fields in their own order**. Nothing here is renamed, regrouped or tidied: the field
-//! order is the order the reference's structs read (`GmMapDataImport.h`, `GmPaths.h`), and the dump
-//! format (`graph_dump.rs`, ported next) writes exactly these fields in this order.
+//! Ported from `ASURA/crates/asura-world/src/map_data.rs`, **every type with its own name, its own
+//! fields in their own order**. Nothing here is renamed, regrouped or tidied: the field order is the
+//! order OpenTyria's structs read (`GmMapDataImport.h`, `GmPaths.h`), and the dump format
+//! (`GraphDump.rs`) writes exactly these fields in this order.
 //!
-//! The importer that builds these from a `Gw.dat` blob is a later piece of this subject. The graph
-//! itself - planes, trapezoids, split nodes, portals - is what the finder searches, and this file is
-//! that graph and nothing else.
+//! The first section is the graph itself - planes, trapezoids, split nodes, portals - which is what
+//! the finder searches. The second is the importer: the blob's container (`Chunks`), the plane readers
+//! and `PathStaticData::import` (`GmImportMap`), which `Pathfind.rs`'s `import_graph` and the
+//! navigation tool (`tools/manage/src/navigation.rs`) call.
 //!
-//! Reference anchors:
+//! OpenTyria anchors:
 //!
 //! * `Vec2f` - `Vec2fSub`, `Vec2fCross` (`GmPolygon.h`);
-//! * `NodeRef` - the reference stores pointers, this stores an array position; `NodeType` plus an
+//! * `NodeRef` - OpenTyria stores pointers, this stores an array position; `NodeType` plus an
 //!   index is the same identity (`GmMapDataImport.c:9`);
 //! * `XNode`, `YNode`, `SinkNode`, `Trapezoid`, `Portal`, `Plane` - the import's own records;
 //! * `PathStaticData` - one map's planes and the trapezoid counter they share;
 //! * `Bounds` - the `worldDims` an agent's position is checked against.
-#![allow(dead_code)] // the importer container arrives ahead of the plane readers; see docs/port/09-parity-audit.md 7b item 4
+#![allow(dead_code)] // file-wide: an unused private item in this file is not reported
 
 
 /// `PATH_DATA_SIGNATURE` / `PATH_DATA_VERSION`: the first eight bytes of the path section.
@@ -50,7 +52,7 @@ pub const NODE_TYPE_Y: u8 = 1;
 /// `NodeType`: a leaf, which is a trapezoid.
 pub const NODE_TYPE_SINK: u8 = 2;
 
-/// A 2-D position, the reference's `Vec2f`.
+/// A 2-D position, OpenTyria's `Vec2f`.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Vec2f {
     /// The first axis.
@@ -62,7 +64,7 @@ pub struct Vec2f {
 impl Vec2f {
     /// `Vec2fSub`: the vector from `other` to this one.
     ///
-    /// The name is the reference function's, so it stays even though Rust has an operator for it.
+    /// The name is the OpenTyria function's, so it stays even though Rust has an operator for it.
     #[allow(clippy::should_implement_trait)]
     pub fn sub(self, other: Vec2f) -> Vec2f {
         Vec2f {
@@ -78,7 +80,7 @@ impl Vec2f {
 }
 
 /// A pointer to a node, as a position in one of a plane's three node arrays. `NodeType` plus the array
-/// index is what the reference's node id encodes, so this is the same identity.
+/// index is what OpenTyria's node id encodes, so this is the same identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeRef {
     /// A node in the plane's x-node array.
@@ -102,14 +104,14 @@ pub struct XNode {
     pub right: Option<NodeRef>,
 }
 
-/// `YNode`: a split along the horizontal, `above`/`bellow` being the halves (the reference's spelling).
+/// `YNode`: a split along the horizontal, `above`/`bellow` being the halves (OpenTyria's spelling).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct YNode {
     /// The point the split passes through.
     pub pos: Vec2f,
     /// The half above it, when it holds a node.
     pub above: Option<NodeRef>,
-    /// The half below it, when it holds a node (the reference spells it `bellow`).
+    /// The half below it, when it holds a node (OpenTyria spells it `bellow`).
     pub bellow: Option<NodeRef>,
 }
 
@@ -186,11 +188,11 @@ pub struct Plane {
     pub sink_nodes: Vec<SinkNode>,
     /// The ways from this plane to another.
     pub portals: Vec<Portal>,
-    /// The reference's `h000C`: a count of records the tag-11 section holds, eight bytes each.
+    /// OpenTyria's `h000C`: a count of records the tag-11 section holds, eight bytes each.
     pub h000c: u32,
-    /// The trapezoids a portal leads to, `None` where the reference would store a NULL.
+    /// The trapezoids a portal leads to, `None` where OpenTyria would store a NULL.
     pub portals_traps: Vec<Option<usize>>,
-    /// Where walking the splits starts (`None` where the reference's pointer would be NULL).
+    /// Where walking the splits starts (`None` where OpenTyria's pointer would be NULL).
     pub root_node: Option<NodeRef>,
 }
 
@@ -219,12 +221,12 @@ pub struct Bounds {
 impl PathStaticData {
     /// `PathFindTrapezoid` (`GmPaths.c:11`): walk a plane's splits from the root until a leaf answers.
     ///
-    /// `plane` is an index into `planes` (the reference's `pos.plane`), and the answer is the trapezoid's
-    /// position in that plane's array, where the reference returns a pointer.
+    /// `plane` is an index into `planes` (OpenTyria's `pos.plane`), and the answer is the trapezoid's
+    /// position in that plane's array, where OpenTyria returns a pointer.
     pub fn trapezoid_at(&self, pos: Vec2f, plane: u16) -> Option<(u16, usize)> {
         let plane_state = self.planes.get(usize::from(plane))?;
         let mut node = plane_state.root_node?;
-        // A dead end in the graph is the reference's NULL node pointer, which ends the walk with no answer.
+        // A dead end in the graph is OpenTyria's NULL node pointer, which ends the walk with no answer.
         loop {
             node = match node {
                 NodeRef::X(index) => {
@@ -317,7 +319,7 @@ impl PathStaticData {
 mod tests {
     use super::*;
 
-    /// `Vec2fSub` and `Vec2fCross` are the reference's own, sign included.
+    /// `Vec2fSub` and `Vec2fCross` are OpenTyria's own, sign included.
     #[test]
     fn the_vector_operations_are_the_references() {
         let a = Vec2f { x: 3.0, y: 4.0 };
@@ -332,7 +334,7 @@ mod tests {
     }
 
     /// A plane's splits are walked from its root to a leaf, and the leaf names the trapezoid: a point
-    /// right of the split takes `right`, a dead end answers `None` as the reference's NULL pointer does.
+    /// right of the split takes `right`, a dead end answers `None` as OpenTyria's NULL pointer does.
     #[test]
     fn a_point_is_walked_down_the_splits_to_its_trapezoid() {
         let data = PathStaticData {
@@ -353,7 +355,7 @@ mod tests {
                         ..Trapezoid::default()
                     },
                 ],
-                // A split at x = 5 running along -y, so the point x < 5 is on its left: the reference
+                // A split at x = 5 running along -y, so the point x < 5 is on its left: OpenTyria
                 // takes `side < 0` as left, and `cross(dir, offset)` is negative there.
                 xnodes: vec![XNode {
                     pos: Vec2f { x: 5.0, y: 0.0 },
@@ -417,7 +419,7 @@ mod tests {
         assert_eq!(empty.plane_bounds(0), None, "a plane with no trapezoids has no box");
     }
 
-    /// The constants are the reference's, and the node index bases do not overlap.
+    /// The constants are OpenTyria's, and the node index bases do not overlap.
     #[test]
     fn the_constants_are_the_references() {
         assert_eq!(PATH_DATA_SIGNATURE, 0xEEFE_704C);
@@ -433,9 +435,10 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------------------------
-// ASURA/crates/asura-world/src/map_data.rs, lines 145-482: the blob's container - the records a map
-// file is made of - and the node-id lookup the plane readers use. The plane readers themselves
-// (`read_planes` and the eleven `read_*` functions) are the next piece.
+// ASURA/crates/asura-world/src/map_data.rs, line 145 on: the importer. The blob's container - the
+// records a map file is made of - the node-id lookup the plane readers use, the plane readers
+// themselves (`read_planes`, `read_plane` and the ten section readers it calls), and
+// `PathStaticData::import`.
 // ---------------------------------------------------------------------------------------------
 
 /// `RIFF_SIGNATURE` (`GmMapDataImport.c:3`): the four bytes a map blob starts with.
@@ -475,7 +478,7 @@ pub enum ImportError {
     Truncated(&'static str),
     /// A payload does not have the shape its reader measured it against; the string says which.
     Shape(&'static str),
-    /// An index does not name an element the plane has. The reference would read past its array here;
+    /// An index does not name an element the plane has. OpenTyria would read past its array here;
     /// this refuses instead of reading someone else's memory.
     Index {
         /// What the index was for.
@@ -528,8 +531,8 @@ pub struct Chunks<'a> {
     sorted: Vec<MapChunk<'a>>,
 }
 
-/// A reading cursor over the bytes of one section. The reference passes a `slice_uint8_t` by pointer and
-/// advances it; this is that, with the bounds checks the reference leaves to the caller.
+/// A reading cursor over the bytes of one section. OpenTyria passes a `slice_uint8_t` by pointer and
+/// advances it; this is that, with the bounds checks OpenTyria leaves to the caller.
 struct Reader<'a> {
     bytes: &'a [u8],
 }
@@ -609,7 +612,7 @@ impl<'a> Chunks<'a> {
 
         let mut rest = &data[5..];
         let mut sorted = Vec::new();
-        // `while (8 <= size)`: a tail shorter than a record header is not a record, and the reference
+        // `while (8 <= size)`: a tail shorter than a record header is not a record, and OpenTyria
         // ignores it rather than complaining.
         while rest.len() >= 8 {
             let chunk_id = u32_at(rest, 0);
@@ -652,10 +655,10 @@ impl<'a> Chunks<'a> {
 }
 
 /// `GetNodeFromDatId`: a node id becomes the array it names and its position there. An id past the end
-/// of its array is `None` - the reference's dangling NULL, not an error.
+/// of its array is `None` - OpenTyria's dangling NULL, not an error.
 fn node_ref(node_id: u32, plane: &Plane) -> Option<NodeRef> {
     if node_id < FIRST_Y_NODE_INDEX {
-        // `FIRST_X_NODE_INDEX` is zero, so the reference's subtraction is a no-op here.
+        // `FIRST_X_NODE_INDEX` is zero, so OpenTyria's subtraction is a no-op here.
         let index = (node_id - FIRST_X_NODE_INDEX) as usize;
         (index < plane.xnodes.len()).then_some(NodeRef::X(index))
     } else if node_id < FIRST_SINK_NODE_INDEX {
@@ -672,7 +675,7 @@ impl Trapezoid {
     pub const SIZE: usize = 44;
 }
 
-/// `GetTrapHelper`: a neighbour reference, where `UINT32_MAX` is the reference's own spelling of "none".
+/// `GetTrapHelper`: a neighbour reference, where `UINT32_MAX` is OpenTyria's own spelling of "none".
 fn trap_ref(dat_idx: u32, count: usize) -> Result<Option<usize>, ImportError> {
     if dat_idx == u32::MAX {
         return Ok(None);
@@ -707,12 +710,12 @@ impl PathStaticData {
         Ok(())
     }
 
-    /// `PathImport_PlaneTag11`: a section of `h000C` eight-byte records, which the reference skips without
+    /// `PathImport_PlaneTag11`: a section of `h000C` eight-byte records, which OpenTyria skips without
     /// reading. It advances `h000C * 8` of the section's `sub_length` bytes, not all of them.
     ///
     /// Measured over the seven map blobs the catalogue names: every one of their 283 planes declares
-    /// `sub_length == 2 * h000C * 8`, and the next section's tag sits exactly at the midpoint. The
-    /// reference reads the next section from inside this one's declared bounds, and it works because the
+    /// `sub_length == 2 * h000C * 8`, and the next section's tag sits exactly at the midpoint.
+    /// OpenTyria reads the next section from inside this one's declared bounds, and it works because the
     /// file is written that way - not because the arithmetic is right. Advancing `sub_length` instead
     /// would step over the vector section, and every plane would fail on its next tag.
     fn skip_tag11(&mut self, index: usize, reader: &mut Reader<'_>) -> Result<(), ImportError> {
@@ -783,7 +786,7 @@ impl PathStaticData {
                 xbl: f32_at(row, 36),
                 xbr: f32_at(row, 40),
             };
-            // The reference's `static_data->traps_count++`: a plain u32, wrapping rather than panicking.
+            // OpenTyria's `static_data->traps_count++`: a plain u32, wrapping rather than panicking.
             *traps_count = traps_count.wrapping_add(1);
         }
         Ok(())
@@ -797,7 +800,7 @@ impl PathStaticData {
         }
         let kind = reader.take(1, "the root node")?[0];
         let plane = &self.planes[index];
-        // The reference stores `&array[0]` without checking the array has one; an empty array leaves it
+        // OpenTyria stores `&array[0]` without checking the array has one; an empty array leaves it
         // NULL there, so a graph with no nodes of the named kind has no root here either.
         let root = match kind {
             NODE_TYPE_X => (!plane.xnodes.is_empty()).then_some(NodeRef::X(0)),
@@ -904,7 +907,7 @@ impl PathStaticData {
     }
 
     /// `PathImport_ReadPortalTraps`: the trapezoids a portal leads to. An index past the plane's
-    /// trapezoids leaves the reference's NULL, which is `None` here.
+    /// trapezoids leaves OpenTyria's NULL, which is `None` here.
     fn read_portal_traps(
         &mut self,
         index: usize,
@@ -1034,7 +1037,7 @@ pub const RIFF_MAP2: u8 = 3;
 impl PathStaticData {
     /// `GmImportMap`: a whole map blob in, the graph out.
     ///
-    /// The reference does the same three things: refuse a container that is not a map, split it into
+    /// OpenTyria does the same three things: refuse a container that is not a map, split it into
     /// records, and import the stage-2 path chunk. Its `MapParameters` import is commented out in the
     /// source, so there is nothing there to be in parity with.
     pub fn import(map: &[u8]) -> Result<PathStaticData, ImportError> {
@@ -1052,7 +1055,7 @@ impl PathStaticData {
         Ok(data)
     }
 
-    /// `PathDataImport`: the section header, the section the reference calls `Step2`, then the planes.
+    /// `PathDataImport`: the section header, the section OpenTyria calls `Step2`, then the planes.
     fn read(&mut self, reader: &mut Reader<'_>) -> Result<(), ImportError> {
         // PathImport_CheckHeader.
         let header = reader.take(12, "the path section's header")?;
@@ -1060,7 +1063,7 @@ impl PathStaticData {
         let version = u32_at(header, 4);
         let sequence = u32_at(header, 8);
         // `assert(sequence != PATH_SEQUENCE_FAST_SAVE)`, where that constant is -1. The field is not read
-        // for anything else, so a fast save is refused by assertion in the reference and here alike.
+        // for anything else, so a fast save is refused by assertion in OpenTyria and here alike.
         debug_assert_ne!(sequence, u32::MAX, "the reference refuses a fast save");
         if signature != PATH_DATA_SIGNATURE || version != PATH_DATA_VERSION {
             return Err(ImportError::Shape(
@@ -1069,7 +1072,7 @@ impl PathStaticData {
         }
 
         // PathImport_Step2. The length is read from byte 1 of five, so the u32 overlaps the tag byte that
-        // follows it; that is the reference's arithmetic and the file's layout, not a typo made twice.
+        // follows it; that is OpenTyria's arithmetic and the file's layout, not a typo made twice.
         if reader.len() <= 5 {
             return Err(ImportError::Truncated("the section after the path header"));
         }
@@ -1087,7 +1090,7 @@ impl PathStaticData {
         let count_bytes = reader.take(4, "the plane count")?;
         let count = u32_at(count_bytes, 0) as usize;
 
-        // The reference keeps this hash for the whole import: a portal pairs with one on a plane that may
+        // OpenTyria keeps this hash for the whole import: a portal pairs with one on a plane that may
         // be finished (`PathImport_ReadPortals`).
         let mut pairs: std::collections::HashMap<u32, (u16, usize)> = std::collections::HashMap::new();
         self.planes.reserve(count);

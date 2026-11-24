@@ -1,7 +1,7 @@
 //! Copying one client's connection to another machine: what a front door does.
 //!
-//! Reference: the reference's auth service hands a gameplay connection to a game server over its
-//! control channel (`CtrlMsgId_TransferConnection`), and the game server then speaks to the client
+//! OpenTyria's auth service hands a gameplay connection to a game server over its control channel
+//! (`CtrlMsgId_TransferConnection`, `AuthSrv.c`), and the game server then speaks to the client
 //! directly. A socket handle cannot cross a process boundary here, so the crossing is a copy: the
 //! front door keeps both connections and carries bytes between them
 //! (`docs/decisions/0004-gameplay-connections-arrive-at-the-front-door.md`).
@@ -12,7 +12,7 @@
 //! the wrong program.
 //!
 //! The copy is `tokio`'s [`copy_bidirectional`], so the two directions run in one future with no
-//! lock and no extra thread: a client's gameplay connection costs one task, as it did before.
+//! lock and no extra thread: a client's gameplay connection costs one task.
 
 use std::net::SocketAddr;
 use std::time::Duration;

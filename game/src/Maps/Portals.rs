@@ -1,15 +1,23 @@
-//! A map's doorways: the wall a character crosses, and where the receiving map puts it.
+//! A map's doorways: the wall a character crosses.
 //!
-//! Ported whole from `ASURA/crates/asura-world/src/portals.rs` (503 lines): `Arch`, `is_wall`,
-//! `crossed_by`, `side`, `box_crossed`, `point_half_extent`, `Arrival`'s `direction`, `Crossed`,
-//! `MapPortals` with `arrival_for`/`arrival_at`, and the three lookups a world asks - `crossed`,
-//! `arrival`, `arrival_at`.
+//! Ported from `ASURA/crates/asura-world/src/portals.rs` (503 lines), and **ported thin**: part of that
+//! file is here and part is not.
 //!
-//! **Where the data comes from is this tree's structure, not that file's.** ASURA reads one
-//! `portals.json` per map folder out of its pack (`config/World/<pack>/maps/.../<map>/portals.json`);
-//! here a doorway is a row (`docs/port/04-configuration.md`, "three kinds of data"): an arch is a
-//! `map_arch` row and an arrival is a `map_arrival` row, which this tree already had for R21. The
-//! values seeded for map 148 are ASURA's own measured file, quoted in the migration.
+//! - Here: `Arch` with `is_wall` and `crossed_by`, `side`, `box_crossed`, `Crossed`, `ARRIVAL_MATCH`,
+//!   `MapPortals` as its arch list, and one of the three lookups a world asks - `crossed`, with
+//!   `arches_of` (ASURA's `pack_arches`).
+//! - Elsewhere in this tree: the `Arrival` record and its `direction` are in `game/Maps/mod.rs`, and the
+//!   pack's file is read by `game/Maps/Pack.rs`. The box's half side is not read here by a
+//!   `point_half_extent`: it arrives through [`Portals::new`] from `World.PointBoxHalfExtent`.
+//! - Not here: `MapPortals`'s `arrival_for` and `arrival_at`, and the `arrival` and `arrival_at`
+//!   lookups. The handlers search the world's arrival list themselves
+//!   (`game/Handlers/TravelHandler.rs`, `game/Server/WorldSession.rs`), and nothing reads
+//!   `ARRIVAL_MATCH`.
+//!
+//! **Where the data comes from:** one `portals.json` per map folder of the world pack
+//! (`config/World/<pack>/maps/.../<map>/portals.json`), as ASURA reads it
+//! (`docs/decisions/0014-the-world-content-is-a-pack.md`). `game/Maps/Pack.rs` reads the files and the
+//! world program hands the arches to [`Portals::new`].
 //!
 //! The owner's rule the shape follows (`ASURA/crates/asura-world/src/portals.rs:19-26`): "the portal
 //! is an invisible wall we cross ... should be a plane", so a wall-shaped arch counts a crossing only
@@ -102,8 +110,8 @@ fn box_crossed(point: (f32, f32), from: (f32, f32), to: (f32, f32), extent: f32)
 }
 
 /// How close a written arrival point has to be to a saved position to be the same arrival, in the
-/// map's own units. The position written for a crossing comes from the same entry, so this only
-/// absorbs the float round trip through the database.
+/// map's own units (`ASURA/crates/asura-world/src/portals.rs:77`). Nothing in this tree reads it: the
+/// `arrival_at` lookup that uses it in ASURA is not ported.
 pub const ARRIVAL_MATCH: f32 = 1.0;
 
 /// The doorway a step crossed.
@@ -115,18 +123,17 @@ pub struct Crossed {
     pub from_map: u32,
 }
 
-/// One map's doorways, as the rows are read: its arches.
+/// One map's doorways, as the pack states them: its arches.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MapPortals {
     /// The walls of this map.
     pub arches: Vec<Arch>,
 }
 
-/// Every map's doorways, read once at start-up: what a step is judged against, and where an arriving
-/// character stands.
+/// Every map's doorways, read once at start-up: what a step is judged against.
 ///
 /// `ASURA/crates/asura-world/src/portals.rs:313-377` (`table_pack`, `pack_arches`, `crossed`,
-/// `arrival`, `arrival_at`), with the rows in place of the pack's files.
+/// `arrival`, `arrival_at`), of which `pack_arches` (as `arches_of`) and `crossed` are here.
 #[derive(Debug, Clone, Default)]
 pub struct Portals {
     maps: HashMap<u32, MapPortals>,
@@ -134,7 +141,7 @@ pub struct Portals {
 }
 
 impl Portals {
-    /// Build the table from the rows a database holds, and the point-doorway box's half side.
+    /// Build the table from the arches the pack states, and the point-doorway box's half side.
     pub fn new(arches: Vec<Arch>, extent: f32) -> Portals {
         let mut maps: HashMap<u32, MapPortals> = HashMap::new();
         for arch in arches {
@@ -149,7 +156,7 @@ impl Portals {
         Portals { maps, extent }
     }
 
-    /// A world with no doorway rows: every step crosses nothing.
+    /// A world with no doorways: every step crosses nothing.
     pub fn empty() -> Portals {
         Portals {
             maps: HashMap::new(),
@@ -167,12 +174,12 @@ impl Portals {
         self.maps.values().filter(|map| !map.arches.is_empty()).count()
     }
 
-    /// How many arches the rows hold, for the start-up line.
+    /// How many arches the table holds, for the start-up line.
     pub fn arches(&self) -> usize {
         self.maps.values().map(|map| map.arches.len()).sum()
     }
 
-    /// The walls of one map, when the rows state any.
+    /// The walls of one map, when the pack states any.
     ///
     /// `portals.rs:335-340`, `pack_arches`.
     pub fn arches_of(&self, from_map: u32) -> Option<&[Arch]> {
@@ -184,9 +191,9 @@ impl Portals {
 
     /// The doorway the step `from` -> `to` crosses in `from_map`.
     ///
-    /// **A map the rows describe is judged by its own walls, and nothing else.** A step that crosses
+    /// **A map the pack describes is judged by its own walls, and nothing else.** A step that crosses
     /// none of its arches crosses nothing, even if it passes near a measured crossing point. A map with
-    /// no arch rows has no doorways and crosses nothing (`portals.rs:342-355`).
+    /// no arches has no doorways and crosses nothing (`portals.rs:342-355`).
     pub fn crossed(&self, from_map: u32, from: (f32, f32), to: (f32, f32)) -> Option<Crossed> {
         self.arches_of(from_map)?
             .iter()
@@ -279,7 +286,7 @@ mod tests {
                 from_map: 148,
                 idx: 0,
                 to_map: Some(146),
-                // ASURA's measured row for map 148 (`config/World/Vanilla/maps/Prophecies/`
+                // ASURA's measured arch for map 148 (`config/World/Vanilla/maps/Prophecies/`
                 // `Ascalon (pre-Searing)/Outposts/148/portals.json`), at the precision an f32 holds.
                 from: (7523.469, 5129.551),
                 to: (7055.75, 5592.349),

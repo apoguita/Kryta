@@ -1,9 +1,10 @@
 //! The three logical databases and how the configuration names them.
 //!
 //! Reference: `src/server/database/Database/` - `DatabaseEnv`, `DatabaseLoader`,
-//! `DatabaseWorkerPool` and `MySQLConnectionInfo`. What is here now is the part that needs no
+//! `DatabaseWorkerPool` and `MySQLConnectionInfo`. This file is the part that needs no
 //! server to be right: which databases exist, how a connection string is read, and what the
-//! loader asks the configuration for.
+//! loader asks the configuration for. The connection is `Connection.rs` and the pool is `Pool.rs`,
+//! beside this file.
 //!
 //! The engine is PostgreSQL rather than the reference's MySQL (`docs/decisions/0001-postgresql.md`)
 //! and the pool keeps the reference's threads and callback queue

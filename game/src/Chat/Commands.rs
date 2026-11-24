@@ -1,7 +1,7 @@
 //! The command table: which names a player or an operator may type, and the operation each one runs.
 //!
 //! Reference: `docs/decisions/0011-the-command-surface-is-content.md`. The command surface is content,
-//! so the rows live in a file (`config/Server/commands.json`) and Rust keeps only the operations. The reference's
+//! so the rows live in a file (`config/Server/commands.json`) and Rust keeps only the operations. GWPS's
 //! own dispatch is two functions - `GameSrv_TryHandleGmCommand` (`GmCommands.c`, `/tp`, `/teleport`,
 //! `/maps`) and `GameSrv_HandleChatCommand` (`GmChat.c`, `/stuck`) - and the working implementation
 //! names that surface once in a Rust table (`ASURA/crates/asura-world/src/chat.rs:126-163`). This is
@@ -93,8 +93,8 @@ impl Table {
 
     /// Read the rows.
     ///
-    /// A file that is missing is reported and leaves the table empty, the way the creation tables are
-    /// handled: the program starts and the log says what it does not have. A file that is *present* but
+    /// A file that is missing is reported and leaves the table empty: the program starts and the
+    /// log says what it does not have. A file that is *present* but
     /// wrong is an error - a row without a name, a name stated twice, a parameter list the parser cannot
     /// honour, or an operation this server does not have - because a command that cannot work is worse
     /// than one that does not exist.
@@ -228,9 +228,9 @@ impl Table {
 
     /// The chat row a typed line resolves to, and the values it carries.
     ///
-    /// The reference splits a chat line on its first space: the name, then one argument if the row
-    /// takes one. A name the file grants but with the wrong shape resolves to nothing, which is the
-    /// reference's "Unknown command" rather than a partly-run command.
+    /// GWPS splits a chat line on its first space: the name, then one argument if the row
+    /// takes one. A name the file grants but with the wrong shape resolves to nothing, which is
+    /// GWPS's "Unknown command" rather than a partly-run command.
     pub fn resolve_chat(&self, line: &str) -> Option<(&Command, Vec<String>)> {
         let (name, argument) = match line.split_once(' ') {
             Some((name, rest)) => (name, rest.trim_start()),
@@ -256,7 +256,7 @@ impl Table {
     /// A console row's name may be more than one word (`server info` is the reference's name for a
     /// console command), so the match is the longest name that prefixes the line. The values are what
     /// remains, split on whitespace; a name that matches with the wrong number of values resolves to
-    /// nothing, which is the reference's "Unknown command" rather than a partly-run command.
+    /// nothing, which is GWPS's "Unknown command" rather than a partly-run command.
     pub fn resolve_console(&self, line: &str) -> Option<(&Command, Vec<String>)> {
         let mut best: Option<(&Command, Vec<String>)> = None;
         for row in self.rows.iter().filter(|row| row.serves(Surface::Console)) {

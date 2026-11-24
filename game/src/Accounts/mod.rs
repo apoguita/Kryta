@@ -248,7 +248,10 @@ mod tests {
             panic!("the login database is not reachable");
         };
         let name = "manage-test@example.com";
+        let renamed = "manage-renamed@example.com";
+        // A run that stopped half way leaves either name behind; both go before this one starts.
         let _ = accounts.delete(name);
+        let _ = accounts.delete(renamed);
 
         assert!(
             accounts
@@ -290,8 +293,13 @@ mod tests {
                 .active
         );
 
-        assert!(accounts.set_eula(name, 26).expect("the EULA is set"));
-        assert_eq!(accounts.find(name).expect("read").expect("there").eula, 26);
+        // The account answers to its new name now, so that is the name the EULA is set by.
+        assert!(accounts.set_eula(renamed, 26).expect("the EULA is set"));
+        assert_eq!(accounts.find(renamed).expect("read").expect("there").eula, 26);
+        assert!(
+            !accounts.set_eula(name, 26).expect("the old name answers"),
+            "the old name names no row"
+        );
 
         assert!(
             accounts

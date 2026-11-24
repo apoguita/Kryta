@@ -1,9 +1,9 @@
 //! The client's unlockable-PvP-item table: 387 entries, sent once per load.
 //!
-//! Reference: the reference's own `items[]` array in `GameSrv_SendPvpItems`, which the client builds
+//! Reference: GWPS's own `items[]` array in `GameSrv_SendPvpItems`, which the client builds
 //! its unlockable-item screen from - so the table is data the server sends, not a message layout.
-//! Copied row for row from `ASURA/crates/asura-world/src/pvp_items.rs`, which was generated from the
-//! reference's table by `tools/gen-pvp-items.py` and is frozen: `docs/reference/decisions/
+//! Copied row for row from `ASURA/crates/asura-world/src/pvp_items.rs`, which was generated from
+//! GWPS's table by `tools/gen-pvp-items.py` and is frozen: `docs/reference/decisions/
 //! layer-decisions.md` there, D11. It is game content, so it is a table this tree carries rather than
 //! a number any rule derives.
 //!
@@ -13,11 +13,11 @@
 pub struct PvpItem {
     /// The item's id in the client's own table.
     pub id: u16,
-    /// The parameter dwords that go out with it, in the reference's order.
+    /// The parameter dwords that go out with it, in GWPS's order.
     pub params: &'static [u32],
 }
 
-/// Every unlockable PvP item, in the reference's order.
+/// Every unlockable PvP item, in GWPS's order.
 pub const PVP_ITEMS: &[PvpItem] = &[
     PvpItem {
         id: 1,

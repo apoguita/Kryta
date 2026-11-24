@@ -61,18 +61,14 @@ impl WorldSocketMgr {
             let login = login.clone();
             let closing = Arc::clone(&closing);
             Arc::new(move || {
-                let mut session = match (characters.as_ref(), login.as_ref()) {
-                    (Some(characters), Some(login)) => WorldSession::with_characters_and_login(
-                        log.clone(),
-                        &world,
-                        Arc::clone(characters),
-                        Arc::clone(login),
-                    ),
-                    (Some(characters), None) => {
-                        WorldSession::with_characters(log.clone(), &world, Arc::clone(characters))
+                // A session is given the login pool only together with the character pool.
+                let mut session = WorldSession::new(log.clone(), &world);
+                if let Some(characters) = characters.as_ref() {
+                    session = session.with_characters(Arc::clone(characters));
+                    if let Some(login) = login.as_ref() {
+                        session = session.with_login(Arc::clone(login));
                     }
-                    (None, _) => WorldSession::new(log.clone(), &world),
-                };
+                }
                 session.set_closing(Arc::clone(&closing));
                 Box::new(session) as Box<dyn Session>
             })

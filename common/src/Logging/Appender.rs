@@ -28,7 +28,8 @@ impl AppenderBase {
         }
     }
 
-    /// The appender's number, which a logger's list names.
+    /// The appender's number, counted in the order the configuration's appenders are read. A
+    /// logger's list names an appender by its name, not by this number.
     pub fn id(&self) -> u8 {
         self.id
     }

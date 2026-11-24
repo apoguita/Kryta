@@ -1,22 +1,27 @@
 //! The map's walkable graph, and what a walk request is answered with.
 //!
-//! Reference: the reference's path finder over a map's pmap (`GmPaths.h`, `PathFindQuery`), and the
-//! working implementation's port of it, `ASURA/crates/asura-world/src/pathfind.rs`. The types a caller
-//! passes and receives are the working implementation's own (`pathfind::Pos`, `pathfind::Waypoint`,
-//! `Walk` in `agent.rs:570`), so the handlers that use this file are that file's handlers.
+//! Source: OpenTyria's path finder over a map's pmap (`GmPaths.h`, `PathFindQuery`), and ASURA's port
+//! of it, `ASURA/crates/asura-world/src/pathfind.rs`. The types a caller passes and receives are
+//! ASURA's own (`pathfind::Pos`, `pathfind::Waypoint`, `Walk` in `agent.rs:570`), so the handlers that
+//! use this file are that file's handlers.
 //!
-//! **The graph itself is not here yet.** It is read out of the client's own archive - the path tables
-//! and the bloated map blob, `gwdat.rs`, `fa_compress.rs`, `map_data.rs` and `path_tables.rs` in the
-//! working implementation - and this tree's `game/Pack/` is not built. So every lookup answers
-//! `Walk::NoGraph`, which is exactly what the working implementation answers for a map it holds no
-//! graph for, and both its handlers already say what to do with that answer: a walk request sends
+//! What is here: the geometry and the heap the search is made of; `PathContext`, one finder over one
+//! map's imported graph, with `path_finding` (the A*) and the corridor walk that reduces its chain to
+//! waypoints; the directional walk in `Pathfind/Directional.rs`; and `PathGraphs`, the graphs a world
+//! serves, with `import_graph` and `find_path_blob`, which read a graph out of a `Gw.dat` through
+//! `game/Pack/` and `MapData.rs`.
+//!
+//! Who calls it: the world program fills a `PathGraphs` from a dump (`PathGraphs::from_dump`, then
+//! `bind`, `worldserver/src/main.rs`), and `game/Handlers/MovementHandler.rs` asks it with `walk` and
+//! `walk_direction`. The navigation tool (`tools/manage/src/navigation.rs`) calls `find_path_blob`.
+//! `PathGraphs::load`, `PathGraphs::import` and `walk_any_plane` are called by tests only.
+//!
+//! A map with no bound graph answers `Walk::NoGraph`, which is exactly what ASURA answers for a map it
+//! holds no graph for, and both its handlers say what to do with that answer: a walk request sends
 //! **nothing** (`agent.rs:858-879`), and a manual movement sends nothing either (`agent.rs:1023-1029`).
-//!
-//! `docs/port/09-parity-audit.md` records the graph as missing. When the archive reader lands, this
-//! file gains the finder and nothing above it changes.
-#![allow(dead_code)] // the ported search arrives ahead of its callers; see docs/port/09-parity-audit.md 7b
-#![allow(clippy::manual_is_multiple_of)] // (len % 2) == 0 is the reference spelling in PathHeapPop
-#![allow(clippy::collapsible_if)] // the nested if is the reference shape in PickNextPoint
+#![allow(dead_code)] // file-wide: an unused private item in this file is not reported
+#![allow(clippy::manual_is_multiple_of)] // (len % 2) == 0 is OpenTyria's spelling in PathHeapPop
+#![allow(clippy::collapsible_if)] // the nested if is OpenTyria's shape in PickNextPoint
 
 // The directional walk, a child module as ASURA keeps it (pathfind/directional.rs).
 #[path = "Pathfind/Directional.rs"]
@@ -38,7 +43,7 @@ pub struct Pos {
 
 /// One point of a walk, and the trapezoid it was crossed into.
 ///
-/// `ASURA/crates/asura-world/src/pathfind.rs:131`. The reference stores a `PathTrapezoid *`; trapezoid
+/// `ASURA/crates/asura-world/src/pathfind.rs:131`. OpenTyria stores a `PathTrapezoid *`; trapezoid
 /// ids are unique across a map's planes, so the id is the same identity.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Waypoint {
@@ -51,7 +56,7 @@ pub struct Waypoint {
 // ---------------------------------------------------------------------------------------------
 // ASURA/crates/asura-world/src/pathfind.rs, lines 33-454: the geometry the search is made of.
 //
-// Copied function for function, in the file's own order. The quirks are the reference's and stay:
+// Copied function for function, in the file's own order. The quirks are OpenTyria's and stay:
 // `closest_point_on_segment` stores the offset rather than the projected point because nothing reads
 // the point, `heap_pop`'s sift-down is spelled with the extra "last full depth" case because that is
 // the order equal-cost nodes pop in, and `precise_cross` treats near-parallel as parallel.
@@ -123,7 +128,7 @@ fn vec2f_unit(vector: Vec2f) -> Vec2f {
 }
 
 impl Pos {
-    /// The two floats, as the reference's `pos.v2` sees them.
+    /// The two floats, as OpenTyria's `pos.v2` sees them.
     fn v2(self) -> Vec2f {
         Vec2f {
             x: self.x,
@@ -132,7 +137,7 @@ impl Pos {
     }
 }
 
-/// `PathFindPoint`: a position and the trapezoid it was crossed into. The reference stores a
+/// `PathFindPoint`: a position and the trapezoid it was crossed into. OpenTyria stores a
 /// `PathTrapezoid *`; trapezoid ids are unique across a map's planes, so the id is the same identity.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 struct FindPoint {
@@ -283,7 +288,7 @@ fn is_point_in_trap(pos: Pos, trap: &Trapezoid) -> bool {
 
 /// `GetClosestPointOnLineSegment`.
 ///
-/// The reference stores `oproj` - the offset from the projected point back to `pos` - rather than the
+/// OpenTyria stores `oproj` - the offset from the projected point back to `pos` - rather than the
 /// projected point itself. Nothing reads the point afterwards, only the distance it travels with, so the
 /// quirk is invisible; it is reproduced rather than corrected.
 fn closest_point_on_segment(
@@ -377,7 +382,7 @@ fn find_point_on_next_trap(
     if percent < 0.0 {
         let src_x = clampf(src_pos.x, min_left_x, max_right_x);
         let dst_x = clampf(dst_pos.x, min_left_x, max_right_x);
-        // 0.9 and 0.1: the reference spells them as the doubles nearest those floats
+        // 0.9 and 0.1: OpenTyria spells them as the doubles nearest those floats
         // (`0.8999999761581421f`, `0.1000000238418579f`), which is what these are.
         Vec2f {
             x: (src_x * 0.9) + (dst_x * 0.1),
@@ -464,25 +469,25 @@ fn precise_cross(left: Vec2f, right: Vec2f) -> f32 {
 
 // ---------------------------------------------------------------------------------------------
 // ASURA/crates/asura-world/src/pathfind.rs, lines 456-557: the context a search runs in, and the two
-// lookups it answers with. `PathFinding` itself (line 779 on) is the next piece.
+// lookups it answers with.
 // ---------------------------------------------------------------------------------------------
 
 use crate::terrain::map_data::{PathStaticData, Portal};
 
 /// A path finder over one map's imported graph.
 ///
-/// The node array, the priority queue and the corridor steps are kept between searches, because the
-/// reference keeps them in its context: a second search on the same map does not reallocate, and the
-/// node array is cleared rather than rebuilt.
+/// The node array, the priority queue and the corridor steps live here between searches, because
+/// OpenTyria keeps them in its context. A search clears the queue and the steps, and builds the node
+/// array again at the map's trapezoid count (`path_finding`).
 ///
 /// The graph itself is shared (`Arc`) rather than borrowed: a world keeps one finder per map for as long
-/// as the map is served, and the graph is the same object for every walk. That is the reference's
+/// as the map is served, and the graph is the same object for every walk. That is OpenTyria's
 /// `srv->map_context` with one difference - it has one context per server because it runs one server per
 /// map, while this hosts several maps in one process.
 pub struct PathContext {
     pub(crate) data: std::sync::Arc<PathStaticData>,
     /// Trap id to `(plane id, position in that plane's trapezoids)`. Trap ids are dense and assigned in
-    /// plane order by the importer, so this is the reference's `array_at(&nodes, trap->trap_id)` and its
+    /// plane order by the importer, so this is OpenTyria's `array_at(&nodes, trap->trap_id)` and its
     /// `PathTrapezoid *` in one table.
     index: Vec<(u16, u32)>,
     nodes: Vec<FindNode>,
@@ -539,7 +544,7 @@ impl PathContext {
             .copied()
     }
 
-    /// The trapezoids a portal leads to, as trap ids: the reference walks `portal->pair->traps` and
+    /// The trapezoids a portal leads to, as trap ids: OpenTyria walks `portal->pair->traps` and
     /// dereferences each entry, so an entry the importer left NULL is skipped here rather than crashing.
     pub(crate) fn portal_pair_traps(&self, portal: &Portal) -> Vec<u32> {
         let Some(plane) = self.data.planes.get(usize::from(portal.portal_plane_id)) else {
@@ -576,7 +581,7 @@ impl PathContext {
     // -----------------------------------------------------------------------------------------
     // ASURA/crates/asura-world/src/pathfind.rs, lines 559-777: one expansion of the search - the
     // node it queues, the neighbour it costs through a crossing, and the three ways a neighbour is
-    // reached (above, bellow, through a portal). `PathFinding` itself (line 779 on) is next.
+    // reached (above, bellow, through a portal).
     // -----------------------------------------------------------------------------------------
 
     /// `PathAddNode`: record the cost of reaching `trap` and queue it.
@@ -636,7 +641,7 @@ impl PathContext {
 
         let mut best_estimate = estimated_dest_bottom.min(estimated_dest_top);
         if trap.yb <= dst_pos.y && dst_pos.y <= trap.yt {
-            // The reference subtracts `0.009999999776482582`, the double nearest the float 0.01.
+            // OpenTyria subtracts `0.009999999776482582`, the double nearest the float 0.01.
             best_estimate -= 0.01;
         }
 
@@ -706,7 +711,7 @@ impl PathContext {
         let Some(portal) = self.portal(src.plane, usize::from(portal_id)) else {
             return;
         };
-        // The reference dereferences `portal->pair` and asserts it is the mirror; a portal without one is
+        // OpenTyria dereferences `portal->pair` and asserts it is the mirror; a portal without one is
         // a crash there, so refusing here is the closest thing to parity that does not abort.
         let Some(pair) = portal.pair else {
             return;
@@ -801,7 +806,7 @@ impl PathContext {
 
     // -----------------------------------------------------------------------------------------
     // ASURA/crates/asura-world/src/pathfind.rs, lines 779-918: `PathFinding` (the A* itself) and
-    // `PathCreateWaypoints`, which hands the chain to the corridor walk ported above.
+    // `PathCreateWaypoints`, which hands the chain to the corridor walk below (`BuildHelper`).
     // -----------------------------------------------------------------------------------------
 
     /// `PathFinding` (`GmPaths.c:944`): the A* itself.
@@ -894,7 +899,7 @@ impl PathContext {
             }
         }
 
-        // Nothing reached the destination's trapezoid: the reference still builds a path to the closest
+        // Nothing reached the destination's trapezoid: OpenTyria still builds a path to the closest
         // trapezoid it did reach, if the destination is inside that one, and reports failure either way.
         if let Some(trap) = closest_trap {
             if is_point_in_trap(dst, &self.trap(trap)) {
@@ -947,9 +952,9 @@ impl PathContext {
 }
 
 // ---------------------------------------------------------------------------------------------
-// ASURA/crates/asura-world/src/pathfind.rs, lines 921-940: the corridor the waypoint builder follows,
-// declared here so `PathFinding` (line 783) and `PathCreateWaypoints` (line 891) arrive together with
-// the helper they hand themselves to. `BuildHelper`'s own `impl` (line 941 on) is the next piece.
+// ASURA/crates/asura-world/src/pathfind.rs, lines 921-940: the corridor the waypoint builder follows -
+// the two records `PathCreateWaypoints` (line 891) builds and hands the chain to. `BuildHelper`'s own
+// `impl` (line 941 on) follows them.
 // ---------------------------------------------------------------------------------------------
 
 /// `PathFindBound` (`GmPaths.c:552`): one side of the corridor being followed, and the step it began at.
@@ -984,8 +989,8 @@ struct BuildHelper<'c> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// ASURA/crates/asura-world/src/pathfind.rs, lines 941-1286: the corridor walk. Every step is the
-// reference's, including the two places where its behaviour is undefined or surprising and the port
+// ASURA/crates/asura-world/src/pathfind.rs, lines 941-1286: the corridor walk. Every step is
+// OpenTyria's, including the two places where its behaviour is undefined or surprising and the port
 // says so: the uninitialised `t`/`s` of a parallel step (`add_waypoint_and_reduce`) and the swap of
 // the edges when the corridor goes down into the next trapezoid (`run`).
 // ---------------------------------------------------------------------------------------------
@@ -1043,7 +1048,7 @@ impl BuildHelper<'_> {
                     x: curr_trap.xbr.min(next_trap.xtr),
                     y: curr_trap.yb,
                 };
-                // Note the swap: going down, the reference passes `right` as the left edge.
+                // Note the swap: going down, OpenTyria passes `right` as the left edge.
                 self.process_next(right, left, next_trap_id, &mut curr_node);
             } else if let Some(portal) = self.portal_adjacent(curr_trap.portal_right, next_trap_id)
             {
@@ -1111,7 +1116,7 @@ impl BuildHelper<'_> {
                 });
                 self.process_next(bottom, top, next_trap_id, &mut curr_node);
             } else {
-                // The reference asserts "shouldn't be possible" here and stops.
+                // OpenTyria asserts "shouldn't be possible" here and stops.
                 break;
             }
         }
@@ -1138,7 +1143,7 @@ impl BuildHelper<'_> {
                         }
                     }
                 } else {
-                    // The reference reads its uninitialised `t` here; leaving it at zero reproduces the
+                    // OpenTyria reads its uninitialised `t` here; leaving it at zero reproduces the
                     // 11-waypoint answer to the one parallel case measured, byte for byte.
                     step.pos
                 }
@@ -1334,8 +1339,9 @@ impl BuildHelper<'_> {
 
 // ---------------------------------------------------------------------------------------------
 // ASURA/crates/asura-world/src/pathfind.rs, lines 1484-1700 and 1624-1699: the graphs a world serves.
-// `load` and `import` (lines 1507-1592), which read a graph out of a `Gw.dat` through the importer,
-// and `walk_direction` (1639), which needs `directional.rs`, are the remaining pieces.
+// `load` and `import` (lines 1507-1592) read a graph out of a `Gw.dat` through the importer,
+// `from_dump` and `bind` take one from a dump, and the three walks answer from them: `walk`,
+// `walk_direction` (1639, through `Pathfind/Directional.rs`) and `walk_any_plane`.
 // ---------------------------------------------------------------------------------------------
 
 use crate::world::MapEntry;
@@ -1572,15 +1578,16 @@ impl PathGraphs {
 }
 
 // ---------------------------------------------------------------------------------------------
-// ASURA/crates/asura-world/src/pathfind.rs, lines 1746-1794: the blob a map's path graph lives at.
-// `PathGraphs::load`/`import` (1507-1592) and `import_graph` (1703-1744) wait on the importer in
-// `map_data.rs`, which is the last piece of this subject.
+// ASURA/crates/asura-world/src/pathfind.rs, lines 1703-1794: `import_graph` (1703-1744), which reads
+// one map's blob through the importer in `MapData.rs` for `PathGraphs::load`/`import` (1507-1592), and
+// `find_path_blob` (1746-1794), the blob a map's path graph lives at.
 // ---------------------------------------------------------------------------------------------
 
 /// Read one map's blob out of an open archive and import it, or say why it is absent.
 ///
-/// `ASURA/crates/asura-world/src/pathfind.rs:1703`, `import_graph`: every line it prints is the working
-/// implementation's own.
+/// `ASURA/crates/asura-world/src/pathfind.rs:1703`, `import_graph`: every line it prints is ASURA's
+/// own, and it prints to standard error rather than to the server's log. The `docs/03-roadmap.md` one
+/// of those lines names is not a document of this tree.
 pub fn import_graph(
     archive: &mut crate::pack::GwDat,
     archive_path: &str,
@@ -1626,7 +1633,7 @@ pub fn import_graph(
 
 /// The blob a map's path graph actually lives at, tolerating the archive's bit-31 replacement rule.
 ///
-/// The reference's catalogue names some blobs with bit 31 set (`0x8005EA96` for The Northlands) while a
+/// OpenTyria's catalogue names some blobs with bit 31 set (`0x8005EA96` for The Northlands) while a
 /// client archive may bind the plain logical id (`0x5EA96`): the bit is the archive's "replacement
 /// pending" flag, not part of the map's identity. So the candidates are the configured id, then the
 /// plain one, then the flagged one, and the caller logs when a substitution happened.
@@ -1679,7 +1686,7 @@ pub fn find_path_blob(
 /// `ASURA/crates/asura-world/src/agent.rs:570`.
 #[derive(Debug, Clone)]
 pub enum Walk {
-    /// A path, in the reference's reduced form. It may hold a single waypoint naming the destination.
+    /// A path, in OpenTyria's reduced form. It may hold a single waypoint naming the destination.
     Found(Vec<Waypoint>),
     /// The finder ran and refused: the destination is not reachable from where the agent stands.
     NoPath,
@@ -1695,7 +1702,7 @@ mod tests {
 
     /// Two stacked trapezoids, one plane: the lower from y 0 to 5, the upper from 5 to 10, x 0 to 10,
     /// each naming the other as its top/bottom neighbour, and a y-node at y = 5 whose two halves are
-    /// their leaves. That is the smallest graph the reference's own structures can describe.
+    /// their leaves. That is the smallest graph OpenTyria's own structures can describe.
     fn two_stacked_traps() -> std::sync::Arc<PathStaticData> {
         use crate::terrain::map_data::{NodeRef, Plane, SinkNode, YNode};
         let lower = Trapezoid {
@@ -1782,7 +1789,7 @@ mod tests {
 
     /// A graph with no plane at all answers `None` from the split walk, so the search refuses the walk
     /// rather than inventing a path - and a point outside a trapezoid's own edges is **not** that case:
-    /// the split walk is the BSP's answer, not a containment test, so the reference still walks to the
+    /// the split walk is the BSP's answer, not a containment test, so OpenTyria still walks to the
     /// leaf it lands in.
     #[test]
     fn a_position_on_no_plane_finds_no_walk() {
@@ -1888,9 +1895,6 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// `PathHeapPush`/`PathHeapPop` pop the cheapest node first, and keep doing it as the heap shrinks -
-    /// the order is the order the search visits trapezoids in, which is why the reference's own
-    /// sift-down is kept rather than a tidy one.
     /// The whole archive path: `PathGraphs::load` reads map 148's own blob out of this machine's
     /// `Gw.dat`, binds it, and the map walks from the point its config spawns on. Skipped when there is
     /// no archive to read.
@@ -1927,6 +1931,9 @@ mod tests {
         ));
     }
 
+    /// `PathHeapPush`/`PathHeapPop` pop the cheapest node first, and keep doing it as the heap shrinks -
+    /// the order is the order the search visits trapezoids in, which is why OpenTyria's own
+    /// sift-down is kept rather than a tidy one.
     #[test]
     fn the_heap_pops_in_cost_order() {
         let mut heap = Vec::new();

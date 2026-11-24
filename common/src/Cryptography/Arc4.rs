@@ -11,7 +11,7 @@
 
 /// The RC4 keystream state: a permutation of 256 bytes and two indices.
 ///
-/// Reference: the state `arc4_setup` builds and `arc4_crypt` advances.
+/// OpenTyria (`arc4.c`): the state `arc4_setup` builds and `arc4_crypt` advances.
 #[derive(Clone)]
 pub struct Arc4 {
     state: [u8; 256],
@@ -76,8 +76,8 @@ impl Arc4 {
     /// The same keystream position, as a second instance.
     ///
     /// One connection has two ciphers keyed identically and advanced separately, one per direction,
-    /// which is what the reference's server does when it copies its encrypting context into the
-    /// decrypting one at the moment the key is exchanged.
+    /// which is what OpenTyria's server does when it copies its encrypting context into the
+    /// decrypting one at the moment the key is exchanged (`AuthSrv.c:1146`).
     pub fn fork(&self) -> Self {
         self.clone()
     }

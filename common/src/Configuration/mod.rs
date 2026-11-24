@@ -49,6 +49,8 @@ use std::str::FromStr;
 
 #[path = "Json.rs"]
 pub mod json;
+#[path = "Startup.rs"]
+pub mod startup;
 
 /// What a configuration problem is worth.
 ///

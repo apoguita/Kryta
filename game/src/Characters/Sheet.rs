@@ -2,9 +2,9 @@
 //! anything.
 //!
 //! Reference: `src/server/game/Entities/Player/Player.cpp`, `Player::LoadFromDB` - the row a session
-//! reads to build the player it is about to add to a map. This tree's session read the row itself
-//! until 2026-11-14; the shape of what it reads, and the sheet a row that cannot be read is replaced
-//! by, are the noun's.
+//! reads to build the player it is about to add to a map. The statement is `DatabaseCharacters::sheet`
+//! (`Characters/Repository.rs`); the shape of what it reads, and the sheet a row that cannot be read
+//! is replaced by, are here.
 
 use crate::server::packets::character_packets;
 
@@ -16,7 +16,8 @@ use crate::server::packets::character_packets;
 pub struct CharacterSheet {
     /// What the client calls it.
     pub name: String,
-    /// Which campaign it was made in, 0 for Prophecies.
+    /// Which campaign it was made in, the client's own chapter byte: 0 none (a PvP character),
+    /// 1 Prophecies, 2 Factions, 3 Nightfall (`docs/game-rules.md`, E225).
     pub campaign: u8,
     /// Its primary profession.
     pub profession: u8,
@@ -34,7 +35,8 @@ pub struct CharacterSheet {
 
 impl CharacterSheet {
     /// The sheet a connection is loaded with when its row cannot be read - or when the program opened
-    /// no character database: a fresh Prophecies Warrior named "Player".
+    /// no character database: a level 1 Warrior named "Player" with campaign 0, which is the
+    /// no-campaign (PvP) value.
     ///
     /// A load gives the client a body either way, and the row is what makes the name and the set its
     /// own. The two defaults are the creation screen's own (`character_packets::DEFAULT_PROFESSION`,

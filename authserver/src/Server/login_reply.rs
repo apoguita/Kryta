@@ -1,6 +1,6 @@
 //! The answer to a login: the five messages a client needs before it shows a character.
 //!
-//! Reference: the reference's `AuthSrv_HandlePortalAccountLogin`, whose reply this reproduces in order
+//! GWPS: `AuthSrv_HandlePortalAccountLogin`, whose reply this reproduces in order
 //! and at the sizes the records give. The **layouts and literals are measured facts**, each marked
 //! where it is used; the bytes a client compares come from it, so a field one byte out is a client
 //! error rather than a log line.
@@ -13,19 +13,21 @@
 //! | 4 | `0x0011` account info | 81 |
 //! | 5 | `0x0003` request response | 10 |
 //!
-//! The sizes are the reference's own wire trace (`recordings/gwps/world/load-stream.log`, one
+//! The sizes are GWPS's own wire trace (`recordings/gwps/world/load-stream.log`, one
 //! login): `0x0007` 102 bytes for a five-unit name, `0x0016` 599, `0x0014` 10, `0x0011` 81,
 //! `0x0003` 10. With no characters it is 700, and the client shows an empty character list rather than
 //! failing.
 //!
 //! Nothing here is decided by this server: the two 8-byte blobs in message 4 and the feature list are
-//! the reference's literals, and the 591-byte settings block is a copied payload in
-//! the account settings payload.
+//! GWPS's literals, and the 591-byte settings block is a copied payload
+//! (`account_settings.rs`).
 
 /// The status field of a `0x0003` that accepts the login.
 pub const GM_ERROR_NONE: u32 = 0;
 
-/// The status field of a `0x0003` that refuses it: the identity pair did not resolve.
+/// The status field of a `0x0003` that refuses it: the identity pair did not resolve. No session
+/// path sends it yet; the builder below and its test hold the bytes.
+#[cfg(test)]
 pub const GM_ERROR_AUTH_ERROR: u32 = 11;
 
 /// The status field of a `0x0003` that refuses a request this server cannot place - a map nobody is
@@ -38,13 +40,13 @@ pub const GM_ERROR_AUTH_ERROR: u32 = 11;
 /// connect timeout.
 pub const GM_ERROR_NETWORK_ERROR: u32 = 2;
 
-/// `GM_ERROR_INVALID_CHARNAME`: what the reference answers a character name it does not hold - recorded
+/// `GM_ERROR_INVALID_CHARNAME`: what GWPS answers a character name it does not hold - recorded
 /// by the working implementation at `ASURA/crates/asura-auth/src/lib.rs:426-429`
 /// (`messages::STATUS_INVALID_CHARNAME`).
 pub const GM_ERROR_INVALID_CHARNAME: u32 = 23;
 
-/// The `host` field of `0x0009`, in bytes: room for either address family, which is why the
-/// reference's struct reserves more than an IPv4 address needs.
+/// The `host` field of `0x0009`, in bytes: room for either address family, which is why
+/// GWPS's struct reserves more than an IPv4 address needs.
 pub const GAME_SERVER_HOST_LEN: usize = 24;
 
 /// Winsock's `AF_INET`, which is what this client reads.
@@ -65,9 +67,9 @@ pub struct ReplyCharacter {
     pub name: String,
     /// The character's settings block, which the list carries as a counted byte string.
     ///
-    /// It is `CharacterSettings`' own 62 bytes (`game/characters`), not this module's: the reference's
+    /// It is `CharacterSettings`' own 62 bytes (`game/characters`), not this module's: GWPS's
     /// `CharacterSettings_FromDbCharacter` builds the same record, and a character list is what reads
-    /// it. The reference's own output settles the size - `05 00 "Appok" | 3e 00 <62 bytes>`, ninety
+    /// it. GWPS's own output settles the size - `05 00 "Appok" | 3e 00 <62 bytes>`, ninety
     /// of its 102 bytes - which is why this is a slice and not a fixed width.
     pub settings: Vec<u8>,
 }
@@ -93,14 +95,15 @@ pub fn reply_frames(
     frames
 }
 
-/// A `0x0003` and nothing else, which is all a refusal sends.
+/// A `0x0003` and nothing else, which is all a refusal sends. No session path calls it yet.
+#[cfg(test)]
 pub fn refusal(request: u32, status: u32) -> Vec<u8> {
     request_response(request, status)
 }
 
 /// `AUTH_SMSG_CHARACTER_INFO` (`0x0007`): one character in the list.
 ///
-/// Layout: `req_id`, the character's 16-byte id, a `u32` the reference leaves zero, a counted UTF-16
+/// Layout: `req_id`, the character's 16-byte id, a `u32` GWPS leaves zero, a counted UTF-16
 /// name in a 20-slot field, then the settings block as a counted byte string.
 fn character_info(request: u32, character: &ReplyCharacter) -> Vec<u8> {
     let mut body = Vec::with_capacity(100);
@@ -135,19 +138,19 @@ fn friend_stream_end(request: u32) -> Vec<u8> {
 
 /// `AUTH_SMSG_ACCOUNT_INFO` (`0x0011`): the account, the selected character, and the feature list.
 ///
-/// Every literal is the reference's, and the last `u32` is on the wire - reading it as the next
-/// message's header is what desynchronised a real client once.
+/// Every literal is GWPS's, and the last `u32` is on the wire - a client that is not sent it reads
+/// the next message's header in its place and desynchronises.
 fn account_info(
     request: u32,
     account: [u8; 16],
     selected: Option<&ReplyCharacter>,
     eula_accepted: u8,
 ) -> Vec<u8> {
-    /// The reference's `h000E`.
+    /// GWPS's `h000E`.
     const H000E: [u8; 8] = [0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-    /// The reference's `h0016`: which campaigns the account owns.
+    /// GWPS's `h0016`: which campaigns the account owns.
     const H0016: [u8; 8] = [0x80, 0x3F, 0x42, 0x00, 0x83, 0x00, 0x0C, 0x02];
-    /// The reference's feature list; its third `u16` is the account's character slots.
+    /// GWPS's feature list; its third `u16` is the account's character slots.
     const FEATURES: [u8; 8] = [0x01, 0x00, 0x04, 0x00, 0x57, 0x00, 0x01, 0x00];
 
     let mut body = Vec::with_capacity(79);
@@ -199,7 +202,7 @@ pub fn instance_counts(trans: u32, counts: &[(u8, u8)]) -> Vec<u8> {
 /// `AUTH_SMSG_GAME_SERVER_INFO` (`0x0009`): where the client should play, and what it presents there.
 ///
 /// Layout (`AuthSrv_GameServerInfo`): `req_id`, `map_token`, `map_id`, `host[24]`, `player_token` -
-/// 42 bytes, fixed. The reference fills `map_token` with the world's own id and `player_token` with a
+/// 42 bytes, fixed. GWPS fills `map_token` with the world's own id and `player_token` with a
 /// number drawn per travel; the message names a *server*, never a map file, because the world owns
 /// that decision.
 ///
@@ -222,7 +225,7 @@ pub fn game_server_info(
 
 /// The `host` field for an address: the family, the port **big-endian**, then the address bytes.
 ///
-/// The asymmetry is the reference's own (`AuthSrv_SendGameServerInfo` writes the family with the
+/// The asymmetry is GWPS's own (`AuthSrv_SendGameServerInfo` writes the family with the
 /// host's byte order and the port with the network's), and the trace shows it for IPv4:
 /// `02 00 | 17 E0 | 7F 00 00 01` - family 2 little-endian, port 6112 big-endian, 127.0.0.1.
 pub fn host_blob(address: std::net::SocketAddr) -> [u8; GAME_SERVER_HOST_LEN] {
@@ -262,9 +265,8 @@ fn write_counted_utf16(out: &mut Vec<u8>, text: &str, capacity: usize) {
 
 /// `AUTH_SMSG_SESSION_INFO` (`0x0001`): the server salt, sent straight after the seed.
 ///
-/// The reference sends this before anything else on the connection, and a client that does not get it
-/// waits: a run against a server that answered only the seed sat for forty seconds and then reset the
-/// connection. Size and shape from the trace: `01 00 | salt | 00 00 00 00`, ten bytes.
+/// GWPS sends this before anything else on the connection, and a client that does not get it
+/// waits about forty seconds and then resets the connection. Size and shape from the trace: `01 00 | salt | 00 00 00 00`, ten bytes.
 pub fn session_info(salt: u32, unknown: u32) -> Vec<u8> {
     let mut body = Vec::with_capacity(8);
     body.extend_from_slice(&salt.to_le_bytes());
@@ -274,7 +276,7 @@ pub fn session_info(salt: u32, unknown: u32) -> Vec<u8> {
 
 /// `AUTH_SMSG_HEARTBEAT` (`0x0000`): the tick, which is a constant rather than a clock.
 ///
-/// Size and shape from the trace: `00 00 | 10 00 00 00`, six bytes. The reference always sends 16.
+/// Size and shape from the trace: `00 00 | 10 00 00 00`, six bytes. GWPS always sends 16.
 pub fn heartbeat(tick: u32) -> Vec<u8> {
     let mut body = Vec::with_capacity(4);
     body.extend_from_slice(&tick.to_le_bytes());

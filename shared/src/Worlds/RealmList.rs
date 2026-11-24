@@ -3,8 +3,8 @@
 //! Reference: `src/server/shared/Realms/RealmList.{h,cpp}`. The reference reads the table, resolves
 //! each row's addresses, keeps the ones that resolve and reports the ones that do not, and repeats
 //! that on `RealmsStateUpdateDelay`. This port reads and resolves the same way; the repeat belongs
-//! to the program's run loop, which does not exist yet, so [`WorldList::load`] is what a program
-//! calls at start-up and on a timer it owns.
+//! to the program, so [`WorldList::load`] is what a program calls at start-up and on a timer it
+//! owns - the `realms` thread in `authserver/src/main.rs`.
 
 use std::collections::BTreeMap;
 use std::net::{IpAddr, ToSocketAddrs};

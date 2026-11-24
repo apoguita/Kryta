@@ -2,7 +2,7 @@
 //!
 //! Ported from `ASURA/crates/asura-world/src/pathfind/directional.rs`, function for function. ASURA's
 //! own header marks this **PROVISIONAL / NOT ACCEPTED** (owner client test, 2026-11-06: "movement is
-//! better but not perfect"), and that caveat travels with the port: the code is the reference's, its
+//! better but not perfect"), and that caveat travels with the port: the code is ASURA's, its
 //! known imperfection included, and it is not improved here.
 //!
 //! The two numbers the walk runs by are ASURA's own settings file

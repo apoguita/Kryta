@@ -75,7 +75,7 @@ impl MapEntry {
         }
     }
 
-    /// What kind of place it is, in words: `0` and `1` are the reference's own `MapType` values, and
+    /// What kind of place it is, in words: `0` and `1` are OpenTyria's own `MapType` values, and
     /// every other value it can carry is a kind of instance this world does not host.
     ///
     /// `ASURA/crates/asura-world/src/catalogue.rs:144-152`, `MapEntry::kind`.
@@ -90,7 +90,7 @@ impl MapEntry {
         }
     }
 
-    /// The alias `/tp` would take for this map: the reference's aliases are lower-case names with
+    /// The alias `/tp` would take for this map: OpenTyria's aliases are lower-case names with
     /// single spaces ("lakeside county"), so this is the name lower-cased. An unnamed map has no alias
     /// to type and says so, rather than inventing one.
     ///
@@ -132,8 +132,8 @@ pub struct World {
     /// The running copies of maps: one outpost is one copy per district (R1, R4), and the district a
     /// character enters is this world's state, so every session shares it.
     districts: Arc<Mutex<crate::districts::Districts>>,
-    /// The item templates the world database holds, read once at start-up: what a load resolves a
-    /// character's held items against.
+    /// The item templates, built once at start-up from the world pack's item definitions
+    /// (`worldserver/src/main.rs`): what a load resolves a character's held items against.
     templates: Vec<crate::data_stores::ItemDefinition>,
     /// The path graphs this world serves, one finder per map: a walk is answered from these, and a map
     /// with none answers `NoGraph` (`ASURA/crates/asura-world/src/pathfind.rs:1484`, `PathGraphs`).
@@ -185,7 +185,7 @@ fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
-/// The outpost this world starts a fresh character in: `wanted` when the world hosts that row, and the
+/// The outpost this world starts a fresh character in: `wanted` when the world hosts that map, and the
 /// lowest-id outpost it hosts when it does not.
 ///
 /// R12 gives a new character exactly one unlock; R14 places a load at the character's last outpost. The
@@ -358,7 +358,7 @@ impl World {
     /// The doorways this world judges a step against.
     ///
     /// `ASURA/crates/asura-world/src/portals.rs:313-377`: the pack's table, read once at start-up. A
-    /// map the rows describe is judged by its own walls, and a step that crosses none of them crosses
+    /// map the pack describes is judged by its own walls, and a step that crosses none of them crosses
     /// nothing.
     pub fn portals(&self) -> &std::sync::Arc<crate::maps::Portals> {
         &self.portals
@@ -387,7 +387,7 @@ impl World {
         Arc::clone(&self.peers)
     }
 
-    /// Set the item templates, after the program read them from its world database.
+    /// Set the item templates, after the program built them from the world pack's item definitions.
     pub fn set_templates(&mut self, templates: Vec<crate::data_stores::ItemDefinition>) {
         self.templates = templates;
     }
@@ -404,7 +404,7 @@ impl World {
 
     /// The outpost this world starts a fresh character in, and unlocks for it (R12, R14).
     ///
-    /// `World.StartingOutpost` when this world hosts that row, and the lowest-id outpost it hosts when
+    /// `World.StartingOutpost` when this world hosts that map, and the lowest-id outpost it hosts when
     /// it does not - a world whose configured outpost is missing still has to name one, and which one
     /// it chose is the program's to say. The rule itself is `first_outpost`, because a session carries
     /// a copy of the maps rather than the world and knows the number from its settings.
@@ -529,13 +529,14 @@ impl World {
         self.maps.iter().find(|map| map.id == id)
     }
 
-    /// Read the maps, and where a character may stand on each, from the world database.
+    /// Take the maps, where a character may stand on each, and where a crossing lands, from the world
+    /// pack (`docs/decisions/0014-the-world-content-is-a-pack.md`).
     ///
     /// Reference: the same `SetInitialWorldSettings` pass - a world that opens with no map hosts nothing,
     /// and says so rather than pretending.
     pub fn load_maps(
         &mut self,
-        maps: &impl crate::maps::MapSource,
+        maps: &crate::maps::pack::Pack,
         source: &str,
         log: &Log,
     ) -> Result<usize, String> {
@@ -742,7 +743,7 @@ mod tests {
     }
 
     /// R12/R14: the outpost a fresh character starts in is the configured one when the world hosts it,
-    /// and the lowest-id outpost it hosts otherwise - a world whose configured row is missing still has
+    /// and the lowest-id outpost it hosts otherwise - a world whose configured map is missing still has
     /// to name one.
     #[test]
     fn the_starting_outpost_is_the_configured_one_or_the_lowest_the_world_hosts() {
@@ -821,7 +822,7 @@ mod tests {
         assert_eq!(other.kind_name(), "other", "a kind this world does not host");
     }
 
-    /// A world with two maps and one spawn point, as the database would give it.
+    /// A world with two maps and one spawn point, as a pack would give it.
     fn world() -> World {
         let mut world = World::new(2);
         world.set_maps(
@@ -922,19 +923,18 @@ mod tests {
 
     /// The catalogue's own test: every map this world hosts, walked from one of its own spawn points.
     ///
-    /// This is what "the catalogue is wired" means in practice - a row with a type and an archive file,
-    /// a spawn point to stand on (R13), and a path graph the finder answers from. It needs the world
-    /// database and this machine's `Gw.dat`, so it is `#[ignore]`d; run it with
+    /// This is what "the catalogue is wired" means in practice - a record with a type and an archive
+    /// file, a spawn point to stand on (R13), and a path graph the finder answers from. It needs the
+    /// world pack and this machine's `Gw.dat`, so it is `#[ignore]`d; run it with
     /// `cargo test -p game --lib every_hosted_map -- --ignored --nocapture`.
     ///
     /// A map is counted as walkable when **any** of its own spawn points reaches any of a few nearby
     /// candidate points: a spawn outside the geometry, or a blob that does not import, is a real answer
     /// (`NoGraph`/`NoPath`) and not a test failure - the tally is the statement.
     #[test]
-    #[ignore = "needs the world database and a local Gw.dat"]
+    #[ignore = "needs a local Gw.dat"]
     fn every_hosted_map_walks_from_one_of_its_own_spawn_points() {
         use common::configuration::{Config, Policy};
-        use database::database::{read_settings, DatabaseKind};
 
         let log = Log::new();
         let Some(config) =
@@ -942,23 +942,29 @@ mod tests {
         else {
             panic!("the world program's own configuration reads");
         };
-        let settings = read_settings(&config, DatabaseKind::World).expect("the world settings");
-        let mut pool = database::database::DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log)
-            .expect("the world pool opens");
-        pool.ping().expect("the world database answers");
-        let repository = crate::maps::DatabaseMaps::new(
-            std::sync::Arc::new(std::sync::Mutex::new(pool)),
-            log.clone(),
-        );
-        let (records, spawns) = repository.load().expect("the map tables read");
-        let arch_list = repository.arches().expect("the arch rows read");
+        let (world_pack, _) = config
+            .value_string("WorldPack", "config/World/Vanilla")
+            .expect("WorldPack is a string");
+        let pack = crate::maps::pack::Pack::load(std::path::Path::new("..").join(&world_pack), &log)
+            .expect("the world pack reads");
+        let (records, spawns) = pack.load_maps().expect("the pack's maps");
+        let arch_list = pack.arches().expect("the pack's arches");
         let mut world = World::new(2);
         world.set_maps(records, spawns);
         world.set_portals(crate::maps::Portals::new(arch_list, 250.0));
 
-        let (archive, _) = config
-            .value_string("GwDat", "Gw.dat")
-            .expect("GwDat is a string");
+        // The world program names no archive (`docs/decisions/0015-headless-navigation-assets.md`), so
+        // the test finds one the way the other archive tests do: `KRYTA_GW_DAT`, then beside the
+        // workspace.
+        let Some(archive) = std::env::var("KRYTA_GW_DAT").ok().or_else(|| {
+            ["Gw.dat", "../Gw.dat", "../data/Gw.dat"]
+                .iter()
+                .find(|candidate| std::path::Path::new(candidate).is_file())
+                .map(|candidate| candidate.to_string())
+        }) else {
+            eprintln!("skipped: no local Gw.dat (set KRYTA_GW_DAT or put one beside the workspace)");
+            return;
+        };
         let hostable: Vec<MapEntry> = world
             .maps()
             .iter()

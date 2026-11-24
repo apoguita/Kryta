@@ -1,14 +1,14 @@
 //! The `Gw.dat` archive: its index, which turns a file id into an entry.
 //!
 //! Ported from the working implementation's reader (`ASURA/crates/asura-world/src/gwdat.rs`), which is
-//! itself the index half of the reference's `FaArchive.c`.
+//! itself the index half of OpenTyria's `FaArchive.c`.
 //!
 //! `Gw.dat` is the client's asset archive - 3.6 GB of it on this machine - and it is where a map's
 //! geometry lives: the path graph a world needs in order to answer "can this agent walk there" is a chunk
-//! inside one of its entries. This module is the **index**: the header, the file table and the hash that
-//! turns a file id into an entry. That half needs no decompression, so it can be written and tested
-//! against the real file before any decoder exists, and it answers the question the map catalogue already
-//! depends on: is `0x1B97D` in this archive, and how big is it.
+//! inside one of its entries. This module is the **index** - the header, the file table and the hash that
+//! turns a file id into an entry - and the read of one entry's bytes, stored or decompressed. The index
+//! needs no decompression, and it answers the question the map catalogue depends on: is `0x1B97D` in
+//! this archive, and how big is it.
 //!
 //! Format, from `FaArchive.h` (little endian, packed):
 //!
@@ -22,18 +22,18 @@
 //! The table of contents is itself an entry (`INDEX_TOC = 1`): its bytes are `file_id, file_index` pairs,
 //! and that is the hash a client lookup goes through.
 //!
-//! ## The reference's own off-by-one, kept and documented
+//! ## OpenTyria's own off-by-one, kept and documented
 //!
 //! `FaGetEntry` indexes the entry array with the TOC's `file_index` **as it is**, while `FaGetFile` uses
 //! `file_index - 1`. One of the two is wrong; `FaGetFile` is the one that loads maps, so this module
 //! follows it. A reader that trusted `FaGetEntry` would fetch its neighbour's bytes.
 //!
-//! ## What is not here yet
+//! ## An entry's bytes
 //!
-//! An entry's **decompressed** bytes. A compressed entry is decoded by `FaCompress.c`'s `FaDecompress`, and
-//! that decoder (`ASURA/crates/asura-world/src/fa_compress.rs`) is the next piece of this port. Until it
-//! lands a compressed entry can be read as it is stored (`stored`) and its announced size read
-//! (`announced_size`), which is enough to prove the index against the real archive.
+//! `stored` reads an entry exactly as it sits in the archive, and `announced_size` reads the decompressed
+//! size a compressed entry carries in its last four bytes. `file` is `FaGetFile`: a stored entry is its
+//! own content, and a compressed one is decoded by `FaCompress.c`'s `FaDecompress`, which is
+//! `FaCompress.rs` here (port of `ASURA/crates/asura-world/src/fa_compress.rs`).
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -199,7 +199,7 @@ impl GwDat {
             let file_id = u32_at(pair, 0);
             let file_index = u32_at(pair, 4);
             if file_index == 0 {
-                continue; // the reference skips these too (`FaGetFile`)
+                continue; // OpenTyria skips these too (`FaGetFile`)
             }
             // `FaGetFile` decrements; see the module note.
             by_id.insert(file_id, file_index as usize - 1);
@@ -252,8 +252,8 @@ impl GwDat {
 
     /// The **stored** bytes of an entry, exactly as they sit in the archive.
     ///
-    /// A compressed entry's last four bytes are the decompressed size; decoding them is the other half of
-    /// `FaArchive.c` (`FaGetFile` calls `FaDecompress`), and that decoder is not ported yet.
+    /// A compressed entry's last four bytes are the decompressed size; decoding the entry is the other
+    /// half of `FaArchive.c` (`FaGetFile` calls `FaDecompress`), which is [`GwDat::file`].
     pub fn stored(&mut self, file_id: u32) -> io::Result<Option<Vec<u8>>> {
         let Some(entry) = self.entry(file_id) else {
             return Ok(None);
@@ -419,7 +419,7 @@ mod tests {
         );
     }
 
-    /// The decoder, against the real archive: a map blob comes out as the RIFF container the reference's
+    /// The decoder, against the real archive: a map blob comes out as the RIFF container OpenTyria's
     /// importer parses - `ffna` at byte 0, a chunk type at 4 - and exactly the length the entry announced.
     /// A decoder off by a bit gives the right length and the wrong bytes, so the signature is the check.
     #[test]

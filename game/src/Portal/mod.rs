@@ -149,8 +149,8 @@ pub struct Account {
 /// Who an account is.
 ///
 /// The web gate the client was served by answered from rows, so the identity it hands out is the
-/// very pair the login service resolves. What backs this in this tree is not decided yet: the login
-/// database has no account table, because what an account is in this game is a decision.
+/// very pair the login service resolves. What backs this is the caller's: the auth program
+/// answers from the login database's `account` table (`authserver/src/Server/accounts.rs`).
 pub trait Accounts {
     /// The account behind a login name, when there is one.
     fn resolve(&self, login_name: &str) -> Option<Account>;

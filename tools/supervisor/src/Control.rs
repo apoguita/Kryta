@@ -12,7 +12,8 @@ use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::time::Duration;
 
-/// What the supervisor calls each service: `up`, `exited 2`, `stopped`, `starting`.
+/// What the supervisor calls each service: `starting`, `up on <port>`, `restarting`, `stopped`,
+/// `exited <code>`, `no READY line`.
 pub type State = std::sync::Arc<std::sync::Mutex<BTreeMap<String, String>>>;
 
 /// How a control thread asks the supervisor's own loop to act. The loop owns the children, so the

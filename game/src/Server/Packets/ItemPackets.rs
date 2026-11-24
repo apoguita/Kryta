@@ -150,7 +150,7 @@ pub fn inventory_create_bag(
 
 /// `0x0161`: one item, with everything a client needs to draw it.
 ///
-/// **Not a fixed size**: the fixed part is 33 bytes after the header, then two counted fields - the
+/// **Not a fixed size**: the fixed part is 31 bytes after the header, then two counted fields - the
 /// name as `u16` units and the modifiers as a **one-byte** count of dwords.
 pub fn create_named_item(item: &NamedItem) -> Vec<u8> {
     let mut body = Vec::with_capacity(31 + 2 + item.name.len() * 2 + 1 + item.modifiers.len() * 4);
@@ -220,7 +220,7 @@ pub fn item_remove(stream: u16, item_id: u32) -> Vec<u8> {
 
 /// `0x015F`: the same item without its name - a bag slot's item, which the client draws from its model.
 ///
-/// The reference sends this one for the items in a bag and for what a player wears
+/// GWPS sends this one for the items in a bag and for what a player wears
 /// (`GameSrv_SendItemsInBag`, `GmItem.c:111-127`, and `GameSrv_BroadcastPlayerEquippedItems`,
 /// `GmItem.c:129-160`) and the named one for the inventory stream. The difference is the name: an item
 /// sitting in a bag slot is drawn from its model, so the client is not told a name it can already
@@ -273,7 +273,7 @@ mod tests {
         // The named form is the same bytes with the two counted fields after it.
         let named = create_named_item(&item);
         assert_eq!(&named[2..25], &unnamed[2..25], "the same fields, then the name");
-        // `33 + 2n + 1 + 4m` after the header: an empty name and no modifiers is 36 bytes.
+        // `2 + 31 + 2 + 2n + 1 + 4m` in all: an empty name and no modifiers is 36 bytes.
         assert_eq!(named.len(), 36, "and an empty name, and no modifiers");
     }
 

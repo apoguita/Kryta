@@ -64,7 +64,6 @@ impl std::error::Error for ApplyError {}
 /// Reference: the table each database keeps for itself.
 pub const UPDATES_TABLE: &str = "updates";
 
-/// Apply every file the database has not had, in the order given.
 /// The DDL for the history table, used when a database has none.
 ///
 /// Reference: `DBUpdater` creates its own `updates` table when it finds none, because the first

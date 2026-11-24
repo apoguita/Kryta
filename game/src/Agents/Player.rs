@@ -13,14 +13,14 @@ use crate::server::packets::{
     agent_packets, character_packets, instance_packets, misc_packets, party_packets,
 };
 
-/// The team token a load gives the client. Evidence: the reference's own trace carried `0D F0 AD BA`
+/// The team token a load gives the client. Evidence: GWPS's own trace carried `0D F0 AD BA`
 /// in `0x00F2` (`recordings/gwps/world/load-stream.log`), which is `ASURA`'s `PLAYER_TEAM_TOKEN`.
 pub(crate) const PLAYER_TEAM_TOKEN: u32 = 0xBAAD_F00D;
 
 /// The two dword lists a load sends at full length whether or not a character has used them: the
 /// hard-mode mission and bonus bitmaps. An empty list is not the same message - it is an array the
 /// client can index past the end of (`ASURA/crates/asura-world/src/player.rs`, `UNLOCKED_MAP_ZEROS`,
-/// copied from the reference's own send log: 31 zero words each).
+/// copied from GWPS's own send log: 31 zero words each).
 pub(crate) const UNLOCKED_MAP_ZEROS: &[u32] = &[0u32; 31];
 
 /// Full morale, which a fresh agent has (`ASURA/crates/asura-world/src/player.rs`, `MORALE_FULL`).
@@ -88,7 +88,7 @@ impl Player {
     }
 
     /// The `0x8090` answer: the whole block the client's players request is answered with, frame
-    /// for frame and in the reference's own order (`GameSrv_HandleInstanceLoadRequestPlayers`,
+    /// for frame and in GWPS's own order (`GameSrv_HandleInstanceLoadRequestPlayers`,
     /// `ASURA/crates/asura-world/src/player.rs`, `player_block`). It is one block, not a menu: the
     /// PvP unlocks and the unlockable-item table, the account features, the unlocked lists and the
     /// team token, the skills and the progress record, the visibility and player flags, the player

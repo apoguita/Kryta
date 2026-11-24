@@ -2,10 +2,10 @@
 //!
 //! Reference: `src/server/database/Updater/` - `UpdateFetcher.{h,cpp}` and `DBUpdater.{h,cpp}`.
 //!
-//! Ported by subject, and this is the half that needs no database: which files exist, what state
-//! each one is in, the order they are applied in, and how one is read. The other half - asking the
-//! database which files it already has, applying the rest, and recording the result - arrives with
-//! the connection.
+//! Ported by subject, and this file is the half that needs no database: which files exist, what
+//! state each one is in, the order they are applied in, and how one is read. The other half - asking
+//! the database which files it already has, applying the rest, and recording the result - is
+//! [`apply`], in `Apply.rs` beside this file.
 //!
 //! Two behaviours here are the reference's and both are load bearing:
 //!

@@ -91,9 +91,12 @@ mod tests {
     use crate::logging::appender::AppenderBase;
     use crate::logging::log_common::{AppenderFlags, AppenderType};
 
+    /// What a collector was handed, readable from outside the boxed appender.
+    type Lines = Arc<Mutex<Vec<String>>>;
+
     struct Collector {
         base: AppenderBase,
-        lines: Vec<String>,
+        lines: Lines,
     }
 
     impl Appender for Collector {
@@ -107,48 +110,53 @@ mod tests {
             AppenderType::None
         }
         fn write_text(&mut self, message: &LogMessage, prefix: &str) {
-            self.lines.push(format!("{prefix}{}", message.text));
+            self.lines.lock().unwrap().push(format!("{prefix}{}", message.text));
         }
     }
 
-    fn shared(level: LogLevel) -> SharedAppender {
-        Arc::new(Mutex::new(Box::new(Collector {
+    fn collecting(level: LogLevel) -> (SharedAppender, Lines) {
+        let lines: Lines = Arc::new(Mutex::new(Vec::new()));
+        let appender = Arc::new(Mutex::new(Box::new(Collector {
             base: AppenderBase::new(1, "collector", level, AppenderFlags::NONE),
-            lines: Vec::new(),
-        }) as Box<dyn Appender>))
+            lines: Arc::clone(&lines),
+        }) as Box<dyn Appender>));
+        (appender, lines)
+    }
+
+    fn shared(level: LogLevel) -> SharedAppender {
+        collecting(level).0
     }
 
     #[test]
     fn a_logger_at_info_drops_debug() {
-        let appender = shared(LogLevel::Trace);
+        let (appender, lines) = collecting(LogLevel::Trace);
         let mut logger = Logger::new("root", LogLevel::Info);
-        logger.add_appender("collector", appender.clone());
+        logger.add_appender("collector", appender);
 
         logger.write(&LogMessage::new(LogLevel::Info, "root", "yes"));
         logger.write(&LogMessage::new(LogLevel::Debug, "root", "no"));
 
-        let locked = appender.lock().unwrap();
-        let collector = locked
-            .base()
-            .name()
-            .to_string();
-        assert_eq!(collector, "collector");
+        let lines = lines.lock().unwrap();
+        assert_eq!(lines.len(), 1, "only the info line reaches the appender: {lines:?}");
+        assert!(lines[0].ends_with("yes"), "{lines:?}");
     }
 
     #[test]
     fn a_disabled_logger_passes_nothing() {
-        let appender = shared(LogLevel::Trace);
+        let (appender, lines) = collecting(LogLevel::Trace);
         let mut logger = Logger::new("root", LogLevel::Disabled);
-        logger.add_appender("collector", appender.clone());
+        logger.add_appender("collector", appender);
         logger.write(&LogMessage::new(LogLevel::Fatal, "root", "nothing"));
+        assert!(lines.lock().unwrap().is_empty(), "a disabled logger hands nothing on");
     }
 
     #[test]
     fn an_empty_message_is_dropped() {
-        let appender = shared(LogLevel::Trace);
+        let (appender, lines) = collecting(LogLevel::Trace);
         let mut logger = Logger::new("root", LogLevel::Trace);
         logger.add_appender("collector", appender);
         logger.write(&LogMessage::new(LogLevel::Info, "root", ""));
+        assert!(lines.lock().unwrap().is_empty(), "an empty message is not written");
     }
 
     #[test]

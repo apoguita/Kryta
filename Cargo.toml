@@ -8,6 +8,8 @@
 #
 #   authserver links shared;  worldserver links shared, game and scripts.
 #
+# Here authserver links game as well (docs/decisions/0010-auth-and-the-game-library.md).
+#
 # `modules/*` joins this list when the first mod-* crate exists. An empty glob is a cargo
 # error, so the line arrives with the module rather than before it.
 

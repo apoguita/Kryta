@@ -8,8 +8,8 @@
 //!
 //! What is here is the translation only. The decision - where an item would be worn - is
 //! `crate::characters::equip_place` (`Characters/Equipping.rs`), and whether a placement is one the
-//! character may have is `DatabaseCharacters::move_item`. **No frame changed when this moved out of
-//! `WorldSession.rs`**: the same messages, the same order, the same sizes, the same log lines.
+//! character may have is `DatabaseCharacters::move_item`. Each handler is an `impl WorldSession`
+//! method the session's dispatch calls by header.
 
 use common::logging::LogLevel;
 use shared::cryptography::AuthCrypt;
@@ -17,7 +17,7 @@ use shared::network::socket::SessionIo;
 
 use crate::characters::{DatabaseCharacters, MoveOutcome};
 use crate::server::packets::{item_packets, misc_packets};
-use crate::server::world_session::{CharacterSheet, WorldSession};
+use crate::server::world_session::{CharacterSheet, Connection, WorldSession};
 
 impl WorldSession {
     /// `GAME_CMSG_ITEM_MOVE` (`0x8072`): a drag in the inventory.
@@ -29,6 +29,7 @@ impl WorldSession {
     /// for itself.
     pub(crate) async fn answer_item_move(
         &self,
+        state: &mut Connection,
         io: &mut SessionIo,
         peer: &str,
         message: &[u8],
@@ -99,7 +100,7 @@ impl WorldSession {
         }
         if characters.equipped_item_ids(&uuid, &bags).unwrap_or(before) != before {
             frames.push(equipment_frame(
-                self.player_id(),
+                state.player_id(),
                 &uuid,
                 &bags,
                 &characters,
@@ -118,6 +119,7 @@ impl WorldSession {
     /// worn), and the agent's worn items are sent again when the set changed.
     pub(crate) async fn answer_equip_item(
         &self,
+        state: &mut Connection,
         io: &mut SessionIo,
         peer: &str,
         message: &[u8],
@@ -282,7 +284,7 @@ impl WorldSession {
 
         if characters.equipped_item_ids(&uuid, &bags).unwrap_or(before) != before {
             frames.push(equipment_frame(
-                self.player_id(),
+                state.player_id(),
                 &uuid,
                 &bags,
                 &characters,

@@ -14,7 +14,7 @@
 //! `crate::creation::player_data_block`, and where a character starts is the world's own first
 //! outpost (`WorldSession::starting_outpost`, from R12).
 //!
-//! **No frame, order or size changed when this moved out of `WorldSession.rs`.**
+//! Each handler is an `impl WorldSession` method the session's dispatch calls by header.
 
 use common::logging::LogLevel;
 use shared::cryptography::AuthCrypt;
@@ -22,11 +22,11 @@ use shared::network::socket::SessionIo;
 
 use crate::server::packets::{character_packets, item_packets, misc_packets};
 use crate::server::protocol::GameVersion;
-use crate::server::world_session::WorldSession;
+use crate::server::world_session::{Connection, WorldSession};
 
 /// What a character-creation connection has chosen so far.
 ///
-/// Reference: `char_creation_campaign` and `primary_profession` on the reference's player, which is
+/// Reference: `char_creation_campaign` and `primary_profession` on GWPS's player, which is
 /// the whole of what a creation screen keeps until its confirm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Creation {
@@ -35,7 +35,7 @@ pub(crate) struct Creation {
 }
 
 impl Creation {
-    /// The reference's starting state: Warrior, and no campaign until the client says so.
+    /// GWPS's starting state: Warrior, and no campaign until the client says so.
     pub(crate) fn start() -> Self {
         Self {
             campaign: 0,
@@ -44,7 +44,7 @@ impl Creation {
     }
 }
 
-/// The player-data block a creation screen is drawn from, in the reference's order.
+/// The player-data block a creation screen is drawn from, in GWPS's order.
 ///
 /// Reference: `GameSrv_HandleCharCreationRequestPlayer` - the player-data start, the inventory stream,
 /// the four weapon sets and the gold, the faction caps, the attribute and profession state, the
@@ -76,12 +76,12 @@ impl WorldSession {
         crypt: &mut AuthCrypt,
     ) {
         // The body is the two bytes of the client's current choice, which is a campaign and
-        // a profession; the reference reads them and re-draws from that choice.
+        // a profession; GWPS reads them and re-draws from that choice.
         if message.len() >= 4 {
             creation.campaign = message[2];
             creation.profession = message[3];
         }
-        let frames = creation_player_block(self.creation.as_ref(), creation);
+        let frames = creation_player_block(Some(self.world.creation()), creation);
         self.send(io, peer, crypt, &frames, "the creation screen's player data")
             .await;
     }
@@ -105,10 +105,11 @@ impl WorldSession {
     }
 
     /// A chosen profession: `ASURA/crates/asura-world/src/creation.rs:275-341`
-    /// (`handle_change_profession`), in the reference's order - the previous set off the client,
+    /// (`handle_change_profession`), in GWPS's order - the previous set off the client,
     /// the profession, then the new set created and placed.
     pub(crate) async fn answer_creation_change_prof(
         &self,
+        state: &mut Connection,
         io: &mut SessionIo,
         peer: &str,
         message: &[u8],
@@ -127,14 +128,14 @@ impl WorldSession {
                 creation.campaign, creation.profession
             ),
         );
-        // The reference's own answer (`GameSrv_HandleCharCreationChangeProf`), in its order:
+        // GWPS's own answer (`GameSrv_HandleCharCreationChangeProf`), in its order:
         // the previous set comes off the client first, then the profession, then the new set
         // is created and placed. A client still holding the old set asserts on an item created
         // into a slot it thinks is occupied (`Assertion: !bagParent->GetItem(slot)`,
         // `ItCliInv.cpp(105)`, which `ASURA/crates/asura-world/src/creation.rs` records
         // against build 39112 when it omitted the removal).
         let mut frames = Vec::new();
-        let tables = self.creation.clone().unwrap_or_default();
+        let tables = self.world.creation();
         for item in tables
             .inventory(previous.campaign, previous.profession)
             .equipped_items()
@@ -143,13 +144,13 @@ impl WorldSession {
         }
         frames.push(character_packets::update_unlocked_skills(&[]));
         frames.push(character_packets::player_update_profession(
-            self.player_id(),
+            state.player_id(),
             creation.profession,
             0,
             0,
         ));
         let equipped_bag =
-            crate::creation::equipped_bag(&tables).map(|bag| bag.id).unwrap_or(0);
+            crate::creation::equipped_bag(tables).map(|bag| bag.id).unwrap_or(0);
         for item in tables
             .inventory(creation.campaign, creation.profession)
             .equipped_items()
@@ -174,10 +175,10 @@ impl WorldSession {
     /// The creation screen's confirm: write the character, and say whether it was written.
     ///
     /// Reference: `GameSrv_HandleCharCreationConfirm` - read the name and the packed appearance, write
-    /// the rows, answer `0x0188` with the character's id, its name, the reference's own `0x2211` and
+    /// the rows, answer `0x0188` with the character's id, its name, GWPS's own `0x2211` and
     /// the settings the list will carry; a name that is taken is answered with `0x018B` and the
     /// taken-name code. The row is this tree's own (`docs/decisions/0007-character-schema.md`), and
-    /// the creation defaults are the reference's: level 1, the helmet shown, the unlocked-profession
+    /// the creation defaults are GWPS's: level 1, the helmet shown, the unlocked-profession
     /// bit set to the profession that was chosen.
     ///
     /// The confirm's layout is the reference's message table: the `u16` header, a counted name whose
@@ -291,10 +292,9 @@ impl WorldSession {
                 // The character's starting items are its own rows now: what a load draws from. The
                 // set comes from the creation record list, which is a setting; the rows are state.
                 let inventory = self
-                    .creation
-                    .as_ref()
-                    .map(|tables| tables.inventory(creation.campaign, creation.profession))
-                    .unwrap_or_default();
+                    .world
+                    .creation()
+                    .inventory(creation.campaign, creation.profession);
                 let characters = crate::characters::DatabaseCharacters::new(
                     std::sync::Arc::clone(pool),
                     self.log.clone(),
