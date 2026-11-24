@@ -53,8 +53,8 @@
       "doc": "The link Kryta.dll opens from inside a patched client when the client starts (docs/port/22-client-platform.md). This program serves it: over it a client is given the offsets its DLL finds the client's functions by, and the custom title text. A patched client does not start without it."
     },
     "Bind": {
-      "value": "127.0.0.1:6603",
-      "doc": "Where the link answers. Kryta.dll dials the -portal host of the client's command line on port 6603 unless a Kryta.json beside the client names another address."
+      "value": "127.0.0.1:6650",
+      "doc": "Where the link answers. Kryta.dll dials the -portal host of the client's command line on port 6650 unless a Kryta.json beside the client names another address."
     },
     "Directory": {
       "value": "config/Client",

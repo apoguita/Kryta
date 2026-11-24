@@ -35,7 +35,7 @@ config/World/Vanilla/maps/<campaign>/<area>/<kind>/<map id>/
 - The database tables `map`, `map_spawn`, `map_arch` and `map_arrival` remain in the schema, empty:
   `data/sql/base/db_world/0013-content-is-the-pack.sql` clears what earlier files seeded. **They are
   no longer what the world serves**, and the manager's content page reads the pack, not the tables
-  (`tools/manage/src/pages/content.rs`).
+  (`tools/manage/src/areas/content.rs`).
 
 ## Why the earlier decision is replaced rather than amended
 

@@ -188,7 +188,7 @@ Size of fix: medium to large.
 | A failed travel leaves the connection unable to travel again: the flag is set before the steps that can fail (checked; may mirror ASURA) | `game/src/Handlers/TravelHandler.rs:168-185` |
 | `confirm_creation` is 208 lines, three non-atomic writes, and tells the player the name is taken on any failure | `game/src/Handlers/CharacterHandler.rs:187-394` |
 | The same item is three structs with hand-copied conversions | `HeldItem`, `creation::Item`, `ItemDefinition` |
-| Character creation is written a second time inside a web page | `tools/manage/src/pages/players.rs:403-519` |
+| Character creation is written a second time inside a web page | `tools/manage/src/areas/players.rs`, `create_character_duplicating_the_server` (the panel was rebuilt on 2026-11-23; this duplication was kept and named) |
 | The supervisor starts the old binary when a build fails (checked) | `tools/supervisor/src/main.rs:130-136` |
 | The supervisor decides port ownership by parsing `netstat` and `tasklist` text, and force-kills by program name | `tools/supervisor/src/main.rs:185-310` |
 | 28 of 38 files in the shared libraries are not formatted by the standard formatter; several files show paste damage | `WorldSession.rs:2303`, `Repository.rs:983` and others |
@@ -224,7 +224,7 @@ Removed:
   `World::load_maps` takes the pack.
 - `DatabaseItems`, its SQL and its seeding (`game/src/DataStores/Items.rs`). The panel's character
   creation was reading item definitions from the empty `item_template` table through it; it now builds
-  them from the creation content, as the world does (`tools/manage/src/pages/players.rs`).
+  them from the creation content, as the world does (`tools/manage/src/areas/players.rs`).
 - The old size table and its helpers in the login framing (`authserver/src/Server/stream.rs`), and the
   `#[allow(dead_code)]` on the whole `server` module. What the compiler then reported was removed
   (`DatabaseAccounts::pool`, `FileCheck::from_bytes`) or scoped to tests (`count`, `request`, `refusal`,

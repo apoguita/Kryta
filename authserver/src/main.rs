@@ -678,7 +678,7 @@ fn start_client_link(
     if !read_bool(config, "ClientLink.Enable", false)? {
         return Ok(None);
     }
-    let bind = read_string(config, "ClientLink.Bind", "127.0.0.1:6603")?;
+    let bind = read_string(config, "ClientLink.Bind", "127.0.0.1:6650")?;
     let directory = read_string(config, "ClientLink.Directory", "config/Client")?;
 
     let custom_tracks = match read_custom_titles(config, log)? {

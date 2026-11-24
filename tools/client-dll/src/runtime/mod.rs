@@ -34,7 +34,7 @@ use crate::scanner::Scanner;
 
 /// The port the link is served on when nothing says otherwise: `ClientLink.Bind` in
 /// `authserver/authserver.json.dist`.
-const DEFAULT_LINK_PORT: u16 = 6603;
+const DEFAULT_LINK_PORT: u16 = 6650;
 
 /// How many times the first connection is tried, and how long between tries. The stack may still be
 /// starting when the client is launched; these are this DLL's own values.

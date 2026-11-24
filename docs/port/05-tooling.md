@@ -197,19 +197,24 @@ reference's exit-code contract (`Main.cpp:434-439`): a world that exits `2` aske
 this program - the restarter that comment names - starts it again, up to five times before stopping the
 stack. Health checks beyond the handshake are still not done, and the header says so.
 
-**A port belongs to the stack.** `stack.json` names a port for each service, and before a service
-starts the supervisor claims it (`take_port`). If a listener is already there, it asks the operating
-system which process owns it. A process running the same program as the service is an instance left
-over from an earlier session: the supervisor stops it, says so, and starts the service on its own
-port - a stale copy of one of the stack's own services can no longer take the stack down. A program
-this stack does not run is never killed: the supervisor names it and refuses to start, so a stranger
-holding one of the stack's ports is one clear line instead of a half-up stack. The same claim runs on
-every start, including `restart <service>` from the control channel and the exit-code-2 restarter, and
-it covers the supervisor's own control port (`take_control_port`), so starting a second stack replaces
-the first instead of half-existing beside it. Proved on this machine by leaving a whole stack's
-services behind a killed supervisor: the next `--check` reported each port's earlier owner, stopped it,
-and the stack came up; with a `powershell.exe` holding 6602 the supervisor refused, exited non-zero,
-and left the stranger alive.
+**A service that is already running is attached to.** `stack.json` names a port for each service, and
+before a service starts the supervisor looks at it. If a listener is already there, it asks the
+operating system which process owns it. A process running the same program as the service is that
+service, already running: the stack attaches to it - counts it as up, does not start a second copy,
+and does not stop it (owner, 2026-11-24). `status` shows it as `up on <port> (attached)`. Because
+this stack did not start it, stopping the stack leaves it running, and `stop <service>` answers that
+it is not this stack's to stop. `restart <service>` takes it over: the running copy is stopped and
+this stack starts and watches its own (`take_port`), which is also what the exit-code-2 restarter
+does. A program this stack does not run is never killed: the supervisor names it and refuses to
+start, so a stranger holding one of the stack's ports is one clear line instead of a half-up stack.
+
+The supervisor's own control port is still claimed outright (`take_control_port`): starting a second
+stack replaces the first supervisor instead of half-existing beside it.
+
+Proved on this machine on 2026-11-24: with a world started on its own, the stack reported
+`world | already running on port 6113 (pid ...); attached, not started again`, came up with the other
+two services, answered `stop world` with the refusal, and after `stop` the attached world was still
+running. Earlier, with a `powershell.exe` holding 6602, the supervisor refused, exited non-zero, and left the stranger alive.
 
 ```powershell
 cargo run -p kryta-supervisor                # the stack: every service, stopped together on Ctrl+C
@@ -224,44 +229,31 @@ before it starts (`cargo build -p <program>`, with cargo's own output on the con
 the code in the tree and the single command is enough from a fresh checkout, and a program that fails
 to build says so with cargo's reason rather than starting nothing.
 
+The panel was rebuilt on 2026-11-23 (`docs/port/23-control-panel.md`): the service answers JSON under
+`/api/v1/`, and its pages are static files served at `/` that route on the `#` part of the address. The
+addresses the panel had before - `/accounts`, `/players/{uuid}`, `/status`, `/static/style.css`,
+`/api/navigation/maps` and the redirects for older ones - no longer exist.
+
 | page | is | state |
 |---|---|---|
-| `/` | the overview: the counts, the live world's own answer (probed after the page), and the working areas | done - unreachable data is named, not shown as zero |
-| `/accounts` | the account directory - the login identities the server hosts - and a new account's form | done - an account is the login identity; it owns its players and the state that belongs to the person |
-| `/accounts/{id}` | one account: identity, EULA state, activation and removal, the players it owns, with its section tabs (Account overview, Players, and the two account-wide areas) | done - Shared storage and Account unlocks are named as not recorded by this server yet; the Players tab opens `/players?account={id}` |
-| `/players` | every player (character) the server hosts, with the account that owns it, and the creation form whose account list says who will own the player | done - a player is created from the creation record lists and the pack's campaign spawn data, then its own page opens |
-| `/players?account={id}` | the same list, filtered to one account's players | done - the account page's Players tab and the creation form's account choice both use it |
-| `/players/{uuid}` | one player: campaign, profession pair, level, stored experience, gold, PvP, last outpost, position, appearance and the professions it has unlocked; its inventory and equipment (the item rows); the metric catalog, all values zero, and the 47 title rows the pack's `titles.json` names - its 45 vanilla tracks and the two custom ones, `Hog Jumper` (from `jumps`) and `Embiggener`; its unlocked maps (R12); the account that owns it (linked); rename, level (1 to 20, R48) and removal | done - no metric is recorded yet, but every title row is visible for the later source to fill; removal deletes the row with its own items and unlocks |
-| `/services` | the running supervisor's state and its named stop/restart controls | done against the existing loopback channel: `SupervisorStackFile` supplies its `control_port`; the manager cannot start a missing supervisor because it has no start protocol and must not become one |
-| `/console` | browser adapter for the live operation registry | done against the existing world endpoint: lists `world.operations` (asked after the page), submits named `name=value` arguments to `/v1/operations`, and displays the world's result or refusal; it does not dispatch commands itself |
-| `/status` | the running world's own answer to `world.status`, asked of its local control endpoint | done - one operation carried by the world's own queue (`docs/port/14-operator-surfaces.md`); a world that is unavailable or refuses is drawn differently from an empty answer, and `ControlPort`/`ControlCredentialFile` in `manage.json` configure it |
-| `/worlds` | the realm list and `data/realms.json` merged over it | done - read only, from the login's own reader |
-| `/content` | the world pack's maps with their entry points and the arrival points they state (R13/R21), the item definitions and profession sets a creation screen draws from, and the copies the world has open | done - read only for now: content is the pack (`docs/decisions/0014-the-world-content-is-a-pack.md`), read through the same reader the world uses; editing it is roadmap step 6 and is not pretended |
-| `/navigation` | the extracted path-graph cache: inspection, and one selected map dumped in from `MapArchiveFile` | done - the cache is an operator asset, not state the running world owns |
-| `/schema` | each database's own record of what its updater has applied, against the files on disk | done - read only; `changed` is the one to act on before a server refuses to start |
-| `/settings` | each program's own JSON, key by key, as the file states it | done - read only, passwords masked by the reader; `WorldConfigFile` and `AuthConfigFile` in `manage.json` say where the files are |
-| `/accounts?account=`, `/characters?account=`, `/players/{id}`, `/players/{id}/characters` | the panel's old addresses | redirect (`303` with its `Location`) into the hierarchy - the account by row id, the player by client id - so bookmarks keep working |
+| `#/overview` | the counts, the services, the running world's own answer, and what needs attention | done - unreachable data is named, not shown as zero |
+| `#/services` | the running supervisor's state and its restart, stop and stop-all controls | done against the existing loopback channel: `SupervisorStackFile` supplies its `control_port`; the panel cannot start a missing supervisor because it has no start protocol and must not become one |
+| `#/console` | the live operation registry, with a form built from each operation's own argument names | done against the existing world endpoint: it lists `world.operations`, submits named arguments to `/v1/operations`, and shows the world's result or refusal; it does not dispatch commands itself |
+| `#/accounts`, `#/accounts/{id}` | the login identities; one account's identity, EULA state, activation, removal and players | done - the portal token is masked until asked for |
+| `#/players`, `#/players/{uuid}` | every character with the account that owns it and a data check; one character's identity, position, item rows and unlocked maps (R12); create, rename, level (1 to 20, R48), remove | done - a character is created from the creation record lists and the pack's campaign spawn data, by the panel's own copy of the creation; removal deletes the row with its own items and unlocks |
+| `#/content` | the world pack's maps with their entry points and arrivals (R13/R21), the creation items and sets, the title and metric sheets, the copies the world has open, and the world list | done - read only: content is the pack (`docs/decisions/0014-the-world-content-is-a-pack.md`), read through the same reader the world uses |
+| `#/navigation` | the extracted path-graph cache: inspection, and one selected map dumped in from `MapArchiveFile` | done - the cache is an operator asset, not state the running world owns |
+| `#/settings` | each program's own JSON, key by key, as the file states it | done - read only, passwords masked by the reader; `WorldConfigFile` and `AuthConfigFile` in `manage.json` say where the files are |
+| `#/schema` | each database's own record of what its updater has applied, against the files on disk | done - read only; `changed` is the one to act on before a server refuses to start |
+| `#/recordings` | the capture command to run by hand with its instructions, what a capture needs, and the library with its index | done - the panel cannot run the client capture, which needs an elevated shell |
 
-Proved on this machine against its own databases. Every page answered `200` in 10-110 ms, and the
-stylesheet (`GET /static/style.css`, 10.8 KB) is served once instead of being repeated inside every page.
-The hierarchy was exercised end to end: `POST /accounts/create` wrote an account and answered `303` to
-`/accounts/9`; `POST /players/create` created its player from the creation record lists and the pack's
-campaign spawn and answered `303` to `/players/{uuid}`; the player page read it back (level 1,
-Prophecies, Ranger, experience 0, Ascalon City (pre-Searing), its inventory rows and unlocked maps);
-`POST /players/{uuid}/level` set 4 and `.../rename` renamed it; `.../delete` removed the player with its
-items and unlocks; and `POST /accounts/9/delete` removed the account - each answer a `303` with the
-`Location` a browser follows. The accounts directory listed each account with its player count; the
-account page linked every player it owns and its Players tab the filtered list; the players list showed
-each player with the account that owns it. The content page listed the pack's maps (Random Arenas,
-Heroes Ascent, ...) with their entry points and stated arrivals, and the item definitions and profession
-sets - the world database's content tables are empty by design (`0013-content-is-the-pack.sql`), so the
-page reads the pack itself. The probes answered without delaying their pages: `/services/status`,
-`/console/operations` and `/status/data` reported that their owners were not running.
+The routes, what was proved on 2026-11-23 and how, and what is not built are in
+`docs/port/23-control-panel.md`, "What is rebuilt".
 
-`/status` was proved against a live world on this machine, three ways. With the world running and
+The world's status was proved against a live world on this machine, three ways, with the panel as it was before the rebuild. With the world running and
 `Control.Enable` on, `kryta-cli --port 7878 --credential-file worldserver/control.credential world.status` answered
 `World 2: 265 map(s) loaded.` and the same operation through `kryta-cli` with a wrong 32-character
-credential answered `authentication failed` with exit 1; `GET /status` on the manager rendered
+credential answered `authentication failed` with exit 1; the manager's status page of that day rendered
 `World 2: 265 map(s) loaded.` from the world's own queue; and with the world stopped the same page
 answered "The running world did not answer. This is not an empty result" naming the refused connection.
 `kryta-supervisor --check` then started `auth`, `world` and `manage` together and reported
@@ -306,7 +298,7 @@ build it is given.
 What the DLL does, and what it needs:
 
 - When the client starts, the DLL connects to the login program's client link - the `-portal` host,
-  port 6603 (`ClientLink.Bind` in `authserver.json`). A file `Kryta.json` beside the client,
+  port 6650 (`ClientLink.Bind` in `authserver.json`). A file `Kryta.json` beside the client,
   `{ "link": "host:port" }`, names another address.
 - The server sends it the offsets under `config/Client/`; it finds the client's title functions by
   them, installs its hooks, and is sent the custom title text.

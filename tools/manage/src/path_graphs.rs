@@ -1,4 +1,4 @@
-//! The manager's offline navigation-cache operations.
+//! The path-graph cache: the offline operations the navigation area runs on it.
 //!
 //! A serving world reads the cache only. This module is deliberately owned by the management tool:
 //! its explicit archive argument is an import source, never a world-server dependency. The selected-map

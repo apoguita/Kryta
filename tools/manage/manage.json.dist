@@ -1,25 +1,25 @@
 {
-  "note": "manage.json - the administration tool's own configuration. The tool reads and writes the login and character databases and the content files; it is not a server and no client talks to it.",
+  "note": "manage.json - the control panel's own configuration. The panel reads and writes the login and character databases and reads the content files; it is not a game server and no client talks to it. The service answers JSON under /api/v1/ and serves its own static pages at / (docs/port/23-control-panel.md).",
 
   "information": {
-    "what this program is for": "everything an operator changes without playing: accounts (create, delete, the EULA version), characters and their settings, the world list, the content files, and what schema has been applied.",
+    "what this program is for": "everything an operator does without playing: accounts (create, edit, activate, the EULA version, delete), characters (create, rename, level, delete), the stack's services, the world's operations, and reading the content, the settings, the schema record and the recordings.",
     "why it is not part of a server program": "the two server programs serve clients, and a client-facing listener must not carry operator power. This is a third binary in tools/, and neither server knows it exists.",
-    "where it writes": "rows in kryta_login and kryta_characters, and the JSON content files. A program's own settings file is shown and validated, never rewritten."
+    "where it writes": "rows in kryta_login and kryta_characters, the path-graph cache (PathGraphsFile), and one appended line per indexed recording in recordings/index.jsonl. Content files and a program's own settings file are shown, never rewritten."
   },
 
   "Bind": {
     "value": "127.0.0.1",
-    "doc": "The address the page is served on. Loopback by default: the tool has no authorisation model beyond the token below, and nothing outside this machine should reach it."
+    "doc": "The address the panel is served on. Loopback by default. On a loopback address the service also refuses any request whose Host header is not 127.0.0.1, localhost or [::1] with this port. Any other address drops that check and lets other machines reach the panel: set Token when you do that."
   },
 
   "Port": {
     "value": 6602,
-    "doc": "The port the page is served on. Beside the portal's 6601 and away from the two server ports."
+    "doc": "The port the panel is served on. Beside the portal's 6601 and away from the two server ports."
   },
 
   "Token": {
     "value": "",
-    "doc": "Empty allows every request from this machine, which is the default for a local tool. A token makes the tool require it: ?token=<value> on the first request, kept in a cookie after that."
+    "doc": "Empty requires no token, which is the default for a local tool. When set, every /api/ request must carry 'Authorization: Bearer <value>'; the static pages load without it and show an unlock screen that asks for the token once and keeps it for that browser tab (sessionStorage). Separately from the token, every request that changes something must carry the header 'X-Kryta-Panel: 1', which the panel's own pages send and another site's form cannot."
   },
 
   "LoginDatabaseInfo": {
@@ -56,7 +56,7 @@
 
   "WorldDatabaseInfo": {
     "value": "",
-    "doc": "The world database, in the same shape: the maps, their spawn points and the running instances the world program reads. Empty leaves the content page switched off."
+    "doc": "The world database, in the same shape: the running instances the world program writes, and that database's schema record. The maps and the creation lists are not here; they are read from the world's pack. Empty leaves the running copies and the world schema out."
   },
 
   "WorldDatabase": {
@@ -71,7 +71,7 @@
   },
   "WorldConfigFile": {
     "value": "worldserver/worldserver.json",
-    "doc": "The world program's own settings file, shown by the settings page and never written by this tool. Its WorldPack names the content the world serves, and its InventoryFile/EquipmentFile/EquippedSlotsFile are the creation lists the character page reads. Relative to where the tool is started. Empty leaves the world half of the panel out."
+    "doc": "The world program's own settings file, shown by the settings page and never written by this tool. Its WorldPack names the content the world serves, and its InventoryFile/EquipmentFile/EquippedSlotsFile are the creation lists a new character is made from. Relative to where the tool is started. Empty leaves the world half of the panel out."
   },
   "AuthConfigFile": {
     "value": "authserver/authserver.json",
@@ -79,16 +79,16 @@
   },
   "PathGraphsFile": {
     "value": "data/path-graphs.bin",
-    "doc": "The portable extracted navigation cache. The manager inspects this file through /navigation and GET /api/navigation/maps; it is the file worldserver reads, never Gw.dat."
+    "doc": "The portable extracted navigation cache. The panel inspects this file on its Navigation page (GET /api/v1/navigation); it is the file worldserver reads, never Gw.dat."
   },
   "MapArchiveFile": {
     "value": "",
-    "doc": "An optional client archive used only when the manager explicitly dumps one selected map into PathGraphsFile. Empty disables the dump action. Worldserver never reads this setting."
+    "doc": "An optional client archive used only when the panel explicitly dumps one selected map into PathGraphsFile (POST /api/v1/navigation/dump). Empty disables the dump action. Worldserver never reads this setting."
   },
 
   "ControlPort": {
     "value": 0,
-    "doc": "The running world's local control port (`Control.Port` in its own settings), for the status page. Zero leaves the status page saying no endpoint is configured, which is not an empty result."
+    "doc": "The running world's local control port (`Control.Port` in its own settings), for the Console page and the overview's world status. Zero leaves them saying no endpoint is configured, which is not an empty result."
   },
   "ControlCredentialFile": {
     "value": "",
@@ -96,7 +96,7 @@
   },
   "ControlTimeoutSeconds": {
     "value": 5,
-    "doc": "How long the status page waits for the world before reporting it unavailable. The world executes the operation on its own update thread, so a timeout is not proof the request was refused."
+    "doc": "How long a request waits for the world before reporting it unavailable. The world executes the operation on its own update thread, so a timeout is not proof the request was refused."
   },
 
   "SupervisorStackFile": {

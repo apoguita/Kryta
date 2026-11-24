@@ -174,7 +174,7 @@ not state keeps the table's value.
 |---|---|
 | the login listener: port, bind address, thread count, trace | `authserver.json` |
 | the portal: enabled, where it answers | `authserver.json` |
-| the client link: enabled (`ClientLink.Enable`), where it answers (`ClientLink.Bind`, `127.0.0.1:6603`), the folder of what a client's DLL is given (`ClientLink.Directory`), and the world configuration whose pack supplies the custom title text it is sent (`ClientLink.TitleWorldConfig`) | `authserver.json` |
+| the client link: enabled (`ClientLink.Enable`), where it answers (`ClientLink.Bind`, `127.0.0.1:6650`), the folder of what a client's DLL is given (`ClientLink.Directory`), and the world configuration whose pack supplies the custom title text it is sent (`ClientLink.TitleWorldConfig`) | `authserver.json` |
 | where each place the client's DLL hooks is found in the client: byte patterns and the steps from a match to an address, in Py4GW Reforged's offset format. Every `*.json` in the folder is one document, sent to each client's DLL over the link; a new client build is handled by editing these files (`docs/port/22-client-platform.md`) | `config/Client/offsets/titles.json`, under `ClientLink.Directory`. A missing folder or a file that breaks the format stops the login program |
 | the login database: connection string, worker and synchronous connections, trace | `authserver.json` |
 | the character database: connection string, worker and synchronous connections | `authserver.json`, `worldserver.json`, under `CharacterDatabaseInfo` and `CharacterDatabase` |

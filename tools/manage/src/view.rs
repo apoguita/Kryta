@@ -1,14 +1,7 @@
-//! The view models the pages draw: an account with its roster count, a character as the roster
-//! lists it, and the game's own names for the numbers a row stores.
-//!
-//! These are built from the nouns' repositories (`game::accounts`, `game::characters`) - the same
-//! rows the login, the world and the tool read - so a page never owns a second copy of the data.
+//! The game's own names for the numbers a row stores: campaigns, professions, the appearance word,
+//! an outpost's name. Used by every area that shows a character or a map.
 
 use std::collections::HashMap;
-
-use game::characters::Character;
-
-use crate::Manage;
 
 /// The campaign a character was made in, as the client and the row's own comment name it.
 /// `characters.campaign`: 0 none (a PvP character), 1 Prophecies, 2 Factions, 3 Nightfall,
@@ -54,18 +47,6 @@ pub fn profession_label(value: u8) -> &'static str {
         .unwrap_or("Unknown")
 }
 
-/// The profession `<option>` list, one selected.
-pub fn profession_options(selected: u8) -> String {
-    PROFESSIONS
-        .iter()
-        .skip(1)
-        .map(|(id, name)| {
-            let selected = if *id == selected { " selected" } else { "" };
-            format!("<option value=\"{id}\"{selected}>{name}</option>")
-        })
-        .collect()
-}
-
 /// A character's profession pair, as the character page and the roster read it.
 pub fn professions(primary: u8, secondary: u8) -> String {
     if secondary == 0 {
@@ -79,79 +60,19 @@ pub fn professions(primary: u8, secondary: u8) -> String {
     }
 }
 
-/// The name of a map an id names, when the world pack answered.
-pub fn map_names(manage: &Manage) -> HashMap<u32, String> {
-    manage.map_names()
+/// The primary profession, packed in the appearance word, bits 20-23 (`docs/game-rules.md` E74).
+pub fn primary_profession(word: u32) -> u8 {
+    ((word >> 20) & 0xF) as u8
 }
 
 /// Where a character is, as the roster lists it: the outpost's name, its id, or "not placed".
-pub fn outpost_label(map_id: u16, names: &HashMap<u32, String>) -> String {
+pub fn outpost_label(map_id: u32, names: &HashMap<u32, String>) -> String {
     if map_id == 0 {
         return "not placed".to_string();
     }
-    match names.get(&u32::from(map_id)) {
-        Some(name) => format!("{} ({})", name, map_id),
+    match names.get(&map_id) {
+        Some(name) => format!("{name} ({map_id})"),
         None => format!("map {map_id}"),
-    }
-}
-
-/// One account line of the directory, with the number of players it owns.
-pub struct AccountRow {
-    /// The row itself.
-    pub account: game::accounts::Account,
-    /// How many players (characters) it owns; 0 when no character database is configured.
-    pub players: usize,
-}
-
-/// Every account, with its player count, oldest first.
-pub fn accounts(manage: &Manage) -> Result<Vec<AccountRow>, String> {
-    let accounts = manage.list_accounts()?;
-    let counts = manage
-        .characters()
-        .and_then(|characters| characters.counts_by_account().ok())
-        .unwrap_or_default();
-    Ok(accounts
-        .into_iter()
-        .map(|account| AccountRow {
-            players: counts.get(&account.user_id).copied().unwrap_or(0),
-            account,
-        })
-        .collect())
-}
-
-/// One player as a roster lists it: a character, which belongs to one account.
-pub struct PlayerRow {
-    /// The name the client shows.
-    pub name: String,
-    /// The id the client knows the player by.
-    pub uuid: String,
-    /// Its campaign's name.
-    pub campaign: String,
-    /// Its profession pair.
-    pub professions: String,
-    /// Its level.
-    pub level: u8,
-    /// The outpost it last stood in.
-    pub outpost: String,
-    /// Whether it is a PvP character.
-    pub pvp: bool,
-}
-
-impl PlayerRow {
-    /// One row of a players table.
-    pub fn of(character: &Character, names: &HashMap<u32, String>) -> Self {
-        // The primary profession is packed in the appearance word, bits 20-23 (`docs/game-rules.md`
-        // E74); the second is its own column.
-        let primary = ((character.settings.appearance >> 20) & 0xF) as u8;
-        Self {
-            name: character.name.clone(),
-            uuid: game::characters::uuid_text(&character.uuid),
-            campaign: campaign_label(character.settings.campaign).to_string(),
-            professions: professions(primary, character.settings.secondary_profession),
-            level: character.settings.level,
-            outpost: outpost_label(character.settings.last_outpost, names),
-            pvp: character.settings.is_pvp,
-        }
     }
 }
 
@@ -195,8 +116,8 @@ mod tests {
 
     #[test]
     fn the_appearance_word_is_the_clients_own_bits() {
-        // sex 1, height 7, skin 3, hair colour 9, face 12, hair style 33.
-        let word = 1 | (7 << 1) | (3 << 5) | (9 << 10) | (12 << 15) | (33 << 24);
+        // sex 1, height 7, skin 3, hair colour 9, face 12, profession 6, hair style 33.
+        let word = 1 | (7 << 1) | (3 << 5) | (9 << 10) | (12 << 15) | (6 << 20) | (33 << 24);
         let fields = appearance_fields(word);
         assert_eq!(fields[0], ("sex", 1));
         assert_eq!(fields[1], ("height", 7));
@@ -205,5 +126,14 @@ mod tests {
         assert_eq!(fields[4], ("face", 12));
         assert_eq!(fields[5], ("hair style", 33));
         assert_eq!(sex_label(word), "female");
+        assert_eq!(primary_profession(word), 6);
+    }
+
+    #[test]
+    fn an_outpost_is_named_when_the_pack_names_it() {
+        let names = HashMap::from([(148, "Ascalon City".to_string())]);
+        assert_eq!(outpost_label(148, &names), "Ascalon City (148)");
+        assert_eq!(outpost_label(9, &names), "map 9");
+        assert_eq!(outpost_label(0, &names), "not placed");
     }
 }

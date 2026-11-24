@@ -48,6 +48,10 @@ Written on 2026-11-23, after the documentation was read and corrected in full.
 | 20 | **One phrase could not be verified:** the audit says a test loads map 163, "not the map the schema seeded by hand". Nothing is seeded now. | `docs/port/09-parity-audit.md`, section 9 |
 | 21 | **The documentation changes of 2026-11-23 are not committed.** | - |
 
+## The control panel
+
+The panel was rebuilt on 2026-11-23 as a data service with static pages, with a recordings area and one registration point per area so it can be extended (`docs/port/23-control-panel.md`, which also lists what is still not built: the administrator login, editing settings and content, logs, online players, and item, unlock and title editing). The same page records why the database filled with orphan rows: the database tests do not clean up after themselves, and the character tables have no foreign keys.
+
 ## The code's design
 
 The whole code was read on 2026-11-23 and assessed for style, paradigm, how well its structures are
@@ -65,7 +69,6 @@ Not fixed; the documents were the subject.
 | 24 | A doc comment still says item templates are seeded and read back. | `game/src/DataStores/mod.rs` |
 | 25 | The comment above the `admin.json` bootstrap cites decision 0013 and calls the row "the first administrator"; it is the first game account. | `authserver/src/main.rs` |
 | 26 | The dependency comment says `authserver` links only `shared`; it also links `game`. The note in the stack file says only a missing program is built; every one is. | `Cargo.toml`; `tools/supervisor/stack.json` |
-| 27 | The panel prints "All 48 ... Jump Master"; the pack has 47 title rows and the track is Hog Jumper. | `tools/manage/src/pages/players.rs:322-323` |
 | 28 | Two tests still read the map tables, which are empty by design. | `game/src/World/mod.rs` (`every_hosted_map_walks_from_one_of_its_own_spawn_points`); `worldserver/tests/end_to_end.rs:464` |
 | 29 | The capture reader refuses most committed recordings unless given `--assume-layer`, because it does not know the tool names in their headers. | `tools/capture/capture_file.py` |
 | 30 | The recordings index covers 18 of 54 recordings, and three cited `.log` recordings are ignored by Git. | `recordings/index.jsonl`; `.gitignore` |
@@ -74,4 +77,4 @@ Not fixed; the documents were the subject.
 | 33 | `World.MaxAllowedCorrection` defaults to 250 and cites OpenTyria's `MAXIMUM_ALLOWED_CORRECTION`, which is 100 in `research/OpenTyria` (`GmAgent.c:4`). Which value is right has not been checked against GWPS or ASURA. | `game/src/World/WorldConfig.rs` |
 | 34 | The supervisor starts the old binary when a build fails: only the file's existence is checked. | `tools/supervisor/src/main.rs`, `ensure_built` |
 | 35 | Text the programs print that is wrong: "the first administrator" for the first game account; "until the map_arch table is readable" though doorways come from the pack; "needs 16" where the check is 14 bytes; the `/stuck` help says it broadcasts. | `authserver/src/main.rs`; `worldserver/src/main.rs`; `game/src/Handlers/MovementHandler.rs`; `game/src/Chat/Operations.rs` |
-| 36 | Panel text that is wrong or hardcoded: "map definitions (no world database)"; a dump "needs the world database"; `config/World/Vanilla/...` and `data/realms.json` written into pages though both are settings; the EULA version 26 as a literal. | `tools/manage/src/pages/` |
+| 36 | The EULA version 26 is a literal in the panel (a named constant since the rebuild), where the login program takes it from the client. | `tools/manage/src/areas/accounts.rs` |

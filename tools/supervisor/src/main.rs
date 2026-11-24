@@ -143,9 +143,11 @@ fn ensure_built(program: &str) -> Result<(), String> {
 
 /// Start one service, and hand every line it prints to the supervisor.
 ///
-/// The port is claimed before anything else: see [`take_port`]. A stale copy of the service's own
-/// program from an earlier session is stopped first, which also matters because a running program
-/// holds its executable file open and would make `cargo build` fail to replace it.
+/// The port is claimed before anything else: see [`take_port`]. A copy of the service's own program
+/// that holds the port is stopped first, which also matters because a running program holds its
+/// executable file open and would make `cargo build` fail to replace it. The stack's first start
+/// does not get here for a service that is already running - it attaches to it instead
+/// ([`running_instance`]); this is the path of a restart, which replaces.
 fn start(service: &Service, lines: Sender<ServiceLine>) -> Result<Child, String> {
     take_port(service)?;
     ensure_built(&service.program)?;
@@ -224,6 +226,41 @@ fn take_port(service: &Service) -> Result<(), String> {
         "{}: port {} is still held after stopping pid {pid}",
         service.name, service.port
     ))
+}
+
+/// The instance of a service that is already running, when there is one: the process id that holds
+/// the service's port, if that process runs the service's own program.
+///
+/// A service that is already running is attached to, not started a second time and not replaced
+/// (owner, 2026-11-24): the stack starts whatever is missing and leaves what is there alone. A port
+/// held by any other program is still refused with the process named, as [`take_port`] refuses it.
+fn running_instance(service: &Service) -> Result<Option<u32>, String> {
+    if service.port == 0 {
+        return Ok(None);
+    }
+    let Some(pid) = listener_holder(service.port) else {
+        return Ok(None);
+    };
+    let image = process_image(pid).unwrap_or_else(|| format!("pid {pid}"));
+    if is_own_program(service, &image) {
+        Ok(Some(pid))
+    } else {
+        Err(format!(
+            "{}: port {} is held by {image} (pid {pid}), which is not this stack's {}; \
+             stop that process or change stack.json",
+            service.name, service.port, service.program
+        ))
+    }
+}
+
+/// Whether a process image is the program a service runs.
+fn is_own_program(service: &Service, image: &str) -> bool {
+    let own_program = if cfg!(windows) {
+        format!("{}.exe", service.program)
+    } else {
+        service.program.clone()
+    };
+    image.eq_ignore_ascii_case(&own_program)
 }
 
 /// The control port is claimed like a service's: a leftover instance of this supervisor is stopped
@@ -615,23 +652,44 @@ fn main() -> std::process::ExitCode {
         }
     }
     let mut children: Vec<(Service, Child)> = Vec::with_capacity(services.len());
-    for service in &services {
-        match start(service, lines.clone()) {
-            Ok(child) => children.push((service.clone(), child)),
-            Err(error) => {
-                eprintln!("{error}");
-                stop_all(&mut children);
-                return std::process::ExitCode::FAILURE;
+    let mut ready = vec![false; services.len()];
+    // The services found already running, by name, with the process that runs each. They are
+    // attached to: counted as up, never started a second time, and left running when this stack
+    // stops, because this stack did not start them. `restart <service>` takes one over.
+    let mut attached: BTreeMap<String, u32> = BTreeMap::new();
+    for (index, service) in services.iter().enumerate() {
+        let started = match running_instance(service) {
+            Ok(Some(pid)) => {
+                report(
+                    &service.name,
+                    &format!(
+                        "already running on port {} (pid {pid}); attached, not started again",
+                        service.port
+                    ),
+                );
+                ready[index] = true;
+                state_word(&state, &service.name, &format!("up on {} (attached)", service.port));
+                attached.insert(service.name.clone(), pid);
+                Ok(())
             }
+            Ok(None) => start(service, lines.clone()).map(|child| children.push((service.clone(), child))),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = started {
+            eprintln!("{error}");
+            stop_all(&mut children);
+            return std::process::ExitCode::FAILURE;
         }
     }
 
-    let mut ready = vec![false; services.len()];
     let mut all_up = wait_ready(&services, &mut ready, &mut children, &received, &state, &mut tails, logs);
     if all_up {
         let list: Vec<String> = services
             .iter()
-            .map(|service| format!("{} on {}", service.name, service.port))
+            .map(|service| {
+                let how = if attached.contains_key(&service.name) { " (attached)" } else { "" };
+                format!("{} on {}{how}", service.name, service.port)
+            })
             .collect();
         println!(
             "the stack is up: {} - {}",
@@ -677,6 +735,12 @@ fn main() -> std::process::ExitCode {
                         stopped.insert(name.clone());
                         state_word(&state, &name, "stopped");
                         format!("stopped {name}")
+                    } else if let Some(pid) = attached.get(&name) {
+                        format!(
+                            "{name} was already running when this stack started (pid {pid}) and is not \
+                             this stack's to stop; stop it where it was started, or `restart {name}` \
+                             to have this stack run it"
+                        )
                     } else if services.iter().any(|service| service.name == name) {
                         format!("{name} is not running")
                     } else {
@@ -694,6 +758,9 @@ fn main() -> std::process::ExitCode {
                                 let _ = child.wait();
                             }
                             stopped.remove(&name);
+                            // A restart takes an attached service over: the instance found running
+                            // is replaced by one this stack starts and watches ([`take_port`]).
+                            attached.remove(&name);
                             match restart(&service, &mut children, &lines, &received, &state, &mut tails, logs) {
                                 Ok(()) => format!("restarted {name}"),
                                 Err(error) => error,
@@ -858,6 +925,21 @@ mod tests {
         assert_eq!(holder_in(6602, table), Some(20004));
         assert_eq!(holder_in(6113, table), None, "only a LISTENING row owns the port");
         assert_eq!(holder_in(6603, table), None);
+    }
+
+    #[test]
+    fn a_running_copy_of_a_service_is_told_from_a_stranger_by_its_program() {
+        let service = Service {
+            name: "manage".to_string(),
+            program: "kryta-management-service".to_string(),
+            args: Vec::new(),
+            port: 6602,
+            stdin: false,
+        };
+        let own = if cfg!(windows) { "KRYTA-Management-Service.exe" } else { "kryta-management-service" };
+        assert!(is_own_program(&service, own), "the same program, whatever the case");
+        assert!(!is_own_program(&service, "authserver.exe"));
+        assert!(!is_own_program(&service, "pid 4242"));
     }
 
     #[test]

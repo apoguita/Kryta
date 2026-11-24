@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Kryta Control</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/ui/app.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" id="rail" aria-label="Areas"></nav>
+  <main id="main"></main>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<noscript>Kryta Control needs JavaScript: the pages ask the service for data.</noscript>
+<!-- One page serves every address; the part after # picks the area. The shell comes first, then
+     one script per registered area, written in by the service from its area table. -->
+<script src="/ui/app.js"></script>
+<!-- area scripts -->
+</body>
+</html>

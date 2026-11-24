@@ -263,7 +263,7 @@ a recorder for the live game: it loads itself into a patched client.
 | part | where | state |
 |---|---|---|
 | the link's messages, for both ends | `tools/client-link/` (crate `kryta-client-link`) | built; 5 tests |
-| the server end of the link | `authserver/src/Server/client_link.rs`, started by `start_client_link` in `authserver/src/main.rs`; settings `ClientLink.Enable`, `ClientLink.Bind` (`127.0.0.1:6603`), `ClientLink.Directory` | built; tests play the conversation against the real listener |
+| the server end of the link | `authserver/src/Server/client_link.rs`, started by `start_client_link` in `authserver/src/main.rs`; settings `ClientLink.Enable`, `ClientLink.Bind` (`127.0.0.1:6650`), `ClientLink.Directory` | built; tests play the conversation against the real listener |
 | the offsets the server provides | `config/Client/offsets/titles.json`, checked at start-up with the DLL's own reader | built |
 | the DLL | `tools/client-dll/` (crate `kryta-client`, installed as `Kryta.dll`) | built |
 | - the scanner | `src/scanner.rs`, port of Reforged's `scanner.cpp` and `file_scanner.cpp` | built; tested on the build machine |
@@ -325,7 +325,7 @@ did so with the old `Gw.custom.exe` as well (`docs/port/20-open-issues.md` item 
   `config/Client/offsets/` has no folder per build. The DLL sends the build stamp of the client's
   file (the `TimeDateStamp` of its PE header) so the logs say which build a failure was in.
 - **The DLL finds the server** at the `-portal` host of the client's command line (then `-authsrv`),
-  on port 6603. A file `Kryta.json` beside the client, `{ "link": "host:port" }`, names another
+  on port 6650. A file `Kryta.json` beside the client, `{ "link": "host:port" }`, names another
   address.
 - **When start-up fails** - the server is not reached in ten tries, refuses, or its offsets do not fit
   the build - the player sees a message box that says why and the client ends. The game's own window

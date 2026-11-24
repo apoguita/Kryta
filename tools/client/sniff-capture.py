@@ -510,6 +510,14 @@ def run_capture(args) -> int:
                 ),
             })
 
+            # With `--header`, only those inbound headers are hooked at all. The injection's event
+            # region holds 64 records between two drains and drops the rest in silence, and an area
+            # load delivers hundreds: measured in recordings/client/raw/login-unfiltered-17072.jsonl,
+            # where drain after drain holds exactly 64 StoC records and 0x008A, 0x00B5 and 0x00DB of
+            # the load are absent. Filtering after the fact, as this tool did, filters what survived.
+            if headers is not None:
+                from py4gw.native_src.packets import py_packet_sniffer
+                py_packet_sniffer.SetStoCHeaderFilter(headers)
             SNIFFER.initialize(args.dir)
             print(f"--- capturing {args.dir} from pid {target['pid']} "
                   f"(client sha256 {(identity['sha256'] or '?')[:16]}, "
