@@ -363,7 +363,10 @@ A refusal sends only `0x0003`, with status `11`.
   sums an extra leading 10-byte message that the trace does not carry.
 - In this tree: the builders are `authserver/src/Server/login_reply.rs`, and the 591-byte block is a
   constant in `authserver/src/Server/account_settings.rs` - a payload, not a setting, so
-  refreshing it is a new build rather than an edit.
+  refreshing it is a new build rather than an edit. It is the answer for an account that has never
+  uploaded settings; once the client uploads its own (`0x8021` then `0x8020`), the next login carries
+  that blob instead, from `account.settings` (`docs/evidence/ui-settings-persistence.md`). The 599 in
+  the table is the trace's size for the default block; a stored blob sets its own length.
 - **Checked byte for byte against that trace**, without a client: five tests compare each builder's
   output - all ten bytes of `0x0003` and `0x0014`, and the first 24 of `0x0016`, `0x0011` and `0x0007`
   - with the bytes the reference printed. Every one matches.

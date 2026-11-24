@@ -75,7 +75,7 @@ movement-sniff.log                                the client-side movement sniff
 ## The index
 
 `index.jsonl` is one JSON line per indexed recording - the way to search at thousands of files. It
-does not cover the folder: it holds 18 lines (7 `asura`, 9 `client`, 2 `gwps`) for 54 recordings, so
+does not cover the folder: it holds 19 lines (7 `asura`, 10 `client`, 2 `gwps`) for 55 recordings, so
 a file without a line is read from its own header and its folder:
 
 ```json

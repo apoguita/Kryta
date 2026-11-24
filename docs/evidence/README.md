@@ -11,6 +11,7 @@ opened directly reads in its original voice.
 |---|---|---|
 | `client-protocol.md` | one client's protocol, measured: framing, the handshake, the login batch, the portal request, the gameplay version message, and the map and item families | ASURA `docs/reference/client-protocol.md` |
 | `packet-coverage.md` | the header-to-name-and-size table that record produced, with its own note on what a recorded size is | ASURA `docs/work/packet-coverage.md` |
+| `ui-settings-persistence.md` | the account settings upload, measured in ASURA's auth log: the two messages, their layout, the 512-byte chunks, and the blob changing per account and per session | ASURA `docs/46-ui-settings-persistence.md` at `071735e`, by way of aeratemark's fork |
 | `asura-history/README.md` | recovered historical documentation, source commits, and a subject index | ASURA Git history |
 
 `recordings/` is the other half: the captures themselves, copied whole from ASURA's `recordings/` -

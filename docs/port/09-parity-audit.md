@@ -90,8 +90,8 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 | `0x800D` | `AUTH_CMSG_DISCONNECT` | `lib.rs` | `session.rs` | ported |
 | `0x800E` | `AUTH_CMSG_SET_PLAYER_STATUS` | `lib.rs` | `session.rs` | ported |
 | `0x801C` | `AUTH_CMSG_ADD_ACCESS_KEY` | `lib.rs:384-406` | `session.rs`: the units counted, status 0, nothing kept | ported |
-| `0x8020` | `AUTH_CMSG_SETTING_UPDATE_CONTENT` (522) | `lib.rs:369-382` | `session.rs`: acknowledged with status 0 | ported |
-| `0x8021` | `AUTH_CMSG_SETTING_UPDATE_SIZE` | `lib.rs:369-382` | `session.rs`: acknowledged with status 0 | ported |
+| `0x8020` | `AUTH_CMSG_SETTING_UPDATE_CONTENT` (522) | aeratemark's fork, `research/Kryta-aeratemark/authserver/src/Server/session.rs:867-914`, `1482-1492` (its port of ASURA `77b0ff8`, which this machine's `ca9f532` does not hold; `ca9f532` only acknowledged it, `lib.rs:369-382`). Measured in `docs/evidence/ui-settings-persistence.md` | `session.rs` `SETTING_UPDATE_CONTENT`: chunks of the open upload appended, the completed blob stored on `account.settings` (`data/sql/base/db_auth/account_settings.sql`), status 0 for every chunk. **Sources disagree**: Rurik (`research/Rurik/toolkit/authsrv/authsrv.py:48432-48459`) answers an upload once, after its last chunk, and stores nothing; aeratemark answers the size message and every chunk. aeratemark's is the one ported because it carries both directions of the store (the upload and the login that returns it) and Rurik sends an empty `0x0016`. Which answer count the client requires is not measured | ported |
+| `0x8021` | `AUTH_CMSG_SETTING_UPDATE_SIZE` | aeratemark's fork, `research/Kryta-aeratemark/authserver/src/Server/session.rs:819-865`, `1474-1480` (its port of ASURA `77b0ff8`; `ca9f532` only acknowledged it, `lib.rs:369-382`) | `session.rs` `SETTING_UPDATE_SIZE`: opens an upload of 1..=2048 bytes, status 0. **Sources disagree**: Eden's reading of the client (`research/Eden/docs/re/configuration.md` 7, "A zero-byte blob still sends one `CtoA 32` with `chunk == 0`") says a total of 0 is a real upload; aeratemark refuses a total of 0 and keeps the stored blob, and that is what is ported. No recording holds a zero-byte upload | ported |
 | `0x8026` | `AUTH_CMSG_ACCEPT_EULA` | `lib.rs:487`, `decode_eula` | `session.rs`, recorded | ported |
 | `0x8029` | `AUTH_CMSG_REQUEST_GAME_INSTANCE` | `lib.rs:507`, `travel::answer` | `session.rs` `answer_game_instance` | ported thin: no lease, no capacity, no world probe, and the outpost rule of `asura-rules` ported but not in force while the caller passes `destination_type` as `None` (`session.rs:1076`) - see 7a |
 | `0x8035` | `AUTH_CMSG_ASK_SERVER_RESPONSE` | `lib.rs` | `session.rs` | ported |
@@ -142,7 +142,7 @@ recordings (`0x8058`, `0x8059`).**
 | `0x0009` | `AUTH_SMSG_GAME_SERVER_INFO` (42) | `messages.rs:690`, `host_for` | `login_reply::game_server_info`, `host_blob` | ported |
 | `0x0011` | `AUTH_SMSG_ACCOUNT_INFO` (275) | `messages.rs:593` | `login_reply::account_info` | ported (the EULA byte was ours until 2026-11-12) |
 | `0x0014` | `AUTH_SMSG_FRIEND_STREAM_END` | `messages.rs:524` | `login_reply::friend_stream_end` | ported |
-| `0x0016` | `AUTH_SMSG_ACCOUNT_SETTINGS` (2058) | `messages.rs:572` | `login_reply::account_settings_frame` | ported |
+| `0x0016` | `AUTH_SMSG_ACCOUNT_SETTINGS` (2058) | `messages.rs:572`; the blob chosen as in aeratemark's fork, `research/Kryta-aeratemark/authserver/src/Server/session.rs:244-284`, `1234-1246` | `login_reply::account_settings_frame`, carrying the account's stored upload, or the committed 591-byte block when it has none (`session.rs` `settings_for_login`; `docs/evidence/ui-settings-persistence.md`) | ported |
 
 ### 4.2 The game connection (79, and 3 of this tree's)
 

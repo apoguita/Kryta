@@ -76,6 +76,35 @@ const COMPUTER_HASH: u16 = 0x8002;
 /// `AUTH_CMSG_DELETE_CHARACTER` (`0x8007`): one of this account's characters, by name.
 const DELETE_CHARACTER: u16 = 0x8007;
 
+/// The most bytes a stored settings blob may hold: what one login's `AUTH_SMSG_ACCOUNT_SETTINGS` can
+/// carry, the message's declared `Array8` of 2048
+/// (`research/Kryta-aeratemark/authserver/src/Server/session.rs:79-82`). An upload that announces more
+/// is acknowledged and not stored.
+const ACCOUNT_SETTINGS_CAPACITY: usize = 2048;
+
+/// The largest single `0x8020` chunk the client sends
+/// (`research/Kryta-aeratemark/authserver/src/Server/session.rs:84-86`; the measured upload in
+/// `docs/evidence/ui-settings-persistence.md` is a 512-byte chunk and a 66-byte one).
+const SETTINGS_CHUNK_CAPACITY: usize = 512;
+
+/// The account settings store is ported from aeratemark's fork of this tree
+/// (`research/Kryta-aeratemark/authserver/src/Server/session.rs`), itself a port of ASURA `77b0ff8`,
+/// which is newer than the `ca9f532` this machine holds; the measurement is
+/// `docs/evidence/ui-settings-persistence.md`.
+///
+/// A settings upload in flight: the size message (`0x8021`) opened it, and the content messages
+/// (`0x8020`) that carry its request id fill it
+/// (`research/Kryta-aeratemark/authserver/src/Server/session.rs:91-101`).
+#[derive(Debug)]
+struct SettingsUpload {
+    /// The request id the size message announced; only content carrying it belongs to this upload.
+    request: u32,
+    /// The byte count the size message announced.
+    total: usize,
+    /// The bytes received so far.
+    bytes: Vec<u8>,
+}
+
 /// Where a client that asks for a map is sent: a world's address and the id it is known by.
 ///
 /// Reference: what the reference keeps in its realm list and hands to
@@ -94,7 +123,7 @@ pub struct AuthSession {
     log: Log,
     master: [u8; MASTER_SECRET_LEN],
     file_check: FileCheck,
-    /// The 591-byte block every login is answered with, from the account settings payload.
+    /// The committed 591-byte block a login is answered with when the account has no stored upload.
     account_settings: Vec<u8>,
     /// The account the portal identified, once a login has resolved one. A character choice
     /// (0x800A) is answered from it, and it is the join a travel request uses.
@@ -118,6 +147,8 @@ pub struct AuthSession {
     /// The character this connection chose, by its own id, so a delete knows whether it just took this
     /// connection's character away (`ASURA/crates/asura-auth/src/lib.rs:436-455`).
     character_chosen: Option<[u8; 16]>,
+    /// The account settings upload in flight, if the client is in the middle of one.
+    settings_upload: Option<SettingsUpload>,
     /// The salt this connection's session info carried, so the computer hash is answered with the salt
     /// the client's cipher is already derived from.
     salt: Option<u32>,
@@ -165,6 +196,7 @@ impl AuthSession {
             accounts: None,
             character_map: None,
             character_chosen: None,
+            settings_upload: None,
             salt: None,
             creation_map: 0,
             fallback_outpost: 0,
@@ -225,6 +257,83 @@ impl AuthSession {
             );
         }
         Self::new(log, master, file_check, account_settings, front_door, characters)
+    }
+
+    /// The settings blob a login is answered with: the account's stored upload when it has a usable
+    /// one, otherwise the committed block every new account starts from
+    /// (`research/Kryta-aeratemark/authserver/src/Server/session.rs:244-284`).
+    fn settings_for_login(&self, peer: &str, user_id: &[u8; 16]) -> Vec<u8> {
+        let Some(accounts) = self.accounts.as_ref() else {
+            return self.account_settings.clone();
+        };
+        match accounts.settings_for_user(&game::characters::uuid_text(user_id)) {
+            Ok(Some(bytes)) if !bytes.is_empty() && bytes.len() <= ACCOUNT_SETTINGS_CAPACITY => {
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Connection from {peer}: the account's own settings, {} bytes.",
+                        bytes.len()
+                    ),
+                );
+                bytes
+            }
+            Ok(Some(bytes)) => {
+                self.say(
+                    LogLevel::Warn,
+                    format!(
+                        "Connection from {peer}: the stored settings are {} bytes, outside 1..={ACCOUNT_SETTINGS_CAPACITY}; using the committed block.",
+                        bytes.len()
+                    ),
+                );
+                self.account_settings.clone()
+            }
+            Ok(None) => self.account_settings.clone(),
+            // A read that fails is not worth losing a login over: the committed block still logs in.
+            Err(error) => {
+                self.say(
+                    LogLevel::Error,
+                    format!(
+                        "Connection from {peer}: the stored settings could not be read ({error}); using the committed block."
+                    ),
+                );
+                self.account_settings.clone()
+            }
+        }
+    }
+
+    /// Keep a completed settings upload on the account this connection logged in as
+    /// (`research/Kryta-aeratemark/authserver/src/Server/session.rs:286-318`).
+    fn store_settings(&self, peer: &str, bytes: &[u8]) {
+        let (Some(accounts), Some(account)) = (self.accounts.as_ref(), self.account) else {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Connection from {peer}: a {}-byte settings upload arrived with no account table or no login on this connection; not stored.",
+                    bytes.len()
+                ),
+            );
+            return;
+        };
+        let user_id = game::characters::uuid_text(&account);
+        match accounts.set_settings_for_user(&user_id, bytes) {
+            Ok(true) => self.say(
+                LogLevel::Info,
+                format!(
+                    "Connection from {peer}: stored {} bytes of UI settings for account {user_id}.",
+                    bytes.len()
+                ),
+            ),
+            Ok(false) => self.say(
+                LogLevel::Warn,
+                format!(
+                    "Connection from {peer}: a settings upload for {user_id} matched no account row."
+                ),
+            ),
+            Err(error) => self.say(
+                LogLevel::Error,
+                format!("Connection from {peer}: the settings could not be stored: {error}"),
+            ),
+        }
     }
 
     fn say(&self, level: LogLevel, text: impl Into<String>) {
@@ -729,12 +838,10 @@ impl AuthSession {
                     .await
             }
 
-            // The settings uploads, which must be acknowledged: an unacknowledged one is a hang, and the
-            // working implementation names exactly that as the reason it does not decode them
-            // (`ASURA/crates/asura-auth/src/lib.rs:369-382`). Answering every request the client makes
-            // keeps that trap shut without having to understand the payload - and GWPS stores
-            // nothing of it either.
-            UPDATE_CHARACTER_SETTINGS | SETTING_UPDATE_CONTENT | SETTING_UPDATE_SIZE => {
+            // The character-select settings upload (`0x8009`): acknowledged and nothing more
+            // (`ASURA/crates/asura-auth/src/lib.rs:369-382`). An unacknowledged settings upload is a
+            // hang (`docs/evidence/client-protocol.md` section 6), and GWPS stores nothing of it either.
+            UPDATE_CHARACTER_SETTINGS => {
                 let request = request_id(body);
                 self.say(
                     LogLevel::Info,
@@ -748,6 +855,107 @@ impl AuthSession {
                     crate::server::login_reply::GM_ERROR_NONE,
                 );
                 self.send(io, peer, crypt, &[answer], "a settings upload")
+                    .await
+            }
+
+            // The account settings upload, first half (`0x8021`): `req_id: u32, size: u32` announces the
+            // whole blob. The blob is the client's UI state - window positions, visibility and the
+            // other interface options - and it is kept verbatim so the next login hands it back
+            // (`research/Kryta-aeratemark/authserver/src/Server/session.rs:819-865`). Every message of
+            // an upload is answered, as ASURA at `ca9f532` already answered them
+            // (`ASURA/crates/asura-auth/src/lib.rs:369-382`); Rurik answers once, after the last chunk,
+            // and that disagreement is in `docs/port/09-parity-audit.md`, row `0x8020`.
+            SETTING_UPDATE_SIZE => {
+                let request = request_id(body);
+                match decode_settings_size(body) {
+                    Some((announced, total)) if total > 0 && total <= ACCOUNT_SETTINGS_CAPACITY => {
+                        self.say(
+                            LogLevel::Info,
+                            format!(
+                                "Connection from {peer}: settings upload {announced} announces {total} bytes."
+                            ),
+                        );
+                        self.settings_upload = Some(SettingsUpload {
+                            request: announced,
+                            total,
+                            bytes: Vec::with_capacity(total),
+                        });
+                    }
+                    Some((announced, total)) => {
+                        self.say(
+                            LogLevel::Warn,
+                            format!(
+                                "Connection from {peer}: settings upload {announced} announces {total} bytes, outside 1..={ACCOUNT_SETTINGS_CAPACITY}; not stored."
+                            ),
+                        );
+                        self.settings_upload = None;
+                    }
+                    None => {
+                        self.say(
+                            LogLevel::Warn,
+                            format!(
+                                "Connection from {peer}: a settings size of {} bytes is too short; not stored.",
+                                body.len() + 2
+                            ),
+                        );
+                        self.settings_upload = None;
+                    }
+                }
+                let answer = crate::server::login_reply::request_response(
+                    request,
+                    crate::server::login_reply::GM_ERROR_NONE,
+                );
+                self.send(io, peer, crypt, &[answer], "a settings size")
+                    .await
+            }
+
+            // The account settings upload, second half (`0x8020`): `req_id: u32, count: u16` and that
+            // many bytes. When the announced total has arrived the blob replaces the account's stored
+            // one, and the next login is answered with it
+            // (`research/Kryta-aeratemark/authserver/src/Server/session.rs:867-914`).
+            SETTING_UPDATE_CONTENT => {
+                let request = request_id(body);
+                let mut completed = None;
+                match decode_settings_content(body) {
+                    Some((chunk_request, chunk)) => match self.settings_upload.as_mut() {
+                        Some(upload) if upload.request == chunk_request => {
+                            upload.bytes.extend_from_slice(chunk);
+                            if upload.bytes.len() >= upload.total {
+                                completed = self.settings_upload.take().map(|upload| upload.bytes);
+                            }
+                        }
+                        Some(upload) => {
+                            let open = upload.request;
+                            self.say(
+                                LogLevel::Warn,
+                                format!(
+                                    "Connection from {peer}: a settings chunk for request {chunk_request} while request {open} is open; ignored."
+                                ),
+                            );
+                        }
+                        None => self.say(
+                            LogLevel::Warn,
+                            format!(
+                                "Connection from {peer}: a settings chunk for request {chunk_request} without a size announcement; ignored."
+                            ),
+                        ),
+                    },
+                    None => self.say(
+                        LogLevel::Warn,
+                        format!(
+                            "Connection from {peer}: a settings chunk of {} bytes is malformed; ignored.",
+                            body.len() + 2
+                        ),
+                    ),
+                }
+                if let Some(bytes) = completed {
+                    self.store_settings(peer, &bytes);
+                }
+                let answer = crate::server::login_reply::request_response(
+                    request,
+                    crate::server::login_reply::GM_ERROR_NONE,
+                );
+                self.send(io, peer, crypt, &[answer], "a settings chunk")
                     .await
             }
 
@@ -1064,12 +1272,19 @@ impl AuthSession {
             .map(|version| u8::try_from(version.max(0)).unwrap_or(0))
             .unwrap_or(0);
 
+        // The account's own uploaded UI settings, when it has some, are what the login is answered
+        // with; otherwise the committed block. Without this the client's saved layout was
+        // acknowledged, thrown away, and every session started from the same one
+        // (`data/sql/base/db_auth/account_settings.sql`;
+        // `research/Kryta-aeratemark/authserver/src/Server/session.rs:1234-1246`).
+        let account_settings = self.settings_for_login(peer, &login.user_id);
+
         let frames = crate::server::login_reply::reply_frames(
             login.request,
             login.user_id,
             &characters,
             eula_accepted,
-            &self.account_settings,
+            &account_settings,
         );
         self.account = Some(login.user_id);
         // The login's number: the time it happened, in microseconds, so a later login has a larger
@@ -1318,6 +1533,28 @@ fn request_id(body: &[u8]) -> u32 {
     u32::from_le_bytes([body[0], body[1], body[2], body[3]])
 }
 
+/// `AUTH_CMSG_SETTING_UPDATE_SIZE` (`0x8021`): `req_id: u32, size: u32`
+/// (`research/Kryta-aeratemark/authserver/src/Server/session.rs:1474-1480`). Measured:
+/// `05 00 00 00 42 02 00 00`, request 5 announcing 578 bytes (`docs/evidence/ui-settings-persistence.md`).
+fn decode_settings_size(body: &[u8]) -> Option<(u32, usize)> {
+    let request = u32::from_le_bytes(body.get(0..4)?.try_into().ok()?);
+    let size = u32::from_le_bytes(body.get(4..8)?.try_into().ok()?);
+    Some((request, size as usize))
+}
+
+/// `AUTH_CMSG_SETTING_UPDATE_CONTENT` (`0x8020`): `req_id: u32, count: u16`, then exactly `count`
+/// bytes. Measured: `05 00 00 00 | 00 02 <512 bytes>` then `05 00 00 00 | 42 00 <66 bytes>`
+/// (`docs/evidence/ui-settings-persistence.md`;
+/// `research/Kryta-aeratemark/authserver/src/Server/session.rs:1482-1492`).
+fn decode_settings_content(body: &[u8]) -> Option<(u32, &[u8])> {
+    let request = u32::from_le_bytes(body.get(0..4)?.try_into().ok()?);
+    let count = u16::from_le_bytes(body.get(4..6)?.try_into().ok()?) as usize;
+    if count > SETTINGS_CHUNK_CAPACITY {
+        return None;
+    }
+    Some((request, body.get(6..6 + count)?))
+}
+
 /// What a `0x8029` asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GameInstanceRequest {
@@ -1464,6 +1701,25 @@ pub fn uuid_le_text(bytes: &[u8; 16]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_settings_upload_decodes_as_asura_measured_it() {
+        // 0x8021: request 5 announces 578 bytes.
+        let size = [5u8, 0, 0, 0, 0x42, 0x02, 0, 0];
+        assert_eq!(decode_settings_size(&size), Some((5, 578)));
+        assert_eq!(decode_settings_size(&size[..6]), None);
+
+        // 0x8020: request 5, a 66-byte chunk.
+        let mut content = vec![5u8, 0, 0, 0, 0x42, 0x00];
+        content.extend(std::iter::repeat(0xAB).take(66));
+        let (request, chunk) = decode_settings_content(&content).unwrap();
+        assert_eq!((request, chunk.len()), (5, 66));
+
+        // A count past the body, or past one chunk's capacity, is malformed.
+        assert_eq!(decode_settings_content(&content[..20]), None);
+        let too_big = [5u8, 0, 0, 0, 0x01, 0x02];
+        assert_eq!(decode_settings_content(&too_big), None);
+    }
     use crate::server::handshake::{shared_secret, PUBLIC_LEN};
     use shared::network::socket::SessionFactory;
     use shared::network::socket_mgr::SocketMgr;
