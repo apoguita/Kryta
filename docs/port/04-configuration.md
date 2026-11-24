@@ -32,6 +32,7 @@ worldserver/worldserver.json     the game program's settings - the one file it r
 authserver/authserver.json       the login program's settings
 config/Server/                   what a machine chooses and answers (commands.json, admin.json today)
 config/World/<pack>/             what a world contains; Vanilla is the faithful base
+config/Client/                   what a patched client's DLL is given (offsets/titles.json today)
 data/sql/, data/path-graphs.bin  the archive's and the database's: schema (no rows), extracted graphs
 ```
 
@@ -172,7 +173,9 @@ not state keeps the table's value.
 | setting | is set in |
 |---|---|
 | the login listener: port, bind address, thread count, trace | `authserver.json` |
-| the portal: enabled, where it answers, the world configuration whose pack supplies custom title text (`Portal.TitleWorldConfig`) | `authserver.json` |
+| the portal: enabled, where it answers | `authserver.json` |
+| the client link: enabled (`ClientLink.Enable`), where it answers (`ClientLink.Bind`, `127.0.0.1:6603`), the folder of what a client's DLL is given (`ClientLink.Directory`), and the world configuration whose pack supplies the custom title text it is sent (`ClientLink.TitleWorldConfig`) | `authserver.json` |
+| where each place the client's DLL hooks is found in the client: byte patterns and the steps from a match to an address, in Py4GW Reforged's offset format. Every `*.json` in the folder is one document, sent to each client's DLL over the link; a new client build is handled by editing these files (`docs/port/22-client-platform.md`) | `config/Client/offsets/titles.json`, under `ClientLink.Directory`. A missing folder or a file that breaks the format stops the login program |
 | the login database: connection string, worker and synchronous connections, trace | `authserver.json` |
 | the character database: connection string, worker and synchronous connections | `authserver.json`, `worldserver.json`, under `CharacterDatabaseInfo` and `CharacterDatabase` |
 | the world listener: bind address (`BindIP`), port (`WorldServerPort`, 6113 in the shipped file), thread count and byte trace (`Network.Threads`, `Network.Trace`), and the world id it serves as (`RealmID`) | `worldserver.json`, top level |
@@ -221,6 +224,7 @@ Two consequences of taking that seriously, both now in the code:
 |---|---|---|
 | **the world** | maps, spawn points, doorways, starting items, titles | JSON files in the world pack, `config/World/<pack>/` |
 | **the server's own content** | the chat commands, the first game account | JSON files in `config/Server/` |
+| **what a patched client is given** | where its DLL finds the client's functions | JSON files in `config/Client/` |
 | **a program's settings** | ports, database addresses, logging, and today the game's numbers too | that program's JSON file: `worldserver.json`, `authserver.json` |
 | **what happens while the server runs** | accounts, characters, the items they carry, open instances, unlocks | database rows |
 | **what the game client dictates** | packet sizes and layouts, the file check's bytes, the account settings block | named constant tables in the code, each citing its recording |

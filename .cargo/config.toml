@@ -1,0 +1,4 @@
+# The one crate built for the 32-bit client is Kryta.dll (tools/client-dll). It links the C runtime
+# into the DLL, so a player's machine needs no runtime installed beside the client.
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -9,12 +9,16 @@ pub mod account_settings;
 pub mod accounts;
 #[path = "characters.rs"]
 pub mod characters;
+#[path = "client_link.rs"]
+pub mod client_link;
 #[path = "file_check.rs"]
 pub mod file_check;
 #[path = "front_door.rs"]
 pub mod front_door;
 #[path = "handshake.rs"]
 pub mod handshake;
+#[path = "logins.rs"]
+pub mod logins;
 #[path = "login_reply.rs"]
 pub mod login_reply;
 #[path = "session.rs"]

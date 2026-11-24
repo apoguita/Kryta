@@ -44,10 +44,25 @@
     "Bind": {
       "value": "127.0.0.1:6601",
       "doc": "Where those endpoints answer. The client was launched with -portal 127.0.0.1 and speaks to localhost:6601."
+    }
+  },
+
+  "ClientLink": {
+    "Enable": {
+      "value": true,
+      "doc": "The link Kryta.dll opens from inside a patched client when the client starts (docs/port/22-client-platform.md). This program serves it: over it a client is given the offsets its DLL finds the client's functions by, and the custom title text. A patched client does not start without it."
+    },
+    "Bind": {
+      "value": "127.0.0.1:6603",
+      "doc": "Where the link answers. Kryta.dll dials the -portal host of the client's command line on port 6603 unless a Kryta.json beside the client names another address."
+    },
+    "Directory": {
+      "value": "config/Client",
+      "doc": "The folder of what a client's DLL is given: every *.json under its offsets folder is one offset document (config/Client/README.md). Read once at start-up; a missing folder or a broken file stops the program."
     },
     "TitleWorldConfig": {
       "value": "worldserver/worldserver.json",
-      "doc": "World program configuration whose WorldPack supplies the custom title catalog. An empty value disables the Kryta text endpoint."
+      "doc": "World program configuration whose WorldPack supplies the custom title text a client's DLL is sent. An empty value sends none."
     }
   },
 

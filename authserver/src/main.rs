@@ -135,6 +135,8 @@ fn run(args: &[String]) -> Result<(), String> {
         network_trace,
         listener.network_threads,
     )?;
+    let link_sockets =
+        start_client_link(&config, &log, network_trace, listener.network_threads)?;
     let account_settings = read_account_settings(&log)?;
     let (world_list, front_door) = open_front_door(worlds, &log);
     let refresh = start_world_list_refresh(&log, &login, &world_list, &worlds_file, update_delay)?;
@@ -157,7 +159,14 @@ fn run(args: &[String]) -> Result<(), String> {
     // Reference: the signal handlers stop the acceptor and the threads; `ioContext->run()` returns
     // and the program closes what it opened, in reverse order.
     wait_for_shutdown();
-    shut_down(&log, status, refresh, sockets, portal_sockets, &login);
+    shut_down(
+        &log,
+        status,
+        refresh,
+        sockets,
+        [portal_sockets, link_sockets],
+        &login,
+    );
 
     Ok(())
 }
@@ -593,23 +602,9 @@ fn start_portal(
             format!("Portal: {count} account(s) in the login database, binding {portal_bind}."),
         );
 
-        let mut portal = game::portal::Portal::new(
+        let portal = Arc::new(game::portal::Portal::new(
             crate::server::DatabaseAccounts::new(Arc::clone(login), log.clone()),
-        );
-        let title_world_config =
-            read_string(config, "Portal.TitleWorldConfig", "worldserver/worldserver.json")?;
-        if !title_world_config.is_empty() {
-            let world = Config::load_json(&title_world_config, false, Policy::default())
-                .map_err(|error| error.to_string())?;
-            let (pack, _) = world.value_string("WorldPack", "config/World/Vanilla")
-                .map_err(|error| error.to_string())?;
-            let path = std::path::Path::new(&pack).join("titles.json");
-            let titles = game::characters::titles::VanillaTitles::load(&path)
-                .inspect_err(|error| log.out(LogLevel::Error, "server.authserver", error))?;
-            portal = portal.with_custom_titles(titles.custom_catalog());
-            log.out(LogLevel::Info, "server.authserver", format!("Portal: custom title catalog from {}.", path.display()));
-        }
-        let portal = Arc::new(portal);
+        ));
         let factory: SessionFactory = {
             let portal = Arc::clone(&portal);
             let log = Some(log.clone());
@@ -644,6 +639,113 @@ fn start_portal(
         portal_sockets = Some(sockets);
     }
     Ok(portal_sockets)
+}
+
+/// The custom title text of the world pack, as the JSON document a patched client is given, and the
+/// file it was read from. `None` when `ClientLink.TitleWorldConfig` is empty.
+///
+/// The pack is the world program's (`WorldPack` in its configuration); this program reads the
+/// titles file of the same pack so the text a client shows is the text the world sends ranks for.
+fn read_custom_titles(config: &Config, log: &Log) -> Result<Option<(Vec<u8>, PathBuf)>, String> {
+    let title_world_config =
+        read_string(config, "ClientLink.TitleWorldConfig", "worldserver/worldserver.json")?;
+    if title_world_config.is_empty() {
+        return Ok(None);
+    }
+    let world = Config::load_json(&title_world_config, false, Policy::default())
+        .map_err(|error| error.to_string())?;
+    let (pack, _) = world
+        .value_string("WorldPack", "config/World/Vanilla")
+        .map_err(|error| error.to_string())?;
+    let path = std::path::Path::new(&pack).join("titles.json");
+    let titles = game::characters::titles::VanillaTitles::load(&path)
+        .inspect_err(|error| log.out(LogLevel::Error, "server.authserver", error))?;
+    Ok(Some((titles.custom_catalog(), path)))
+}
+
+/// Start the client link's listener, when `ClientLink.Enable` asks for it.
+///
+/// The link is the connection `Kryta.dll` opens from inside a patched client when the client
+/// starts (`docs/port/22-client-platform.md`). This program serves it, as it serves the portal: it
+/// is the program whose address the client has from its command line. What is served is read here,
+/// once: the offset documents under `ClientLink.Directory`, and the custom titles of the world pack.
+fn start_client_link(
+    config: &Config,
+    log: &Log,
+    trace: bool,
+    network_threads: usize,
+) -> Result<Option<SocketMgr>, String> {
+    if !read_bool(config, "ClientLink.Enable", false)? {
+        return Ok(None);
+    }
+    let bind = read_string(config, "ClientLink.Bind", "127.0.0.1:6603")?;
+    let directory = read_string(config, "ClientLink.Directory", "config/Client")?;
+
+    let custom_tracks = match read_custom_titles(config, log)? {
+        Some((catalog, path)) => {
+            log.out(
+                LogLevel::Info,
+                "server.authserver",
+                format!("Client link: custom title text from {}.", path.display()),
+            );
+            serde_json::from_slice::<serde_json::Value>(&catalog)
+                .ok()
+                .and_then(|document| {
+                    document
+                        .get("custom_tracks")
+                        .and_then(|tracks| tracks.as_array().cloned())
+                })
+                .ok_or("the custom title catalog is not a list of tracks")?
+        }
+        None => Vec::new(),
+    };
+    let link = crate::server::client_link::ClientLink::load(
+        std::path::Path::new(&directory),
+        custom_tracks,
+    )
+    .map_err(|error| format!("the client link's offsets could not be read: {error}"))?;
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        format!(
+            "Client link: {} offset document(s) from {directory}, {} custom title(s), binding {bind}.",
+            link.offset_documents(),
+            link.custom_titles()
+        ),
+    );
+
+    let link = Arc::new(link);
+    let factory: SessionFactory = {
+        let link = Arc::clone(&link);
+        let log = Some(log.clone());
+        Arc::new(move || {
+            Box::new(crate::server::client_link::ClientLinkSession::new(
+                Arc::clone(&link),
+                log.clone(),
+            )) as Box<dyn Session>
+        })
+    };
+    let (host, port_text) = bind
+        .rsplit_once(':')
+        .ok_or_else(|| format!("ClientLink.Bind is not 'address:port': {bind}"))?;
+    let port: u16 = port_text
+        .parse()
+        .map_err(|_| format!("ClientLink.Bind has no port: {bind}"))?;
+
+    let mut sockets = SocketMgr::new(factory);
+    sockets.set_log(log.clone());
+    if trace {
+        sockets.set_trace(log.clone());
+    }
+    let bound = sockets
+        .start_network(host, port, network_threads)
+        .map_err(|error| format!("the client link could not start: {error}"))?;
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        format!("Client link: listening on {host}:{bound}."),
+    );
+    Ok(Some(sockets))
 }
 
 /// Decode the 591-byte block every login is answered with: a protocol payload, so a constant.
@@ -831,6 +933,8 @@ fn session_factory(
         creation_map,
         fallback_outpost,
     } = placement;
+    // One login per account: every session of this listener shares the record of who holds what.
+    let logins = Arc::new(crate::server::logins::Logins::new());
     Arc::new(move || {
         Box::new(
             AuthSession::with_random_master(
@@ -842,6 +946,7 @@ fn session_factory(
             )
             .with_travels(Arc::clone(&travels))
             .with_accounts(Arc::clone(&accounts))
+            .with_logins(Arc::clone(&logins))
             .with_placement(creation_map, fallback_outpost),
         ) as Box<dyn Session>
     })
@@ -958,7 +1063,7 @@ fn shut_down(
     status: Background,
     refresh: Background,
     mut sockets: SocketMgr,
-    portal_sockets: Option<SocketMgr>,
+    other_listeners: [Option<SocketMgr>; 2],
     login: &Arc<Mutex<DatabaseWorkerPool>>,
 ) {
     log.out(
@@ -973,8 +1078,8 @@ fn shut_down(
     let _ = refresh.thread.join();
 
     sockets.stop_network();
-    if let Some(mut portal_sockets) = portal_sockets {
-        portal_sockets.stop_network();
+    for mut listener in other_listeners.into_iter().flatten() {
+        listener.stop_network();
     }
     match login.lock() {
         Ok(mut pool) => pool.close(),

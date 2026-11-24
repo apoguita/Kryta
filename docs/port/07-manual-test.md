@@ -8,7 +8,8 @@ line it should have printed is the thing to report.
 
 ```powershell
 # the client, patched and pointed at this machine (docs/port/05-tooling.md); the patcher also builds
-# KrytaTitles.dll, which needs Visual Studio's x86 tools and nlohmann/json, or --title-runtime
+# Kryta.dll with cargo and writes it beside the client. Start the stack before the client: the DLL
+# connects to the login program when the client starts, and says what it did in Kryta.<pid>.log
 python tools/client/patch-gw.py "F:\GW\GW1\Gw.exe" tools/client/keys.txt --output "F:\GW\GW1\Gw.custom.exe"
 python tools/client/hosts-redirect.py status
 ```

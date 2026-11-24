@@ -31,7 +31,10 @@ clone.
 
 | tool | is | needs | ported from |
 |---|---|---|---|
-| `tools/client/patch-gw.py` | builds `Gw.custom.exe` with the connection patches and the build 39167 custom-title lookup, and installs `KrytaTitles.dll` beside it | `pefile`, Visual Studio x86 C++ tools, and nlohmann/json, or a prebuilt x86 runtime | ASURA `client-patcher/patch-gw.py` for the connection; [title research](19-title-research.md) for custom text |
+| `tools/client/patch-gw.py` | builds `Gw.custom.exe`: the connection patches and one import-table entry that makes the client load `Kryta.dll` by itself (`tools/client/dll_patch.py`); builds the DLL with cargo and installs it beside the client. Works on any client build its two connection patterns fit | `pefile`; Rust with the `i686-pc-windows-msvc` target (`rust-toolchain.toml` installs it), or a built DLL with `--dll` | ASURA `client-patcher/patch-gw.py` for the connection; [the client platform](22-client-platform.md) for the DLL |
+| `tools/client/dll_patch.py` | adds `Kryta.dll` to a client's import table | `pefile` | this tree's own |
+| `tools/client-dll/` | `Kryta.dll`, a Rust crate (`kryta-client`): what Kryta adds to the client, found by byte pattern and hooked while the client runs | built for `i686-pc-windows-msvc` | Py4GW Reforged Native for the scanner, the offset resolver and the hook layer |
+| `tools/client-link/` | the messages of the link between `Kryta.dll` and the server, used by both ends (`kryta-client-link`) | - | this tree's own |
 | `tools/client/keys.txt` | the key material the patch writes: `generator`, `prime`, `server_private`, `server_public` | - | ASURA `client-patcher/keys.txt`; the prime and `server_private` are the same values as `shared/src/Cryptography/Handshake.rs` |
 | `tools/client/hosts-redirect.py` | sends the client's seven baked-in names to this machine, or puts them back; recognises a block an earlier tool left | an elevated shell to write the hosts file | ASURA `client-patcher/hosts-redirect.py`, itself from GWPS `tools/hosts-gwps.ps1` |
 | `tools/adapt-protocol-table.py` | moved the ported message table into `game/src/Server/Protocol/Tables.rs`, once | nothing; it is the record of the move | ASURA `crates/asura-protocol/src/packets.rs` |
@@ -42,8 +45,6 @@ clone.
 | `tools/recover-game-rules.py` | recovered the owner's ledger into `docs/game-rules.md`, as ASCII, from ASURA's history | a checkout of ASURA with its history | ASURA `git show f7c2f31:docs/36-game-rules-ledger.md` |
 | `tools/client/sniff-capture.py` | captures the live client's packets into a JSONL file (see "Capturing a client" below) | Py4GW_Stealth and a 32-bit Python; an elevated shell | ASURA `tools/sniff-capture.py` |
 | `tools/client/capture-fresh-character.ps1` | elevates, finds the one retail `Gw.exe`, and runs `sniff-capture.py --raw` into `recordings/client/raw/fresh-character-<stamp>.jsonl` while a character is created | 32-bit Python 3.13 under `%LOCALAPPDATA%`, Py4GW_Stealth (`PY4GW_STEALTH` or `%USERPROFILE%\Py4GW_Stealth`) | this tree's own |
-| `tools/client/title_patch.py` | the build 39167 hooks for the server-delivered title text that `patch-gw.py` applies | `pefile`, Visual Studio x86 C++ tools, nlohmann/json (`KRYTA_TITLE_JSON_INCLUDE`) | [title research](19-title-research.md) |
-| `tools/client/title-runtime.cpp` | the source of `KrytaTitles.dll`: the patched client fetches custom title text from Kryta (`/kryta/custom-titles.json`) | built by `patch-gw.py` | [title research](19-title-research.md) |
 | `tools/capture/read.py` | reads a capture back in the layer it declares - `--describe`, `--header`, `--limit`, `--assume-layer`, `--self-test` - and refuses a file that states no layer | nothing; it is Python 3 and standard library only | ASURA `tools/capture-read.py` |
 | `tools/capture/diff.py` | compares two captures message by message: agreement count, then the first divergences with both payloads; refuses a struct-layer file against a wire-layer one, because the two widen fields differently | nothing; standard library only | new; the comparison workflow `0012-chat-text-is-sent.md` used by hand |
 | `tools/capture/capture_file.py` | the one implementation of the layer rules both of the above use | nothing | ASURA `tools/capture-read.py`'s layer half |
@@ -291,28 +292,34 @@ accepted, or 0 for none. The auth program's answer reports it, so a client that 
 
 ```powershell
 pip install pefile                                                                    # once per machine
-python tools/client/patch-gw.py "F:\GW\GW1\Gw.exe" tools/client/keys.txt --retire-title-probes
+python tools/client/patch-gw.py "F:\GW\GW1\Gw.exe" tools/client/keys.txt
 python tools/client/hosts-redirect.py status
 & 'F:\GW\GW1\Gw.custom.exe' -authsrv 127.0.0.1 -portal 127.0.0.1
 ```
 
-This is how the client is built today. It is to be replaced: the patch is to redirect and load the
-DLL only, with everything else in the DLL - `docs/port/22-client-platform.md`.
+The patch does two things: it redirects the client to this server, and it adds `Kryta.dll` to the
+client's import table, so the client loads the DLL by itself when it starts. The patcher then builds
+the DLL (`cargo build -p kryta-client --release --target i686-pc-windows-msvc`) and writes it beside
+`Gw.custom.exe`. `--dll` takes a DLL that is already built. The patcher does not check which client
+build it is given.
 
-The patcher expects stock build 39167 and builds `KrytaTitles.dll` with Visual
-Studio's x86 tools. It finds `nlohmann/json.hpp` in
-`Py4GW_Reforged_Native/third_party` under the user profile or in the directory
-specified by `KRYTA_TITLE_JSON_INCLUDE`. A prebuilt x86 runtime can be supplied
-with `--title-runtime`. Run `Gw.custom.exe` with the DLL beside it.
+What the DLL does, and what it needs:
 
-The client retrieves custom text from the `-portal` host on port 6601.
-Set `--title-url` when building for a different catalog address.
-Edit the world pack's `titles.json`, restart Kryta, and reload the character
-to use the new text. `--retire-title-probes` archives the old title executables.
-Rebuild `Gw.custom.exe` from stock build 39167 once before using custom
-titles numbered 48 and above. Earlier builds of the patch assert when the
-Hero Panel looks up those rows. Later catalog edits only need the stack
-restart and character reload.
+- When the client starts, the DLL connects to the login program's client link - the `-portal` host,
+  port 6603 (`ClientLink.Bind` in `authserver.json`). A file `Kryta.json` beside the client,
+  `{ "link": "host:port" }`, names another address.
+- The server sends it the offsets under `config/Client/`; it finds the client's title functions by
+  them, installs its hooks, and is sent the custom title text.
+- **The stack must be running before the client is started.** A client that cannot reach the link,
+  or whose build the offsets do not fit, shows a message that says why and ends.
+- It writes `Kryta.<pid>.log` beside the client: the build it is in, every offset, every hook, the first
+  few times a title hook answers the client, and any fault inside the client with where it happened.
+
+Edit the world pack's `titles.json` and restart the stack to change the title text. After a client
+update, see `config/Client/README.md`: the offsets are corrected on the server and nothing is
+rebuilt or redistributed.
+
+`--retire-title-probes` archives the old title test executables beside the client.
 
 The hosts block is **off by default and that is the normal state**: with the patch above the client
 dials the address on its command line, so nothing needs the block. `enable --file-server` is for a

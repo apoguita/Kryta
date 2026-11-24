@@ -9,6 +9,9 @@
 //! is why the EULA version is a column (`data/sql/base/db_auth/account_eula.sql`) and not a key in a
 //! file.
 
+#[path = "Logins.rs"]
+pub mod logins;
+
 use std::sync::{Arc, Mutex};
 
 use common::logging::{Log, LogLevel};

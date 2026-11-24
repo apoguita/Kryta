@@ -22,13 +22,14 @@ use database::database::{DatabaseWorkerPool, Param};
 
 const INSERT_TRAVEL: &str = "INSERT INTO \"travel\" (\"account\", \"world\", \"map_id\", \"district\", \
                              \"language\", \"player_token\", \"landing_x\", \"landing_y\", \
-                             \"landing_plane\", \"landing_from\") VALUES ($1, $2, $3, $4, $5, $6, \
+                             \"landing_plane\", \"landing_from\", \"login\") VALUES ($1, $2, $3, $4, $5, $6, \
                              NULLIF($7::text, '')::real, NULLIF($8::text, '')::real, \
-                             NULLIF($9::text, '')::bigint, NULLIF($10::text, '')::bigint)";
+                             NULLIF($9::text, '')::bigint, NULLIF($10::text, '')::bigint, $11)";
 
 const CLAIM_TRAVEL: &str = "DELETE FROM \"travel\" WHERE \"world\" = $1 AND \"account\" = $2 AND \
                             \"player_token\" = $3 RETURNING \"account\", \"map_id\", \"district\", \
-                            \"language\", \"landing_x\", \"landing_y\", \"landing_plane\", \"landing_from\"";
+                            \"language\", \"landing_x\", \"landing_y\", \"landing_plane\", \"landing_from\", \
+                            \"login\"";
 
 /// One hand-off: the login's promise about where a client is going.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -50,6 +51,11 @@ pub struct Travel {
     /// hands over the doorway's own landing point, and every other travel states none
     /// (`ASURA/crates/asura-world/src/travel.rs:446-468`).
     pub landing: Option<Landing>,
+    /// Which login of the account this hand-off belongs to: the number the login program drew when
+    /// the account logged in, carried on by every travel of that client. A later login has a larger
+    /// one, which is how the world tells another client from the same client travelling
+    /// (`game/src/Accounts/Logins.rs`). 0 states none.
+    pub login: u64,
 }
 
 /// Where a crossing puts the arriving character, and which map it came from.
@@ -120,6 +126,7 @@ impl DatabaseTravels {
                             .map(|landing| landing.from_map.to_string())
                             .unwrap_or_default(),
                     ),
+                    Param::Integer(travel.login as i64),
                 ],
             ),
             Err(_) => {
@@ -219,6 +226,7 @@ impl DatabaseTravels {
             language: row.get::<usize, i64>(3) as u32,
             player_token,
             landing,
+            login: row.get::<usize, i64>(8) as u64,
         }))
     }
 }

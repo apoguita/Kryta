@@ -161,7 +161,6 @@ pub struct Portal<A: Accounts> {
     accounts: A,
     /// Session id to the account attached to it, if any.
     sessions: Mutex<HashMap<String, Option<Account>>>,
-    custom_titles: Option<Vec<u8>>,
 }
 
 impl<A: Accounts> Portal<A> {
@@ -170,14 +169,7 @@ impl<A: Accounts> Portal<A> {
         Self {
             accounts,
             sessions: Mutex::new(HashMap::new()),
-            custom_titles: None,
         }
-    }
-
-    /// Publish the validated custom title text for the optional patched client.
-    pub fn with_custom_titles(mut self, catalog: Vec<u8>) -> Self {
-        self.custom_titles = Some(catalog);
-        self
     }
 
     /// How many sessions are open, which is what a status line reports.
@@ -231,16 +223,6 @@ impl<A: Accounts> Portal<A> {
             // This project's own addition, and not one of the reference's routes: it says the gate
             // is up and nothing else, so an operator or a supervisor can ask without a session.
             ("GET", "/health") => Response::ok(),
-            // Kryta extension for the patched client. ASURA asura-webgate/src/lib.rs:136-195
-            // defines the stock routes, which do not carry custom title text.
-            ("GET", "/kryta/custom-titles.json") => match &self.custom_titles {
-                Some(body) => Response {
-                    status: 200,
-                    content_type: "application/json",
-                    body: body.clone(),
-                },
-                None => Response::not_found(),
-            },
 
             _ => Response::not_found(),
         }
@@ -497,28 +479,6 @@ mod tests {
         let portal = portal();
         assert_eq!(portal.route(&Request::new("GET", "/nothing")).status, 404);
         assert_eq!(portal.route(&Request::new("GET", "/health")).status, 200);
-    }
-
-    #[test]
-    fn the_custom_catalog_publishes_only_custom_text_and_lookup_ids() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../config/World/Vanilla/titles.json");
-        let titles = crate::characters::titles::VanillaTitles::load(path).unwrap();
-        let request = Request::new("GET", "/kryta/custom-titles.json");
-        assert_eq!(portal().route(&request).status, 404);
-        let response = portal().with_custom_titles(titles.custom_catalog()).route(&request);
-        assert_eq!(response.status, 200);
-        assert_eq!(response.content_type, "application/json");
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        let custom = body["custom_tracks"].as_array().unwrap();
-        let hog = custom.iter().find(|row| row["id"] == 48).unwrap();
-        assert_eq!(hog["name"], "Hog Jumper");
-        assert_eq!(hog["description"], "Jump over a hog 10,000 times.");
-        for row in custom {
-            assert!(row["id"].as_u64().unwrap() >= 48);
-            assert!(row.get("points").is_none());
-            assert!(row.get("metric").is_none());
-        }
     }
 
     #[test]

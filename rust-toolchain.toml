@@ -1,3 +1,5 @@
 [toolchain]
 channel = "stable"
 components = ["rustfmt", "clippy"]
+# Kryta.dll (tools/client-dll) is built for the 32-bit game client.
+targets = ["i686-pc-windows-msvc"]

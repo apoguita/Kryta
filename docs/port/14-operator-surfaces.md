@@ -524,8 +524,8 @@ changing it. Metrics are not recorded by this server yet; the player page lists 
 with every value at zero. The player page and world read names, rank thresholds
 and display test points from the configured `WorldPack`'s `titles.json`. The
 catalog defines two custom tracks: 48 `Hog Jumper` for the `jumps` metric at 1/10,000,
-and 49 `Embiggener` for `Minipets Embiggened`. The portal publishes their text at
-`GET /kryta/custom-titles.json` (`game/src/Portal/mod.rs`). The standard
+and 49 `Embiggener` for `Minipets Embiggened`. The login program sends their text to a patched client's
+`Kryta.dll` over the client link (`docs/port/22-client-platform.md`). The standard
 client receives the short rank name `Jump`. The fixed-text probe displayed
 the full name and description in-game. The title messages are evidenced at E23 and
 E156-E158; no metric source or database row exists yet.

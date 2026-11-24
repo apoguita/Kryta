@@ -371,10 +371,15 @@ separate experiments.
 
 ### Client builds on this machine
 
-**For regular play and vanilla title testing, launch `F:\GW\GW1\Gw.custom.exe`, with
-`KrytaTitles.dll` beside it.** The catalog and the manager's title rows name the custom
-track `Hog Jumper`; the wire carries the short rank name `Jump`, and the patched client's
-hooks substitute the full text it fetches from the portal.
+**This section is the record of the first title client, which was replaced on 2026-11-23.** The
+client is now built by `tools/client/patch-gw.py` as described in `docs/port/05-tooling.md`: it loads
+`Kryta.dll`, which finds the title functions by byte pattern and is sent the text over its own link
+to the login program (`docs/port/22-client-platform.md`). `KrytaTitles.dll`, the fixed-address
+hooks and the portal's `/kryta/custom-titles.json` are gone. What follows is what was measured and
+built before that, and the addresses in it are where the new offsets were measured.
+
+The catalog and the manager's title rows name the custom track `Hog Jumper`; the wire carries the
+short rank name `Jump`, and the patched client's hooks substitute the full text.
 
 | Executable | Purpose and result |
 |---|---|

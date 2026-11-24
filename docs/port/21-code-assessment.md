@@ -198,8 +198,8 @@ Size of fix: medium to large.
 
 ### 10. The title client patch
 
-It is `docs/port/20-open-issues.md` item 10, and the direction for replacing it is
-`docs/port/22-client-platform.md`. How it works today:
+Replaced on 2026-11-23 by the client platform (`docs/port/22-client-platform.md`), and removed once
+the owner had tested the new client. How it worked when this assessment was made:
 
 - `tools/client/patch-gw.py` applies the connection patch, then always calls `patch_titles`, which
   refuses any file that is not the one stock build 39167 by its SHA-256 (`title_patch.py:99-100`,
@@ -386,7 +386,8 @@ The order the findings suggest, cheapest and safest first:
 4. Split the two start-up functions into named stages and share what is copied.
 5. Turn the session's state into one plain structure and stop copying the world into it.
 6. Rework titles: definitions in the files, values per character, and the client side on the DLL
-   platform of `docs/port/22-client-platform.md`.
+   platform of `docs/port/22-client-platform.md` (the client side is done and confirmed; the server
+   side is `docs/port/20-open-issues.md` items 10a and 10b).
 
 Each step leaves what the client sees unchanged, and the packet tests and the manual client test are
 what would show it.

@@ -30,3 +30,8 @@ ctrlc = "3"
 num-bigint = "0.4"
 # The master secret is 20 bytes from the operating system's entropy.
 getrandom = "0.2"
+# The client link (docs/port/22-client-platform.md): its messages, shared with the DLL, and the DLL's
+# own reader of offset documents, which checks the files this program serves when it starts.
+kryta-client-link = { path = "../tools/client-link" }
+kryta-client = { path = "../tools/client-dll" }
+serde_json = "1"

@@ -13,7 +13,8 @@
 //!
 //! Run with `cargo test -p worldserver --test end_to_end -- --ignored --nocapture`, with the two
 //! servers of the same databases not running - the live world's sweep would otherwise dispose the
-//! instance row this test checks. The world's console output must carry its debug lines too (the
+//! instance row this test checks. For the same reason the tests here take turns (`alone`): each
+//! starts a world program of its own, and two at once dispose each other's rows. The world's console output must carry its debug lines too (the
 //! `Console` appender at level 5 and the `server` logger at 5): the test reads a load's size from the
 //! program's own "is loading" line, the same line an operator reads in `Server.log`.
 
@@ -32,6 +33,18 @@ use game::server::protocol::GameVersion;
 use shared::cryptography::handshake::{
     self, CLIENT_SEED_HEADER, MASTER_SECRET_LEN, PUBLIC_LEN, SERVER_SEED_LEN,
 };
+
+/// One live test at a time. Each test starts a world program of its own against the machine's one
+/// set of databases, and a world sweeps the instance rows it finds: two programs running at once
+/// dispose each other's rows, and three of these four tests then fail on a load that was cut short.
+/// Holding this for a whole test is what lets `cargo test -- --ignored` run them as cargo likes to,
+/// in parallel threads, and still have them take turns.
+static ALONE: Mutex<()> = Mutex::new(());
+
+/// Wait for the other live tests. A test that failed while holding the turn does not block the rest.
+fn alone() -> std::sync::MutexGuard<'static, ()> {
+    ALONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// The port the program is told to bind: the environment variable wins over the file, and `0` means
 /// the operating system picks one - which the program then prints in its READY line.
@@ -440,6 +453,7 @@ fn open_pools() -> Pools {
 #[ignore = "needs the databases the world program's configuration names"]
 fn an_end_to_end_creation_and_load_against_the_live_program() {
     let name = "E2E Kryta One";
+    let _alone = alone();
     let (mut child, _lines, port) = start_world();
     println!("the world program is listening on port {port}");
 
@@ -1235,6 +1249,7 @@ fn a_second_outpost_loads_with_its_own_file_id_and_a_point_of_its_own_list() {
     const MAP: u32 = 163;
     let name = "E2E Kryta Two";
     let token: u32 = 0x4242;
+    let _alone = alone();
     let (mut child, lines, port) = start_world();
     println!("the world program is listening on port {port}");
     let (characters, _world_pool, login) = open_pools();
@@ -1283,6 +1298,7 @@ fn a_second_outpost_loads_with_its_own_file_id_and_a_point_of_its_own_list() {
                 language: 0,
                 player_token: token,
                 landing: None,
+                login: 0,
             })
             .expect("the travel is recorded");
 
@@ -1439,6 +1455,7 @@ fn a_second_outpost_loads_with_its_own_file_id_and_a_point_of_its_own_list() {
 fn a_reconnect_to_an_explorable_resumes_where_the_character_left() {
     const MAP: u32 = 43;
     let name = "E2E Kryta Three";
+    let _alone = alone();
     let (mut child, lines, port) = start_world();
     println!("the world program is listening on port {port}");
     let (characters, _world_pool, login) = open_pools();
@@ -1470,6 +1487,7 @@ fn a_reconnect_to_an_explorable_resumes_where_the_character_left() {
                 language: 0,
                 player_token: 0x5151,
                 landing: None,
+                login: 0,
             })
             .expect("the first travel is recorded");
         let (mut stream, mut reading, mut sending) = open_connection(
@@ -1562,6 +1580,7 @@ fn a_reconnect_to_an_explorable_resumes_where_the_character_left() {
                 language: 0,
                 player_token: 0x5252,
                 landing: None,
+                login: 0,
             })
             .expect("the second travel is recorded");
         let (mut stream, mut reading, mut sending) = open_connection(
@@ -1652,6 +1671,7 @@ fn a_step_through_ascalon_citys_arch_crosses_to_lakeside_county() {
     /// is the other direction - where a character arriving *in* 148 from 146 stands.
     const ARRIVAL: (f32, f32) = (6602.0, 4485.0);
     let name = "E2E Kryta Five";
+    let _alone = alone();
     let (mut child, lines, port) = start_world();
     println!("the world program is listening on port {port}");
     let (characters, _world_pool, _login) = open_pools();

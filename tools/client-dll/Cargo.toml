@@ -1,0 +1,49 @@
+[package]
+name = "kryta-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Kryta.dll: what Kryta adds to the game client (docs/port/22-client-platform.md)"
+
+# This crate does not take the workspace's lint table, because that table forbids `unsafe` and a DLL
+# that lives inside another program is made of it: it is called by the client with the client's
+# calling conventions, reads the client's memory and writes hooks into its code. The unsafe code is
+# kept to `src/runtime/`; the scanner, the offset resolver and the title logic are safe code, and
+# are tested on the machine that builds them.
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"
+
+# `Kryta.dll`. The patched client names it in its import table, so Windows loads it when the client
+# starts. It is built for the 32-bit client:
+#
+#   cargo build -p kryta-client --release --target i686-pc-windows-msvc
+#
+# Built for any other target, the crate holds only the safe parts and their tests. The file cargo
+# writes is `kryta_client.dll`; the patcher installs it beside the client as `Kryta.dll`.
+[lib]
+name = "kryta_client"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kryta-client-link = { path = "../client-link" }
+serde_json = "1"
+
+[target.'cfg(all(windows, target_arch = "x86"))'.dependencies]
+# The same MinHook library Py4GW Reforged uses (third_party/minhook), behind a Rust wrapper.
+minhook = "0.9.0"
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_Kernel",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }

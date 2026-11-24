@@ -1,15 +1,16 @@
 # What this folder is
 
 The game's content and this machine's values, as files: a `Server/` folder for what one machine
-chooses, and a `World/<pack>/` folder for what a world contains, with a README in each folder saying
-what belongs there. The rule is `AGENTS.md` rule 7 and `docs/port/04-configuration.md`: a program's
+chooses, a `World/<pack>/` folder for what a world contains, and a `Client/` folder for what a
+patched client's DLL is given, with a README in each folder saying what belongs there. The rule is `AGENTS.md` rule 7 and `docs/port/04-configuration.md`: a program's
 settings file is its own (`worldserver/worldserver.json`), and every other value that describes the
 world or a service is a file here, named by a setting that only says where the file is.
 
 | folder | holds | who reads it |
 |---|---|---|
 | `Server/` | what a machine chooses for itself and what its services answer - the chat command surface, the first game account, and later whatever else belongs to the server rather than to the world | `worldserver` (`commands.json`, through `CommandsFile`) and `authserver` (`admin.json`, through `AdminAccountFile`), at start-up |
-| `World/` | the packs: the map catalogue, entry lists, doorways, the creation screen's content, the title catalogue and the campaign start maps. `Vanilla` is the faithful base - the client's own vocabulary and the values a faithful world runs on | `worldserver`, at start-up, through `WorldPack` in `worldserver.json`; `authserver` reads the pack's `titles.json` through the same `WorldPack` (`Portal.TitleWorldConfig`); the panel (`tools/manage`) reads the pack named there, including `character_spawn.json` |
+| `Client/` | what `Kryta.dll` inside a patched client is given over the client link: the offset documents its features find the client's functions by | `authserver`, at start-up, through `ClientLink.Directory` in `authserver.json`; it checks each document and sends them to every client that connects |
+| `World/` | the packs: the map catalogue, entry lists, doorways, the creation screen's content, the title catalogue and the campaign start maps. `Vanilla` is the faithful base - the client's own vocabulary and the values a faithful world runs on | `worldserver`, at start-up, through `WorldPack` in `worldserver.json`; `authserver` reads the pack's `titles.json` through the same `WorldPack` (`ClientLink.TitleWorldConfig`); the panel (`tools/manage`) reads the pack named there, including `character_spawn.json` |
 
 **Every start reads these files, and nothing seeds a database.** Edit a file, restart the program, and
 the change is live - maps, spawns, items, every feature - with no database step. A database row is for

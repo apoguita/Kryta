@@ -5,11 +5,15 @@
 #
 # What it writes: the DH keys the handshake uses (tools/client/keys.txt, which are the same prime and
 # server private value as `shared/src/Cryptography/Handshake.rs`), the `CreateMutexA` patch that lets a
-# second client start, the mutex name, and the build 39167 custom-title lookups.
-# Hostnames are left alone unless --detach asks for them.
+# second client start, the mutex name, and one import-table entry that makes the client load
+# Kryta.dll when it starts (tools/client/dll_patch.py). Hostnames are left alone unless --detach asks
+# for them. It then builds Kryta.dll (tools/client-dll) and installs it beside the output.
 #
-# The connection changes follow ASURA's client-patcher/patch-gw.py. Kryta's
-# build-specific title hooks are documented in docs/port/19-title-research.md.
+# That is the whole patch: redirect, and load the DLL. Everything Kryta adds to the client is in the
+# DLL, which finds the client's functions by byte pattern while it runs, so nothing here is tied to
+# one client build (docs/port/22-client-platform.md).
+#
+# The connection changes follow ASURA's client-patcher/patch-gw.py.
 import os
 import sys
 import struct
@@ -26,7 +30,7 @@ except ImportError:
         '(or `pip3 install pefile` on Linux)'
     )
 
-from title_patch import DLL_NAME, build_runtime, patch_titles, validate_runtime
+import dll_patch
 
 
 def replace_file(path, data):
@@ -241,12 +245,15 @@ def main(args):
     for (idx, host) in host_patches:
         data_mut = patch(data_mut, idx, REPLACEMENT + b'\x00' * (len(host) - len(REPLACEMENT)))
 
-    image = patch_titles(data, bytes(data_mut), args.title_url)
-    runtime = Path(args.title_runtime).read_bytes() if args.title_runtime else build_runtime()
-    validate_runtime(runtime)
     target = Path(out_path)
-    replace_file(target.with_name(DLL_NAME), runtime)
+    image = dll_patch.add_import(bytes(data_mut))
+    runtime = Path(args.dll).read_bytes() if args.dll else dll_patch.build_dll()
+    dll_patch.validate_dll(runtime)
+    dll_name = dll_patch.DLL_NAME
+    print(f'[+] The client imports {dll_name}: it loads the DLL by itself when it starts')
+    replace_file(target.with_name(dll_name), runtime)
     replace_file(target, image)
+    print(f'[+] {dll_name} written beside the client')
     if args.retire_title_probes:
         retire_probes(target.parent)
 
@@ -257,10 +264,8 @@ if __name__ == '__main__':
     parser.add_argument('input')
     parser.add_argument('keys_file')
     parser.add_argument('--output', metavar='output', type=str, help='The output file', required=False)
-    parser.add_argument('--title-url', default='',
-                        help='Catalog URL override. The default uses the -portal host at port 6601.')
-    parser.add_argument('--title-runtime', type=Path,
-                        help='Use a prebuilt x86 KrytaTitles.dll instead of compiling with Visual Studio')
+    parser.add_argument('--dll', type=Path,
+                        help='Use a built 32-bit Kryta.dll instead of building tools/client-dll with cargo')
     parser.add_argument('--retire-title-probes', action='store_true',
                         help='Archive the old title test executables beside Gw.custom.exe')
     parser.add_argument('--detach', action='store_true',

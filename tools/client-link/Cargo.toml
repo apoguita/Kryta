@@ -1,0 +1,19 @@
+[package]
+name = "kryta-client-link"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "client_link"
+path = "src/lib.rs"
+
+# The messages of the link between the client DLL and the server, written once and used by both
+# ends (docs/port/22-client-platform.md). It is built for the server's target and for the 32-bit
+# client's, so it depends on nothing but the JSON reader.
+[dependencies]
+serde_json = "1"

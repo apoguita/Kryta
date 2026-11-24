@@ -227,6 +227,8 @@ impl WorldSession {
                     plane: 0,
                     from_map: state.map_id(),
                 }),
+                // The same client, travelling on: the hand-off stays in the login it arrived on.
+                login: state.login,
             };
             match travels.record(&travel) {
                 Ok(()) => {

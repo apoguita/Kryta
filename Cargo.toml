@@ -30,6 +30,13 @@ members = [
   # The stack's own command: one process that starts the services this machine runs and stops them
   # together. It starts nothing a person did not list in `stack.json` (`tools/supervisor`).
   "tools/supervisor",
+  # The client platform (docs/port/22-client-platform.md): the messages of the link between the
+  # client DLL and the server, used by both ends.
+  "tools/client-link",
+  # Kryta.dll. Built for the 32-bit client with
+  # `cargo build -p kryta-client --release --target i686-pc-windows-msvc`; for the workspace's own
+  # target it holds only its safe parts and their tests.
+  "tools/client-dll",
 ]
 
 [workspace.package]

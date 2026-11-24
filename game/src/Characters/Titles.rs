@@ -324,7 +324,8 @@ impl VanillaTitles {
             .then_some(track.current_rank)
     }
 
-    /// Public text definitions for the patched client. No player data is included.
+    /// Public text definitions for a patched client, sent to its DLL over the client link
+    /// (`authserver/src/Server/client_link.rs`). No player data is included.
     pub fn custom_catalog(&self) -> Vec<u8> {
         let titles: Vec<_> = self
             .tracks
@@ -539,6 +540,25 @@ mod tests {
                 .unwrap()
                 .contains(".short_name: at most four ASCII characters")
         );
+    }
+
+    /// What a patched client's DLL is sent over the client link: custom text and the numbers the
+    /// client's own title code is matched by, and nothing of a player's.
+    #[test]
+    fn the_custom_catalog_holds_only_custom_text_and_lookup_ids() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../config/World/Vanilla/titles.json");
+        let titles = VanillaTitles::load(path).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&titles.custom_catalog()).unwrap();
+        let custom = body["custom_tracks"].as_array().unwrap();
+        let hog = custom.iter().find(|row| row["id"] == 48).unwrap();
+        assert_eq!(hog["name"], "Hog Jumper");
+        assert_eq!(hog["description"], "Jump over a hog 10,000 times.");
+        for row in custom {
+            assert!(row["id"].as_u64().unwrap() >= 48);
+            assert!(row.get("points").is_none());
+            assert!(row.get("metric").is_none());
+        }
     }
 
     #[test]

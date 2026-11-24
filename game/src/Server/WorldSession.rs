@@ -240,6 +240,12 @@ pub(crate) struct Connection {
     /// connection - unbounded. The first sighting of a header is the report; the rest are a count
     /// (`WorldSession::report_unanswered`).
     unanswered: std::collections::BTreeMap<u16, u32>,
+    /// Which login of its account this connection belongs to, as its travel row stated it; 0 when it
+    /// claimed no row. A travel this connection writes carries it on.
+    pub(crate) login: u64,
+    /// Turns true when a later login took this connection's account: only one login per account is
+    /// permitted, and the connection then ends (`game/Accounts/Logins.rs`).
+    displaced: Option<crate::accounts::logins::Displaced>,
 }
 
 impl Connection {
@@ -256,6 +262,8 @@ impl Connection {
             outbox: None,
             id: None,
             unanswered: std::collections::BTreeMap::new(),
+            login: 0,
+            displaced: None,
         }
     }
 
@@ -622,6 +630,11 @@ impl WorldSession {
                 );
                 match travels.claim(self.world.realm(), &account, version.player_token) {
                     Ok(Some(travel)) => {
+                        // One login per account: this connection joins its login, and a later
+                        // login than the account's current one closes the earlier one's connections.
+                        state.login = travel.login;
+                        state.displaced =
+                            Some(self.world.logins().enter(version.account, travel.login));
                         self.say(
                             LogLevel::Debug,
                             format!(
@@ -847,6 +860,20 @@ impl WorldSession {
             // keeps turning would answer a client that is being kicked (`KickAll`). Ending here is
             // what lets the session finish through its own tail instead of being dropped mid-future.
             if self.closing() {
+                return;
+            }
+            // Only one login per account: a later login took this connection's account, so it ends.
+            if state
+                .displaced
+                .as_ref()
+                .is_some_and(crate::accounts::logins::displaced)
+            {
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Gameplay connection from {peer} is closed: its account logged in again elsewhere."
+                    ),
+                );
                 return;
             }
             // Whatever other sessions pushed at this one - an introduction, a farewell, a move - is
@@ -2942,6 +2969,7 @@ Logger.root = 6,Console
                 language: 2,
                 player_token: 0x1234,
                 landing: None,
+                login: 0,
             })
             .expect("the travel is recorded");
 
@@ -3340,6 +3368,7 @@ Logger.root = 6,Console
                 language: 0,
                 player_token: 0x2345,
                 landing: None,
+                login: 0,
             })
             .expect("the travel is recorded");
 

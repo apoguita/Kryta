@@ -145,6 +145,9 @@ pub struct World {
     /// place other players can be in, and a connection is told about them (`game/Districts/Peers.rs`,
     /// `ASURA/crates/asura-world/src/instance.rs:406-473`).
     peers: Arc<Mutex<crate::districts::Peers>>,
+    /// The login each account is being served for: one login per account, so a later login closes
+    /// the gameplay connections of the earlier one (`game/Accounts/Logins.rs`).
+    logins: crate::accounts::logins::AccountLogins,
     /// The scripts this world runs, shared the way the copies are: the program registers them before
     /// the world serves anything, and the world's own moments raise them
     /// (`game/Scripting/mod.rs`, the reference's `sScriptMgr`).
@@ -243,6 +246,7 @@ impl World {
             graphs: std::sync::Arc::new(crate::terrain::pathfind::PathGraphs::empty()),
             portals: std::sync::Arc::new(crate::maps::Portals::empty()),
             peers: Arc::new(Mutex::new(crate::districts::Peers::new())),
+            logins: crate::accounts::logins::AccountLogins::new(),
             scripts: Arc::new(Mutex::new(crate::scripting::ScriptMgr::new())),
             sweep_elapsed: Mutex::new(std::time::Duration::ZERO),
             stop: std::sync::atomic::AtomicU8::new(NO_STOP),
@@ -376,6 +380,11 @@ impl World {
     /// walk afterwards is answered from them.
     pub fn set_graphs(&mut self, graphs: crate::terrain::pathfind::PathGraphs) {
         self.graphs = std::sync::Arc::new(graphs);
+    }
+
+    /// The login each account is being served for (`game/Accounts/Logins.rs`).
+    pub fn logins(&self) -> &crate::accounts::logins::AccountLogins {
+        &self.logins
     }
 
     /// The players loaded in this world's running copies.

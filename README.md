@@ -5,6 +5,8 @@ A GW private server.
 ## Requirements
 
 Windows, Rust stable with MSVC build tools, PostgreSQL, Python 3, and a Guild Wars client installation.
+The client's DLL is built for 32-bit Windows; `rust-toolchain.toml` lists that target
+(`i686-pc-windows-msvc`), so `rustup` installs it the first time cargo runs here.
 Run the commands below in PowerShell from the repository root.
 
 ## Setup
@@ -57,13 +59,13 @@ python tools/client/patch-gw.py "C:\Games\Guild Wars\Gw.exe" tools/client/keys.t
 & "C:\Games\Guild Wars\Gw.custom.exe" -authsrv 127.0.0.1 -portal 127.0.0.1
 ```
 
-Start the stack before launching the client. The patch creates a separate executable and leaves
-`Gw.exe` intact. It expects stock build 39167 and builds `KrytaTitles.dll` with Visual Studio's x86
-tools; `Gw.custom.exe` runs with that DLL beside it. What the patcher needs and its options are in
+Start the stack before launching the client: the patched client does not start without it. The
+patch creates a separate executable and leaves `Gw.exe` intact. It also builds `Kryta.dll` with
+cargo and writes it beside `Gw.custom.exe`; the client loads that DLL by itself when it starts. What the patcher needs and its options are in
 [Tools](docs/port/05-tooling.md#building-and-running-the-client).
 
-Use `Gw.custom.exe` for regular play and vanilla title testing. The other client builds are
-listed in the [title research notes](docs/port/19-title-research.md#client-builds-on-this-machine).
+Use `Gw.custom.exe` for regular play and title testing. How the client's DLL works is in
+[the client platform](docs/port/22-client-platform.md).
 
 ## Documentation
 

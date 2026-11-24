@@ -1,20 +1,23 @@
 # The client platform
 
-How Kryta adds functionality to the game client: what is done today, why it changes, and the direction
-the owner gave on 2026-11-23. This page records a discussion so that it is not lost. It is a direction
-and not yet a design: nothing here is built. What the owner ruled is under "Settled"; what is left is
-under "Not settled". Statements marked *recommended* are the assistant's advice, not the owner's
-ruling.
+How Kryta adds functionality to the game client: how it was first done, why that changed, the
+direction the owner gave on 2026-11-23, and what is built. What the owner ruled is under "Settled";
+what is left is under "Not settled" and "Not built". Statements marked *recommended* are the
+assistant's advice, not the owner's ruling.
 
 Custom titles are the first and, so far, the only feature that needs any of this.
 
-## How it is done today
+## How it was first done
 
-Three files under `tools/client/`, all from commit `7679ba1`:
+Removed on 2026-11-23, once the owner had tested the new client. It is described here because the
+new DLL does the same thing at the same three places, and cites this code. The files are in the
+history at commit `7679ba1`.
+
+Three files under `tools/client/`:
 
 | file | what it does |
 |---|---|
-| `patch-gw.py` | applies the connection patch (the redirect to this server), then always calls `patch_titles` |
+| `patch-gw.py` | applied the connection patch (the redirect to this server), then always called `patch_titles` |
 | `title_patch.py` | changes `Gw.exe` for titles, and builds the DLL |
 | `title-runtime.cpp` | the source of `KrytaTitles.dll`, 187 lines of C++ |
 
@@ -35,8 +38,7 @@ titles are drawn (`title-runtime.cpp:117`), on the client's own thread.
 
 How the DLL is built: `title_patch.py:165-192` finds Visual Studio and calls its x86 compiler. It
 reads `nlohmann/json.hpp` from `Py4GW_Reforged_Native/third_party` under the user profile
-(`title_patch.py:180-183`). So building Kryta's client DLL today needs Visual Studio and a checkout of
-another project.
+(`title_patch.py:180-183`). So building that DLL needs Visual Studio and a checkout of another project.
 
 ## What is wrong with it
 
@@ -89,8 +91,9 @@ installed by the DLL at runtime.
 | server link | A standing connection to the server. A message from the server arrives as a callback, like any other event. |
 | features | Titles is the first: it registers its callbacks and holds what the server sent. |
 
-If a pattern is not found, the feature that needs it switches off and says so in a log, and the client
-still runs (*recommended*; today an unknown build is refused outright).
+A pattern that is not found is named in the client's `Kryta.<pid>.log` and in the login program's log. A
+resolver may state in its document that the DLL carries on without it (`on_fail: continue`); the six
+the title feature needs do not, so a client build they do not fit does not start.
 
 ## Py4GW Reforged, the reference
 
@@ -222,9 +225,6 @@ Visual Studio's compiler from a Python script; the link's messages are written o
 the server and the DLL use; and there is one language to read. The cost is that the scanner, the
 resolver and the callback registry are rewritten from Reforged's C++ rather than copied.
 
-Not yet checked: that a 32-bit DLL builds from this workspace, and which Rust hook library fits the
-32-bit client. No library is named until that is read.
-
 The patcher (`patch-gw.py`) is the same question on a smaller scale. Once it only redirects and adds
 the DLL to the import table it is small enough to be a Rust tool; it does not have to move in the same
 step.
@@ -237,8 +237,9 @@ The client side is half of the titles phase. The server side is in `docs/port/20
   character's values belong in the database.
 - item 10a: title earning and persistence do not exist.
 
-With the link, the server holds both and sends them, and the `/kryta/custom-titles.json` endpoint and
-its poll go away.
+With the link the server sends the title text; the `/kryta/custom-titles.json` endpoint and its poll
+are gone. Items 10a and 10b are not done: the text the link sends today is
+the same catalogue the endpoint served, read from the same file.
 
 ## The Python tools
 
@@ -255,23 +256,164 @@ a recorder for the live game: it loads itself into a patched client.
 4. **The client does not run detached.** It needs the server.
 5. **The link's key is the client's process id**, and the account name attaches a login to it. No
    in-game data is the key.
+6. **Only one login per account is ever permitted.** A new login closes any old connection.
+
+## What is built (2026-11-23)
+
+| part | where | state |
+|---|---|---|
+| the link's messages, for both ends | `tools/client-link/` (crate `kryta-client-link`) | built; 5 tests |
+| the server end of the link | `authserver/src/Server/client_link.rs`, started by `start_client_link` in `authserver/src/main.rs`; settings `ClientLink.Enable`, `ClientLink.Bind` (`127.0.0.1:6603`), `ClientLink.Directory` | built; tests play the conversation against the real listener |
+| the offsets the server provides | `config/Client/offsets/titles.json`, checked at start-up with the DLL's own reader | built |
+| the DLL | `tools/client-dll/` (crate `kryta-client`, installed as `Kryta.dll`) | built |
+| - the scanner | `src/scanner.rs`, port of Reforged's `scanner.cpp` and `file_scanner.cpp` | built; tested on the build machine |
+| - the offset resolver | `src/patterns.rs`, port of Reforged's `patterns.cpp`, all ten step kinds | built; tested on the build machine |
+| - the hook layer | `src/runtime/hooks.rs`, port of Reforged's `hooker.cpp` and `MemoryPatcher::SetRedirect`, over the `minhook` crate | built |
+| - start-up and the link client | `src/runtime/mod.rs` | built |
+| - custom titles | `src/titles.rs` (the logic of `title-runtime.cpp`) and `src/runtime/title_hooks.rs` (the three hooks of `title_patch.py`, installed at run time) | built |
+| the patcher | `tools/client/patch-gw.py` with `tools/client/dll_patch.py`: the connection patch and one import-table entry, no build check; it builds the DLL with cargo and installs it beside the client | built |
+| one login per account, on the login connection | `authserver/src/Server/logins.rs` | built; a test logs in twice and sees the first connection closed |
+| one login per account, in the world | `game/src/Accounts/Logins.rs`; the login's number travels on the hand-off row (`travel.login`, `data/sql/base/db_auth/travel_login.sql`) | built; tested as a unit and through the database tests, not with two real clients |
+| the DLL's log | `tools/client-dll/src/runtime/log.rs`: one file per client process, `Kryta.<pid>.log` beside the client, since several clients can run from one folder; logs a day old are removed | built |
+| a crash recorder in the DLL | `tools/client-dll/src/runtime/crash.rs`: a fault inside the client is written to `Kryta.<pid>.log` with its address, module, registers and callers | built |
+
+The conversation of the link, as built: the DLL says hello (its process id and the build stamp of
+the client's file), the server sends the offset documents, the DLL reports which resolved, the server
+sends the custom title text, and the connection stays open (`tools/client-link/src/lib.rs`).
+
+### What was proved, and how
+
+- `cargo test --workspace`: 540 tests pass. The database and end-to-end tests pass as well; the four
+  world end-to-end tests now take turns, because each starts a world program of its own on the same
+  databases and two at once dispose each other's rows.
+- `cargo test -p kryta-client -- --ignored` with `KRYTA_GW_EXE` naming a client file: all six offsets
+  resolve, in build 39167 at exactly the addresses `title_patch.py` patched, and in the older build
+  of `Gw.custom.known-good.exe` at its own.
+- A real client, patched by the new patcher and started against the running stack: it loaded
+  `Kryta.dll` by itself at a relocated base (`0x006E0000`), connected, resolved the six offsets,
+  installed the three hooks and received two custom titles; the login program logged the same from
+  its side. With no server to reach, the DLL showed its message and the client did not continue.
+- **The same client, logged in and in a map** (the character "Test Subject", map 148): the client
+  kept running, and `Kryta.<pid>.log` records the rank hook answering the client twice during the load -
+  `titles: rank 10 was given its full name` and `titles: rank 369 was given its full name`. So the
+  hook that turns a custom title's short rank name into its full name works inside a running game.
+
+- **The Hero Panel, in a second real client** (the character "Test Two" of the other account): the
+  Titles tab lists the two custom titles by their full names - "Embiggener (1)" with `33/10,000`, and
+  "Hog Jumper (1)" - where the wire carries only `Mini` and `Jump`. Hovering Embiggener shows its
+  description, "Make Minipets real size", and the log records
+  `titles: title 49 at rank 369 was given its description`. So all three hooks do in the running
+  client what the file patch did. Seen by the assistant through a capture of that client's own
+  window, 2026-11-23; the owner has not yet looked himself.
+
+**Confirmed by the owner, 2026-11-23:** "tested, everything seems to be working" - after his own
+test of the new client, which he had said would cover the Hero Panel and one login per account with
+two clients. On that word the old path was removed: `title_patch.py`, `title-runtime.cpp`,
+`patch-gw.py --legacy-titles`, and the portal's `/kryta/custom-titles.json` endpoint. The setting
+that names the world pack the title text comes from moved with it, from `Portal.TitleWorldConfig` to
+`ClientLink.TitleWorldConfig`.
+
+A crash met during this test is not the DLL's: the character "Player One" ends the client on
+entering a map with the client's own assertion `id < s_items.Count()` (`CpsData.cpp(432)`), and it
+did so with the old `Gw.custom.exe` as well (`docs/port/20-open-issues.md` item 10d).
+
+### Choices made while building, for the owner to confirm or change
+
+- **The crates live in `tools/client-link/` and `tools/client-dll/`.**
+- **A client build is not named at all.** The offsets are byte patterns, and one document serves
+  every build its patterns fit; a document can hold several attempts for builds that differ. So
+  `config/Client/offsets/` has no folder per build. The DLL sends the build stamp of the client's
+  file (the `TimeDateStamp` of its PE header) so the logs say which build a failure was in.
+- **The DLL finds the server** at the `-portal` host of the client's command line (then `-authsrv`),
+  on port 6603. A file `Kryta.json` beside the client, `{ "link": "host:port" }`, names another
+  address.
+- **When start-up fails** - the server is not reached in ten tries, refuses, or its offsets do not fit
+  the build - the player sees a message box that says why and the client ends. The game's own window
+  is up while the DLL tries, about half a minute at most.
+- **When the link drops during play** the DLL opens it again, every three seconds, and the client
+  keeps running.
+- **The title hooks are the old three**, at the same three places, doing the same thing; only how
+  they get there changed. Two of them are short assembly routines inside the DLL that read the
+  client's registers, as the Python-written machine code did. A client update that changes those
+  registers needs the DLL rebuilt; one that only moves the functions needs nothing.
+- **The DLL has no callback registry yet.** With one feature, the title hooks call the title code
+  directly. Reforged's event callbacks (`include/base/hook_types.h`) are the shape to port when a
+  second feature shares a hook.
+- **The unsafe code is confined to `tools/client-dll/src/runtime/`.** The workspace forbids `unsafe`;
+  the DLL crate does not take that lint, and says why in its `Cargo.toml`.
+
+## Not built
+
+1. **The account attached to a link.** The DLL sends its process id; it does not yet read the account
+   name and report it, and the server does not yet join a link to a login. Titles do not need it: the
+   title text is the same for everyone, and each character's ranks travel on the game connection.
+2. **The notice retail gives a displaced client** (`ENetError` 0x23): no source shows the message that
+   carries it, so the connection is closed without one.
+3. **Titles on the server** (items 10a and 10b).
+4. **The patcher in Rust.**
 
 ## Not settled
 
-1. **How the DLL learns the account name** inside the client: where it is read from.
-2. **How a client build is named** inside `config/Client/`: by build number, or by a fingerprint of
-   the file.
-3. **What the player sees** when the DLL cannot reach the server or the server has no offsets for the
-   build, and what happens when the link drops during play.
-4. **Whether the patcher moves to Rust**, and when.
+1. **How the DLL learns the account name** is found in Reforged ("What the reading found") and not
+   yet checked on a client connected to Kryta.
+2. **Whether the choices above stand.**
 
-## Before any code
+## What the reading found (2026-11-23)
 
-Reading only, in this order:
+Read before any code, as Rule 0a asks. Nothing in the repository was changed by it; the experiments
+were built outside the tree.
 
-1. Read the Reforged parts named above and report how they separate from the rest.
-2. Confirm a 32-bit DLL builds from the workspace and find the hook library.
-3. Find the three title functions by byte pattern instead of by fixed address, on the client build in
-   use, to confirm the method works for them.
+### The Reforged parts
 
-The plan for the titles phase is written from what that reading finds.
+| part | file | finding |
+|---|---|---|
+| the scanner | `src/base/scanner.cpp` (212 lines), `src/base/file_scanner.cpp` (370 lines) | Self-contained. It maps the executable's file from disk as an image and searches that, then converts the address to the running one, so hooks already written into memory cannot spoil a search. It finds by pattern and mask, by a use of an address, by a use of a string, by an assertion's file and message, and walks from a call to the function it calls and back to a function's start. |
+| the pattern and resolver reader | `src/base/patterns.cpp` (1,033 lines), `include/base/patterns.h` | Self-contained apart from the JSON library and the logger. A resolver is a list of steps, or several attempts tried in order. Ten step kinds: `scan`, `scan_in_range`, `to_function_start`, `function_from_near_call`, `find_use_of_string`, `dereference`, `read_u32`, `add`, `divide`, `validate_section`. Each resolver states how severe a failure is and whether to continue. |
+| the hook wrapper | `src/base/hooker.cpp` (102 lines) | A thin layer over MinHook: create, enable, disable, remove, and a count of calls in flight. |
+| event callbacks | `include/base/hook_types.h` (`HookEntry`, `HookStatus`, `HookCallback`), used by `src/GW/stoc/` | The shape to port: a callback registered under an owner's entry, with an altitude for order and a status it can set to block the original. |
+| the frame scheduler | `src/callback/callback.cpp` (246 lines) | Not ported. It schedules Python callables per frame and is built around the Python host. |
+
+The four parts to port separate cleanly; none of them needs the Python host.
+
+### A 32-bit DLL in Rust
+
+Proved by a throwaway crate: a `cdylib` built for `i686-pc-windows-msvc` with a `DllMain` that starts
+a thread, using the `minhook` crate (0.9.0, MIT) - a wrapper over the same MinHook library Reforged
+uses. Loaded into a 32-bit process, it hooked a function and called the original through the hook.
+
+- The target was not installed on this machine. `rust-toolchain.toml` now lists it, so `rustup`
+  installs it by itself; `README.md` and `docs/port/05-tooling.md` state it.
+- The crate compiles MinHook's C source, so a C compiler is still needed to build the DLL; it is the
+  one Rust on Windows already requires.
+- Built the default way, the DLL imports `VCRUNTIME140.dll`. `.cargo/config.toml` links the C runtime
+  in for this target, so a player's machine needs nothing installed.
+
+### The three title functions, by pattern
+
+Each of today's three fixed addresses was turned into a byte pattern with its address operands masked,
+and searched for in two different client builds on this machine. Each pattern matched exactly once in
+each build, at a different address:
+
+| function | build 39167 (`Gw.exe`) | the older build (`Gw.custom.known-good.exe`) |
+|---|---|---|
+| the rank-name call | function at `0x51E7C0`, call at +32 | function at `0x51E100` |
+| the hover formatter call | `0x4A88C7`, call at +20 | `0x4A81D7` |
+| the metadata lookup | `0x1A7540` | `0x1A74B0` |
+
+So the method works for these three, across a client update.
+
+### One login per account
+
+Not enforced when this was read (the login connection enforces it since; see "What is built"). The
+portal keeps a map from session to account and adds to it at each login without
+looking for an earlier one (`game/src/Portal/mod.rs:163`, `:288`); the world keeps its connected
+players by player id, with no account in the record (`game/src/Districts/Peers.rs`); and the login
+database has no record of who is connected (`data/sql/base/db_auth/`). It is
+`docs/port/20-open-issues.md` item 10c.
+
+### The account name inside the client
+
+Reforged reads it: `CharContext.player_email`, at `+0x3D0` of the character context
+(`include/GW/context/character.h:61`), reached through `offsets/context.json`. The client sends the
+same name to this tree's portal as `LoginName` (`game/src/Portal/mod.rs:278`). Not yet checked on a
+client connected to Kryta.

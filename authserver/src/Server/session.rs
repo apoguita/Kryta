@@ -125,7 +125,21 @@ pub struct AuthSession {
     creation_map: u16,
     /// Where a character with no map anywhere enters - a setting (`FallbackOutpost`).
     fallback_outpost: u16,
+    /// Which connection holds each logged-in account, when the program keeps that: a login takes
+    /// its account here, and closes the connection that held it (`Server/logins.rs`).
+    logins: Option<std::sync::Arc<crate::server::logins::Logins>>,
+    /// This connection's hold on its account, once it has logged in.
+    hold: Option<crate::server::logins::Hold>,
+    /// The number of this connection's login, which every hand-off it writes carries: a later login
+    /// has a larger one, and that is how the world tells another client from this one travelling
+    /// (`game/src/Accounts/Logins.rs`). 0 until a login.
+    login_number: u64,
 }
+
+/// How often a logged-in connection that is hearing nothing from its client looks whether a later
+/// login took its account. This program's own value: it bounds how long a displaced connection
+/// stays open, and nothing the client sees depends on it.
+const DISPLACED_CHECK: std::time::Duration = std::time::Duration::from_secs(1);
 
 impl AuthSession {
     /// A session that will answer the file check with these bytes and the exchange with this master.
@@ -154,6 +168,9 @@ impl AuthSession {
             salt: None,
             creation_map: 0,
             fallback_outpost: 0,
+            logins: None,
+            hold: None,
+            login_number: 0,
         }
     }
 
@@ -171,6 +188,12 @@ impl AuthSession {
     /// Give the session an account table to record the EULA version in.
     pub fn with_accounts(mut self, accounts: std::sync::Arc<game::accounts::DatabaseAccounts>) -> Self {
         self.accounts = Some(accounts);
+        self
+    }
+
+    /// Keep one login per account: a login here closes the connection that held its account.
+    pub fn with_logins(mut self, logins: std::sync::Arc<crate::server::logins::Logins>) -> Self {
+        self.logins = Some(logins);
         self
     }
 
@@ -508,7 +531,29 @@ impl AuthSession {
                 }
             }
 
-            let count = match io.read(&mut buffer).await {
+            // A connection that is not logged in waits for its client. One that is logged in also
+            // looks, between reads, whether a later login took its account.
+            let read = loop {
+                let Some(hold) = self.hold.as_ref() else {
+                    break io.read(&mut buffer).await;
+                };
+                if crate::server::logins::displaced(hold) {
+                    self.say(
+                        LogLevel::Info,
+                        format!(
+                            "Connection from {peer} is closed: its account logged in on another connection."
+                        ),
+                    );
+                    return;
+                }
+                match io.read_timeout(&mut buffer, DISPLACED_CHECK).await {
+                    Ok(shared::network::socket::ReadOutcome::Read(count)) => break Ok(count),
+                    Ok(shared::network::socket::ReadOutcome::Closed) => break Ok(0),
+                    Ok(shared::network::socket::ReadOutcome::TimedOut) => {}
+                    Err(error) => break Err(error),
+                }
+            };
+            let count = match read {
                 Ok(0) => {
                     self.say(
                         LogLevel::Info,
@@ -1027,6 +1072,23 @@ impl AuthSession {
             &self.account_settings,
         );
         self.account = Some(login.user_id);
+        // The login's number: the time it happened, in microseconds, so a later login has a larger
+        // one whichever connection it arrives on.
+        self.login_number = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_micros() as u64);
+        if let Some(logins) = self.logins.as_ref() {
+            let (hold, displaced) = logins.take(login.user_id, self.hold.as_ref());
+            self.hold = Some(hold);
+            if displaced {
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Connection from {peer}: this login takes its account from an earlier connection, which is closed."
+                    ),
+                );
+            }
+        }
         self.send(io, peer, crypt, &frames, "the login").await
     }
 
@@ -1174,6 +1236,7 @@ impl AuthSession {
                     // The login never states a landing: only a doorway crossing knows where the
                     // receiving map puts the character (travel.rs:446-468).
                     landing: None,
+                    login: self.login_number,
                 };
                 match travels.record(&travel) {
                     Ok(()) => self.say(
@@ -1292,6 +1355,12 @@ impl Session for AuthSession {
     fn run(mut self: Box<Self>, mut io: SessionIo) -> SessionFuture {
         Box::pin(async move {
             self.converse(&mut io).await;
+            // The account is free again, unless a later login already took it.
+            if let (Some(logins), Some(account), Some(hold)) =
+                (self.logins.as_ref(), self.account, self.hold.as_ref())
+            {
+                logins.release(account, hold);
+            }
         })
     }
 }
@@ -1645,6 +1714,94 @@ mod tests {
     fn a_body_that_is_too_short_is_not_a_login() {
         assert!(decode_portal_login(&[0u8; 20]).is_none());
     }
+    /// Only one login per account: a second login for an account closes the connection that held
+    /// it, and the second connection stays (owner, 2026-11-23; `Server/logins.rs`).
+    #[test]
+    fn a_second_login_for_an_account_closes_the_first_connection() {
+        use crate::authentication::PORTAL_ACCOUNT_LOGIN;
+        use common::cryptography::Arc4;
+
+        let log = Log::new();
+        let master = [0x77u8; MASTER_SECRET_LEN];
+        let logins = Arc::new(crate::server::logins::Logins::new());
+        let factory: SessionFactory = {
+            let log = log.clone();
+            let file_check = shipped_file_check();
+            let settings = crate::server::account_settings::block();
+            let logins = Arc::clone(&logins);
+            Arc::new(move || {
+                Box::new(
+                    AuthSession::new(
+                        log.clone(),
+                        master,
+                        file_check.clone(),
+                        settings.clone(),
+                        None,
+                        None,
+                    )
+                    .with_logins(Arc::clone(&logins)),
+                ) as Box<dyn Session>
+            })
+        };
+        let mut manager = SocketMgr::new(factory);
+        let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
+        let key = crate::server::handshake::derive_key(&master);
+
+        // A client through the exchange and the login, with the login's 700-byte answer read.
+        let log_in = |account: [u8; 16]| {
+            let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            client.write_all(&preamble(2)).unwrap();
+            let mut server_seed = [0u8; SERVER_SEED_LEN];
+            client.read_exact(&mut server_seed).unwrap();
+            let mut greeting = [0u8; 16];
+            client.read_exact(&mut greeting).unwrap();
+
+            let mut body = Vec::new();
+            body.extend_from_slice(&PORTAL_ACCOUNT_LOGIN.to_le_bytes());
+            body.extend_from_slice(&0x2Au32.to_le_bytes());
+            body.extend_from_slice(&account);
+            body.extend_from_slice(&[0x22u8; 16]);
+            for text in ["Asura", "gw1"] {
+                let units: Vec<u16> = text.encode_utf16().collect();
+                body.extend_from_slice(&(units.len() as u16).to_le_bytes());
+                for unit in units {
+                    body.extend_from_slice(&unit.to_le_bytes());
+                }
+            }
+            Arc4::new(&key).apply(&mut body);
+            client.write_all(&body).unwrap();
+            let mut answer = vec![0u8; 700];
+            client.read_exact(&mut answer).unwrap();
+            client
+        };
+
+        let mut first = log_in([0x11; 16]);
+        let mut other = log_in([0x33; 16]);
+        assert!(logins.is_logged_in(&[0x11; 16]));
+
+        let _second = log_in([0x11; 16]);
+
+        // The first connection is closed by the server: its next read ends instead of timing out.
+        let mut byte = [0u8; 1];
+        match first.read(&mut byte) {
+            Ok(0) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset
+                || error.kind() == std::io::ErrorKind::ConnectionAborted => {}
+            other => panic!("the first connection was not closed: {other:?}"),
+        }
+        // Another account's connection, and the second login's own, are left alone.
+        other.set_read_timeout(Some(Duration::from_millis(1500))).unwrap();
+        assert!(
+            matches!(other.read(&mut byte), Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)),
+            "another account's connection must stay open"
+        );
+        assert!(logins.is_logged_in(&[0x11; 16]), "the second login holds the account");
+
+        manager.stop_network();
+        log.shutdown();
+    }
+
     /// The whole login answer, read the way the client reads it: one cipher, offset zero.
     #[test]
     fn the_login_is_answered_with_the_five_messages_the_client_reads() {
