@@ -41,6 +41,8 @@ pub const PLAYER_UPDATE_FLAGS: u16 = 0x003C;
 pub const WORLD_UPDATE_LOAD_TIME: u16 = 0x001F;
 /// `GAME_SMSG_UPDATE_AGENT_VISUAL_EQUIPMENT` (`0x006E`): the nine items an agent is drawn wearing.
 pub const UPDATE_AGENT_VISUAL_EQUIPMENT: u16 = 0x006E;
+/// `GAME_SMSG_UPDATE_AGENT_VISUAL_EQUIPMENT_SLOT` (`0x006F`): one of those nine, on its own.
+pub const UPDATE_AGENT_VISUAL_EQUIPMENT_SLOT: u16 = 0x006F;
 /// `GAME_SMSG_AGENT_DISPLAY_CAPE` (`0x0048`): whether an agent's cape is shown.
 pub const AGENT_DISPLAY_CAPE: u16 = 0x0048;
 
@@ -206,10 +208,13 @@ pub fn instance_loaded(player_team_token: u32) -> Vec<u8> {
     frame(INSTANCE_LOADED, &player_team_token.to_le_bytes())
 }
 
-/// `0x00EF`: two dwords, a value and the mask it applies under. A live load sends
-/// `FFFFFFFF, FFFFFFFF` once, immediately after the faction record; uninitialised, the inventory
-/// panel's per-slot display mode stays blank for every slot (`ASURA/crates/asura-protocol/src/game/mod.rs`,
-/// `char_visibility_flags`).
+/// `0x00EF`: two dwords, a value and the mask it applies under - the inventory panel's display mode
+/// (`game/src/Characters/Visibility.rs`). A live load sends `FF, FF` once, immediately after the
+/// faction record (`recordings/client/raw/creation-armor-head-hidden-unfiltered.jsonl` seq 2383);
+/// uninitialised, the display mode stays blank for every slot
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs`, `char_visibility_flags`, which sends
+/// `FFFFFFFF, FFFFFFFF`). It is also the answer to the client's `0x8057`, with that message's own
+/// two dwords (`recordings/client/raw/creation-armor-in-game-setting-unfiltered.jsonl` seq 482 and 489).
 pub fn char_visibility_flags(value: u32, mask: u32) -> Vec<u8> {
     let mut body = Vec::with_capacity(8);
     body.extend_from_slice(&value.to_le_bytes());
@@ -242,6 +247,18 @@ pub fn update_agent_visual_equipment(agent: u32, items: [u32; 9]) -> Vec<u8> {
         body.extend_from_slice(&item.to_le_bytes());
     }
     frame(UPDATE_AGENT_VISUAL_EQUIPMENT, &body)
+}
+
+/// `0x006F`: one position of the agent's visual list - the agent, the position, the item id or 0
+/// (`game/src/Server/Protocol/Tables.rs`, 14 bytes). The retail server sends it after a display
+/// mode change: `6f000000 b3020000 06000000 00000000` hides the head, and the same with the item's
+/// id shows it again (`recordings/client/raw/creation-armor-in-game-setting-unfiltered.jsonl` seq 490 and 781).
+pub fn update_agent_visual_equipment_slot(agent: u32, slot: u32, item: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(12);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&slot.to_le_bytes());
+    body.extend_from_slice(&item.to_le_bytes());
+    frame(UPDATE_AGENT_VISUAL_EQUIPMENT_SLOT, &body)
 }
 
 /// `0x0048`: whether an agent's cape is shown.

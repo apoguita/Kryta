@@ -36,8 +36,11 @@ pub(crate) struct Player {
     pub direction: (f32, f32),
     pub appearance: u32,
     /// The item ids the agent is drawn wearing, from the equipped bag, in its own order. A slot
-    /// the character wears nothing in is zero.
+    /// the character wears nothing in is zero, and so is one its display mode hides on this map
+    /// (`characters::visibility::strip_visual`).
     pub equipped: [u32; 9],
+    /// The display-mode byte the load states in `0x00EF` (`characters::visibility`).
+    pub visibility: u8,
     /// The gold the character carries (R45: gold is per character).
     pub gold: u32,
     pub profession: u8,
@@ -174,9 +177,16 @@ impl Player {
         }
         frames.push(character_packets::update_unlocked_skills(&[]));
         frames.push(character_packets::character_update_factions(&progress));
+        // The whole display-mode byte under the full mask: `FF, FF` for a character that never
+        // chose, which is the retail server's own load
+        // (`recordings/client/raw/creation-armor-head-hidden-unfiltered.jsonl` seq 2383), and the
+        // stored byte in the same shape otherwise
+        // (`research/Rurik/toolkit/authsrv/visstatus.py`, `load_message`).
+        let (visibility, visibility_mask) =
+            crate::characters::visibility::load_message(self.visibility);
         frames.push(misc_packets::char_visibility_flags(
-            0xFFFF_FFFF,
-            0xFFFF_FFFF,
+            visibility,
+            visibility_mask,
         ));
         frames.push(misc_packets::player_update_flags(player as u16, 0, 7));
         // ASURA crates/asura-protocol/src/packets.rs:771-774 defines the packets
@@ -269,6 +279,7 @@ mod tests {
             direction: (1.0, 0.0),
             appearance: 0,
             equipped: [0; 9],
+            visibility: crate::characters::visibility::DEFAULT_FLAGS,
             gold: 0,
             profession: 1,
             unlocked_professions: 2,

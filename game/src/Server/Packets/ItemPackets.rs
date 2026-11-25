@@ -22,10 +22,15 @@ pub const CREATE_NAMED_ITEM: u16 = 0x0161;
 pub const CREATE_UNNAMED_ITEM: u16 = 0x015F;
 /// `GAME_SMSG_ITEM_MOVED_TO_LOCATION`: where an item sits.
 pub const ITEM_MOVE_TO_LOCATION: u16 = 0x013E;
+/// `GAME_SMSG_ITEM_CHANGE_LOCATION`: an item the client holds moves to another bag slot.
+pub const ITEM_CHANGE_LOCATION: u16 = 0x014B;
 /// `GAME_SMSG_ITEM_SET_PROFESSION`: the profession an item was made for.
 pub const ITEM_SET_PROFESSION: u16 = 0x015A;
 /// `GAME_SMSG_ITEM_WEAPON_SET`: the items in one weapon slot.
 pub const ITEM_WEAPON_SET: u16 = 0x0147;
+/// `0x015B`, unnamed in the packet table: an item id twice. The creation screen is sent one after a
+/// re-dyed item, and it appears nowhere else.
+pub const ITEM_CREATION_REDYED: u16 = 0x015B;
 /// `GAME_SMSG_UPDATE_GOLD_STORAGE`: how much gold is in storage.
 pub const UPDATE_GOLD_STORAGE: u16 = 0x0141;
 /// `GAME_SMSG_ITEM_REMOVE`: the client drops an item out of its inventory model.
@@ -180,12 +185,35 @@ pub fn item_move_to_location(stream: u16, item_id: u32, bag_id: u16, slot: u8) -
     frame(ITEM_MOVE_TO_LOCATION, body)
 }
 
+/// `0x014B`: an item the client already holds moves to another bag slot. Same fields as `0x013E`
+/// (`game/src/Server/Protocol/Tables.rs`, 11 bytes). The retail server equips each piece of a
+/// creation screen's set with it: `4b010000 0d000000 <item> 22000000 <slot>`, `0x22` being the
+/// equipped bag there (`recordings/client/raw/creation-armor-head-color-unfiltered.jsonl` seq 1205).
+pub fn item_change_location(stream: u16, item_id: u32, bag_id: u16, slot: u8) -> Vec<u8> {
+    let mut body = Vec::with_capacity(9);
+    u16s(&mut body, stream);
+    u32s(&mut body, item_id);
+    u16s(&mut body, bag_id);
+    u8s(&mut body, slot);
+    frame(ITEM_CHANGE_LOCATION, body)
+}
+
 /// `0x015A`: the profession an item was made for. Only sent when it is not none.
 pub fn item_set_profession(item_id: u32, profession: u8) -> Vec<u8> {
     let mut body = Vec::with_capacity(5);
     u32s(&mut body, item_id);
     u8s(&mut body, profession);
     frame(ITEM_SET_PROFESSION, body)
+}
+
+/// `0x015B`: the item id, twice. Measured on the retail server: `5b010000 20000000 20000000` for
+/// item `0x20`, the third message of every answer to a creation-screen colour change
+/// (`recordings/client/feature/character_creation/creation-armor-color-20261124.jsonl` seq 1275, 1279, 1283, 1287 - the client's struct, so each field is a dword).
+pub fn item_creation_redyed(item_id: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(8);
+    u32s(&mut body, item_id);
+    u32s(&mut body, item_id);
+    frame(ITEM_CREATION_REDYED, body)
 }
 
 /// `0x0147`: the items in one weapon slot. The reference sends four, one per slot, all empty.

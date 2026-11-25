@@ -32,7 +32,24 @@ use crate::server::world_session::{Connection, WorldSession};
 pub(crate) struct Creation {
     pub(crate) campaign: u8,
     pub(crate) profession: u8,
+    /// The colour the client chose for each equipped slot of the set on screen (`0x8084`), by slot.
+    /// `None` is a slot it has not coloured since the set was sent, which keeps the set's own dye.
+    pub(crate) colors: [Option<u8>; CREATION_COLOR_SLOTS],
 }
+
+/// The equipped slots a creation screen colours: the client sends one `0x8084` for each of slots
+/// `4, 2, 3, 6, 5, 0, 1` after every profession change (`research/Eden/docs/re/char-create-protocol.md`
+/// 3.2; `recordings/client/feature/character_creation/creation-armor-color-20261124.jsonl` seq 659-665).
+pub(crate) const CREATION_COLOR_SLOTS: usize = 7;
+
+/// The item flag that says an item takes no dye. The retail server answers a colour for every
+/// worn item but the one that carries it: the Warrior's head (flags `0x20001006`) is sent again
+/// re-dyed and the Elementalist's (`0x20001202`) is not, in the same capture (`recordings/client/feature/character_creation/creation-armor-color-20261124.jsonl`
+/// seq 1130 and 1138 against seq 1218, which no later message re-sends). The client's own dye rule
+/// refuses the same bit (`research/preforged-source/src/runtime/gw_dye_transactions.h:20-30`,
+/// "target forbids interaction bit200"), and its creation screen gives such a head a Show checkbox
+/// and no colours (`research/Eden/docs/re/char-create-ui.md`, "Head is `HeadNoColor`").
+const ITEM_FLAG_TAKES_NO_DYE: u32 = 0x200;
 
 impl Creation {
     /// GWPS's starting state: Warrior, and no campaign until the client says so.
@@ -40,6 +57,7 @@ impl Creation {
         Self {
             campaign: 0,
             profession: character_packets::DEFAULT_PROFESSION,
+            colors: [None; CREATION_COLOR_SLOTS],
         }
     }
 }
@@ -109,6 +127,96 @@ impl WorldSession {
                 format!("Gameplay connection from {peer}: the preferences could not be stored: {error}"),
             ),
         }
+    }
+}
+
+/// The value and the mask a `0x8057` carries: the two dwords after the header.
+pub(crate) fn equip_visibility_of(message: &[u8]) -> Option<(u32, u32)> {
+    let value = u32::from_le_bytes(message.get(2..6)?.try_into().ok()?);
+    let mask = u32::from_le_bytes(message.get(6..10)?.try_into().ok()?);
+    Some((value, mask))
+}
+
+impl WorldSession {
+    /// `0x8057`: the inventory panel's display mode chose an option for one slot kind.
+    ///
+    /// Ported from Rurik's `handle_visibility_flags`
+    /// (`research/Rurik/toolkit/authsrv/authsrv.py:36904-36951`), whose reply the retail server's
+    /// own now confirms (`recordings/client/raw/creation-armor-in-game-setting-unfiltered.jsonl` seq 482-1164): the byte takes `(flags & !mask) | value`, the client is
+    /// answered `0x00EF [value, mask]` - the one message that writes its copy of the byte - and the
+    /// body follows in `0x006F [agent, position, item or 0]` for each kind whose shown state on this
+    /// kind of map changed. A request the drop-down cannot send is refused with nothing sent.
+    /// The byte is kept on the character row, so the next load states it.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn answer_equip_visibility(
+        &self,
+        state: &mut Connection,
+        io: &mut SessionIo,
+        peer: &str,
+        message: &[u8],
+        crypt: &mut AuthCrypt,
+        sheet: &crate::characters::CharacterSheet,
+        map: &crate::world::MapEntry,
+    ) {
+        use crate::characters::visibility;
+        let Some((value, mask)) = equip_visibility_of(message) else {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: a display mode change of {} bytes cannot be read; nothing sent.",
+                    message.len()
+                ),
+            );
+            return;
+        };
+        if let Some(why) = visibility::check_request(value, mask) {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: the display mode change (0x{value:x}, mask 0x{mask:x}) is refused: {why}; nothing sent."
+                ),
+            );
+            return;
+        }
+        let uuid = crate::characters::uuid_text(&sheet.uuid);
+        let characters = self.characters();
+        let old = visibility::load_flags(
+            characters
+                .as_ref()
+                .and_then(|characters| characters.visibility_flags(&uuid).unwrap_or(None)),
+        );
+        let new = visibility::apply(old, value, mask);
+        let worn = characters
+            .as_ref()
+            .and_then(|characters| characters.equipped_item_ids(&uuid, &self.bags()).ok())
+            .unwrap_or([0u32; 9]);
+        let explorable = crate::server::world_session::is_explorable(map);
+
+        let mut frames = vec![misc_packets::char_visibility_flags(value, mask)];
+        for (slot, item) in visibility::slot_changes(old, new, worn, explorable) {
+            frames.push(misc_packets::update_agent_visual_equipment_slot(
+                state.player_id(),
+                slot,
+                item,
+            ));
+        }
+        let writes = frames.len() - 1;
+        self.send(io, peer, crypt, &frames, "the display mode").await;
+
+        let kept = match characters.map(|characters| characters.record_visibility_flags(&uuid, new)) {
+            Some(Ok(true)) => "stored".to_string(),
+            Some(Ok(false)) => "NOT stored: no character row matched".to_string(),
+            Some(Err(error)) => format!("NOT stored: {error}"),
+            None => "NOT stored: no character database".to_string(),
+        };
+        self.say(
+            LogLevel::Info,
+            format!(
+                "Gameplay connection from {peer}: the display mode of '{}' is 0x{old:02x} -> 0x{new:02x} (value 0x{value:x}, mask 0x{mask:x}); {writes} body slot write(s) in {}; {kept}.",
+                sheet.name,
+                if explorable { "an explorable area" } else { "a town" }
+            ),
+        );
     }
 }
 
@@ -189,6 +297,9 @@ impl WorldSession {
             creation.campaign = message[2];
             creation.profession = message[3];
         }
+        // A new set is on screen with its own dyes. The client says its colours again with the
+        // seven `0x8084` that follow this message, and those fill the list back in.
+        creation.colors = [None; CREATION_COLOR_SLOTS];
         self.say(
             LogLevel::Debug,
             format!(
@@ -196,12 +307,18 @@ impl WorldSession {
                 creation.campaign, creation.profession
             ),
         );
-        // GWPS's own answer (`GameSrv_HandleCharCreationChangeProf`), in its order:
-        // the previous set comes off the client first, then the profession, then the new set
-        // is created and placed. A client still holding the old set asserts on an item created
-        // into a slot it thinks is occupied (`Assertion: !bagParent->GetItem(slot)`,
-        // `ItCliInv.cpp(105)`, which `ASURA/crates/asura-world/src/creation.rs` records
-        // against build 39112 when it omitted the removal).
+        // The retail server's answer, message for message (`recordings/client/raw/creation-armor-head-color-unfiltered.jsonl` seq 1194-1225, a change to the
+        // Elementalist): every piece of the previous set removed (`0x014D`), the profession
+        // (`0x00B7`), the unlocked skills (`0x00DB`), and then for each piece of the new set, the
+        // weapon included: the item (`0x0161`), the profession on screen (`0x015A`), the item added
+        // to the backpack's slot 0 (`0x013E`), and the item moved from there to its slot of the
+        // equipped bag (`0x014B`). The backpack of a creation screen is empty, so slot 0 is free
+        // for each piece in turn.
+        //
+        // A client still holding the old set asserts on an item created into a slot it thinks is
+        // occupied (`Assertion: !bagParent->GetItem(slot)`, `ItCliInv.cpp(105)`, which
+        // `ASURA/crates/asura-world/src/creation.rs` records against build 39112 when it omitted the
+        // removal).
         let mut frames = Vec::new();
         let tables = self.world.creation();
         for item in tables
@@ -210,25 +327,35 @@ impl WorldSession {
         {
             frames.push(item_packets::item_remove(item_packets::ITEM_STREAM, item.id));
         }
-        frames.push(character_packets::update_unlocked_skills(&[]));
         frames.push(character_packets::player_update_profession(
             state.player_id(),
             creation.profession,
             0,
             0,
         ));
+        frames.push(character_packets::update_unlocked_skills(&[]));
         let equipped_bag =
             crate::creation::equipped_bag(tables).map(|bag| bag.id).unwrap_or(0);
+        let backpack = crate::creation::backpack(tables).map(|bag| bag.id).unwrap_or(0);
         for item in tables
             .inventory(creation.campaign, creation.profession)
             .equipped_items()
         {
-            let slot = item.slot;
             frames.push(item_packets::create_named_item(
                 &crate::creation::named_item(item),
             ));
-            if let Some(slot) = slot {
+            frames.push(item_packets::item_set_profession(
+                item.id,
+                creation.profession,
+            ));
+            if let Some(slot) = item.slot {
                 frames.push(item_packets::item_move_to_location(
+                    item_packets::ITEM_STREAM,
+                    item.id,
+                    backpack,
+                    0,
+                ));
+                frames.push(item_packets::item_change_location(
                     item_packets::ITEM_STREAM,
                     item.id,
                     equipped_bag,
@@ -237,6 +364,77 @@ impl WorldSession {
             }
         }
         self.send(io, peer, crypt, &frames, "the new profession")
+            .await;
+    }
+
+    /// `0x8084` on the creation screen: the client coloured one equipped slot, and the item in it is
+    /// sent again with that colour.
+    ///
+    /// No research project answers this message - GWPS's handler is an empty function
+    /// (`research/OpenTyria/code/OpenTyria/GameSrv.c:1684-1690`) and ASURA has none - so it is ported
+    /// from a retail recording of 2026-11-24, `recordings/client/feature/character_creation/creation-armor-color-20261124.jsonl`. The client sends `{u8 slot, u8 colour}` (seq
+    /// 1272: `84000000 02000000 05000000` in the client's struct, slot 2 and colour 5), and the
+    /// server answers with three messages (seq 1273-1275): the item's `0x0161` exactly as the set
+    /// created it but with the colour as its dye colours (`0b000000` at seq 1202, `05000000` at seq
+    /// 1273), then `0x015A` with the item and the profession on screen, then `0x015B` with the item's
+    /// id twice. The same three answer each of the seven the client sends after a profession change,
+    /// for the slots that hold an item that takes dye (`ITEM_FLAG_TAKES_NO_DYE`). The colour is
+    /// kept: the created character's items carry it (seq 1314-1330 after the confirm at 1296).
+    ///
+    /// A client left without this answer shows no colour change and never enables its Create button
+    /// (the owner, 2026-11-24, against this tree).
+    pub(crate) async fn answer_creation_item_color(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        message: &[u8],
+        creation: &mut Creation,
+        crypt: &mut AuthCrypt,
+    ) {
+        let (Some(&slot), Some(&color)) = (message.get(2), message.get(3)) else {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: an item colour of {} bytes cannot be read.",
+                    message.len()
+                ),
+            );
+            return;
+        };
+        if usize::from(slot) >= CREATION_COLOR_SLOTS {
+            return;
+        }
+        let inventory = self
+            .world
+            .creation()
+            .inventory(creation.campaign, creation.profession);
+        let Some(item) = inventory
+            .equipped_items()
+            .into_iter()
+            .find(|item| item.slot == Some(slot))
+        else {
+            // Nothing is worn there, and the retail server says nothing either (slot 1 above).
+            return;
+        };
+        if item.flags & ITEM_FLAG_TAKES_NO_DYE != 0 {
+            return;
+        }
+        creation.colors[usize::from(slot)] = Some(color);
+        let mut named = crate::creation::named_item(item);
+        named.dye_colors = u16::from(color);
+        let frames = [
+            item_packets::create_named_item(&named),
+            item_packets::item_set_profession(item.id, creation.profession),
+            item_packets::item_creation_redyed(item.id),
+        ];
+        self.say(
+            LogLevel::Debug,
+            format!(
+                "Gameplay connection from {peer}: the creation screen coloured slot {slot} with colour {color}; item {} is sent again.",
+                item.id
+            ),
+        );
+        self.send(io, peer, crypt, &frames, "the item's new colour")
             .await;
     }
 
@@ -372,12 +570,40 @@ impl WorldSession {
                     &inventory,
                     self.item_templates(),
                 ) {
-                    Ok(written) => self.say(
-                        LogLevel::Debug,
-                        format!(
-                            "Gameplay connection from {peer}: the character's {written} starting item row(s) are written."
-                        ),
-                    ),
+                    Ok(written) => {
+                        self.say(
+                            LogLevel::Debug,
+                            format!(
+                                "Gameplay connection from {peer}: the character's {written} starting item row(s) are written."
+                            ),
+                        );
+                        // The colours chosen on the creation screen are the items' own from here on:
+                        // the retail server's first load after a creation draws them with the colour
+                        // (`recordings/client/feature/character_creation/creation-armor-color-20261124.jsonl` seq 1314-1330). Written after the rows, so a row still finds its
+                        // template by the dye the set gave it.
+                        for item in inventory.equipped_items() {
+                            let Some(color) = item
+                                .slot
+                                .and_then(|slot| creation.colors.get(usize::from(slot)).copied())
+                                .flatten()
+                            else {
+                                continue;
+                            };
+                            if let Err(error) = characters.dye_item(
+                                &crate::characters::uuid_text(&id),
+                                item.id,
+                                u16::from(color),
+                            ) {
+                                self.say(
+                                    LogLevel::Error,
+                                    format!(
+                                        "Gameplay connection from {peer}: item {} keeps its set's colour, not the one chosen: {error}",
+                                        item.id
+                                    ),
+                                );
+                            }
+                        }
+                    }
                     Err(error) => self.say(
                         LogLevel::Error,
                         format!(

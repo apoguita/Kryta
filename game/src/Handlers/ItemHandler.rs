@@ -35,6 +35,7 @@ impl WorldSession {
         message: &[u8],
         crypt: &mut AuthCrypt,
         sheet: &CharacterSheet,
+        map: &crate::world::MapEntry,
     ) {
         let Some((item_id, bag_id, slot)) = item_move(message) else {
             self.say(
@@ -104,6 +105,7 @@ impl WorldSession {
                 &uuid,
                 &bags,
                 &characters,
+                crate::server::world_session::is_explorable(map),
             ));
         }
         if !frames.is_empty() {
@@ -125,6 +127,7 @@ impl WorldSession {
         message: &[u8],
         crypt: &mut AuthCrypt,
         sheet: &CharacterSheet,
+        map: &crate::world::MapEntry,
     ) {
         let Some(item_id) = message
             .get(2..6)
@@ -288,6 +291,7 @@ impl WorldSession {
                 &uuid,
                 &bags,
                 &characters,
+                crate::server::world_session::is_explorable(map),
             ));
         }
         if !frames.is_empty() {
@@ -376,8 +380,16 @@ fn equipment_frame(
     uuid: &str,
     bags: &[crate::creation::Bag],
     characters: &DatabaseCharacters,
+    explorable: bool,
 ) -> Vec<u8> {
     let equipped = characters.equipped_item_ids(uuid, bags).unwrap_or([0u32; 9]);
+    // A piece the character's display mode hides on this kind of map stays off the body when the
+    // worn list is sent again (`research/Rurik/toolkit/authsrv/visstatus.py`, `filter_slot_writes`:
+    // "re-equipping a helm hidden in a field re-helmed the body").
+    let flags = crate::characters::visibility::load_flags(
+        characters.visibility_flags(uuid).unwrap_or(None),
+    );
+    let equipped = crate::characters::visibility::strip_visual(equipped, flags, explorable);
     misc_packets::update_agent_visual_equipment(agent, equipped)
 }
 

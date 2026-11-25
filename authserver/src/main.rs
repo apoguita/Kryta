@@ -904,10 +904,26 @@ fn open_character_database(
         "server.authserver",
         "Started character database connection pool.",
     );
-    Ok(Arc::new(crate::server::DatabaseCharacters::new(
-        Arc::new(Mutex::new(character_pool)),
-        log.clone(),
-    )))
+
+    // The bag the character list draws each character's armour from: a setting of this program,
+    // as the two numbers a travel is placed by are. It is the id the world's content gives the
+    // bag a character wears things in (`BagType_Equipped`, bag model 21 - the position the client
+    // itself keeps for worn items), which is 5 in `config/World/Vanilla/creation/inventory.json`.
+    // aeratemark's fork reads that file from here instead
+    // (`research/Kryta-aeratemark/authserver/src/main.rs:647-687`); this program reads no world
+    // content (`docs/decisions/0010-auth-and-the-game-library.md`), so the owner made it a setting
+    // on 2026-11-24.
+    let equipped_bag = read::<u16>(config, "EquippedBag", 5)?;
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        format!("Character list: armour pieces from the equipped bag, bag id {equipped_bag}."),
+    );
+
+    Ok(Arc::new(
+        crate::server::DatabaseCharacters::new(Arc::new(Mutex::new(character_pool)), log.clone())
+            .with_equipped_bag(Some(equipped_bag)),
+    ))
 }
 
 /// The factory the login listener makes one session per connection with.

@@ -74,6 +74,9 @@ const CHAR_CREATION_REQUEST_PLAYER: u16 = 0x8089;
 const CHAR_CREATION_REQUEST_ARMORS: u16 = 0x808A;
 const CHAR_CREATION_CHANGE_PROF: u16 = 0x8060;
 const CHAR_CREATION_CONFIRM: u16 = 0x808B;
+/// `GAME_CMSG_ITEM_UPDATE_EQUIPPED_COLOR` (`0x8084`): `{u8 slot, u8 colour}`, the creation screen
+/// colouring one equipped slot.
+const CHAR_CREATION_ITEM_COLOR: u16 = 0x8084;
 /// `GAME_CMSG_PING_REQUEST`: two bytes on the gameplay connection.
 const GAME_PING: u16 = 0x800D;
 
@@ -159,8 +162,17 @@ const CLIENT_UNEQUIP_ITEM: u16 = 0x804F;
 /// many bytes, the packet table's `Array8(256)`. The client names the sender
 /// `CharMsgSendOrderStorePrefs` (`research/Eden/docs/re/configuration.md` 7.1).
 const CLIENT_STORE_PREFERENCES: u16 = 0x8045;
+/// The inventory panel's display mode (`GAME_CMSG_EQUIP_VISIBILITY`, `0x8057`): a value and the mask
+/// it applies under (`recordings/client/raw/creation-armor-in-game-setting-unfiltered.jsonl` seq 482).
+const CLIENT_EQUIP_VISIBILITY: u16 = 0x8057;
 const CLIENT_PING_REPLY: u16 = 0x8009;
 const CLIENT_HEARTBEAT: u16 = 0x800C;
+
+/// Whether a map is an explorable area, where the low bit of each display-mode pair applies, rather
+/// than a town or outpost (`research/Rurik/toolkit/authsrv/visstatus.py`, "THE REGIME").
+pub(crate) fn is_explorable(map: &crate::world::MapEntry) -> bool {
+    map.kind == Some(crate::world::map_kind::EXPLORABLE)
+}
 const CLIENT_DISCONNECT: u16 = 0x8008;
 /// `GAME_CMSG_EQUIP_ITEM` (`0x8030`): the item to wear.
 const CLIENT_EQUIP_ITEM: u16 = 0x8030;
@@ -1091,6 +1103,10 @@ impl WorldSession {
                 self.answer_creation_change_prof(state, io, peer, message, creation, crypt)
                     .await;
             }
+            (CHAR_CREATION_ITEM_COLOR, Phase::Creation(_)) => {
+                self.answer_creation_item_color(io, peer, message, creation, crypt)
+                    .await;
+            }
             (CHAR_CREATION_CONFIRM, Phase::Creation(version)) => {
                 // The confirm carries the name as a counted string and then the packed
                 // appearance word; the reference reads exactly those and writes the rows.
@@ -1150,7 +1166,14 @@ impl WorldSession {
             // the client is told the placement back. `0x8072` is the client's own `9` bytes - the
             // item, the bag and the slot - and `0x013E` is the placement.
             (CLIENT_ITEM_MOVE, Phase::Loading(load) | Phase::Loaded(load)) => {
-                self.answer_item_move(state, io, peer, message, crypt, load.sheet)
+                self.answer_item_move(state, io, peer, message, crypt, load.sheet, load.map)
+                    .await;
+            }
+            // The display mode of the cape, the headgear or a costume slot: the choice is kept,
+            // echoed in `0x00EF`, and the body's hidden or shown piece follows in `0x006F`
+            // (`recordings/client/raw/creation-armor-in-game-setting-unfiltered.jsonl` seq 482-490).
+            (CLIENT_EQUIP_VISIBILITY, Phase::Loading(load) | Phase::Loaded(load)) => {
+                self.answer_equip_visibility(state, io, peer, message, crypt, load.sheet, load.map)
                     .await;
             }
             // `GAME_CMSG_PING_REPLY` (`0x8009`, 10 bytes) and `GAME_CMSG_HEARTBEAT` (`0x800C`,
@@ -1239,7 +1262,7 @@ impl WorldSession {
             // the agent's worn items sent again, which is the one thing the client cannot work
             // out for itself (`ASURA/crates/asura-world/src/item.rs:314-436`).
             (CLIENT_EQUIP_ITEM, Phase::Loading(load) | Phase::Loaded(load)) => {
-                self.answer_equip_item(state, io, peer, message, crypt, load.sheet)
+                self.answer_equip_item(state, io, peer, message, crypt, load.sheet, load.map)
                     .await;
             }
             // A message this world does not answer, or one that arrived in a phase it has no
@@ -1501,6 +1524,23 @@ impl WorldSession {
                 }
             }
         }
+        // The display mode the character last chose (`0x8057`), and the worn list without what it
+        // hides on this kind of map: the client's own body draws what the list names, so the list
+        // is the only way a hidden piece stays off it
+        // (`research/Rurik/toolkit/authsrv/visstatus.py`, `strip_visual`). A read that fails is
+        // the default, every slot shown.
+        let visibility = crate::characters::visibility::load_flags(
+            self.characters().and_then(|characters| {
+                characters
+                    .visibility_flags(&crate::characters::uuid_text(&sheet.uuid))
+                    .unwrap_or(None)
+            }),
+        );
+        let equipped = crate::characters::visibility::strip_visual(
+            equipped,
+            visibility,
+            self::is_explorable(map),
+        );
         let told = crate::agents::Player {
             agent,
             player,
@@ -1509,6 +1549,7 @@ impl WorldSession {
             direction,
             appearance,
             equipped,
+            visibility,
             gold: sheet.gold,
             profession: sheet.profession,
             unlocked_professions: sheet.unlocked_professions,
@@ -1937,7 +1978,7 @@ mod tests {
                     &Log::new(),
                 )
             .expect("the creation data");
-        assert_eq!((bags, items, sets), (6, 9, 32), "the reference's own counts");
+        assert_eq!((bags, items, sets), (6, 7, 32), "the reference's counts, less its two backpack stacks");
         world.set_templates(templates_from(world.creation().definitions()));
         world
     }
@@ -2298,7 +2339,7 @@ mod tests {
             assert!(headers.contains(&header), "header 0x{header:04X} is in the block");
         }
         let item_count = headers.iter().filter(|header| **header == 0x0161).count();
-        assert!(item_count > 9, "the screen is sent the profession's equipment too");
+        assert!(item_count > 7, "the screen is sent the profession's equipment too");
 
         // 6. The screen chooses another campaign and profession (`0x8060`: campaign, profession).
         // GWPS answers `GameSrv_HandleCharCreationChangeProf`'s own way, and this is the
@@ -2317,19 +2358,29 @@ mod tests {
         for item in &previous {
             expected.push(item_packets::item_remove(item_packets::ITEM_STREAM, item.id));
         }
-        expected.push(character_packets::update_unlocked_skills(&[]));
         expected.push(character_packets::player_update_profession(
             CREATION_AGENT,
             2,
             0,
             0,
         ));
+        expected.push(character_packets::update_unlocked_skills(&[]));
+        let backpack = crate::creation::backpack(tables)
+            .expect("the creation data names a backpack")
+            .id;
         for item in &next {
             expected.push(item_packets::create_named_item(&crate::creation::named_item(
                 item,
             )));
+            expected.push(item_packets::item_set_profession(item.id, 2));
             if let Some(slot) = item.slot {
                 expected.push(item_packets::item_move_to_location(
+                    item_packets::ITEM_STREAM,
+                    item.id,
+                    backpack,
+                    0,
+                ));
+                expected.push(item_packets::item_change_location(
                     item_packets::ITEM_STREAM,
                     item.id,
                     equipped_bag,
@@ -2365,12 +2416,14 @@ mod tests {
         }
         assert_eq!(at, answered.len(), "every byte is accounted for");
         let mut wanted: Vec<u16> = vec![0x014D; previous.len()];
-        wanted.push(0x00DB);
         wanted.push(0x00B7);
+        wanted.push(0x00DB);
         for item in &next {
             wanted.push(0x0161);
+            wanted.push(0x015A);
             if item.slot.is_some() {
                 wanted.push(0x013E);
+                wanted.push(0x014B);
             }
         }
         assert_eq!(
@@ -2380,6 +2433,60 @@ mod tests {
         assert!(
             !answer_headers.contains(&0x00B6),
             "a profession change does not re-state the unlocked-profession bitmap"
+        );
+
+        // 7. The screen colours one piece (`0x8084`: slot, colour). The retail server sends that
+        // slot's item again with the colour as its dye, then the item's profession, then `0x015B`
+        // with the item's id twice
+        // (`recordings/client/feature/character_creation/creation-armor-color-20261124.jsonl`
+        // seq 1272-1275).
+        let dyed = next
+            .iter()
+            .find(|item| item.slot == Some(2))
+            .expect("the set has a piece in slot 2");
+        let mut named = crate::creation::named_item(dyed);
+        named.dye_colors = 5;
+        let recolour = [
+            item_packets::create_named_item(&named),
+            item_packets::item_set_profession(dyed.id, 2),
+            item_packets::item_creation_redyed(dyed.id),
+        ];
+        let mut colour = vec![0x84, 0x80, 2, 5];
+        sending.apply(&mut colour);
+        client.write_all(&colour).unwrap();
+        let mut answered = vec![0u8; recolour.iter().map(Vec::len).sum()];
+        client.read_exact(&mut answered).unwrap();
+        opening.apply(&mut answered);
+        assert_eq!(
+            answered,
+            recolour.concat(),
+            "a coloured slot is answered with its item, re-dyed, its profession and 0x015B"
+        );
+
+        // 8. The head is answered the same way when its item takes dye: the retail server re-sends
+        // the Warrior's head first of all (same recording, seq 1130 and 1138).
+        let head = next
+            .iter()
+            .find(|item| item.slot == Some(4))
+            .expect("the set has a head piece");
+        assert_eq!(head.flags & 0x200, 0, "this set's head takes dye");
+        let mut named = crate::creation::named_item(head);
+        named.dye_colors = 7;
+        let recolour = [
+            item_packets::create_named_item(&named),
+            item_packets::item_set_profession(head.id, 2),
+            item_packets::item_creation_redyed(head.id),
+        ];
+        let mut colour = vec![0x84, 0x80, 4, 7];
+        sending.apply(&mut colour);
+        client.write_all(&colour).unwrap();
+        let mut answered = vec![0u8; recolour.iter().map(Vec::len).sum()];
+        client.read_exact(&mut answered).unwrap();
+        opening.apply(&mut answered);
+        assert_eq!(
+            answered,
+            recolour.concat(),
+            "a head that takes dye is answered like any other piece"
         );
 
         manager.stop_network();

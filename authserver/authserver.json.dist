@@ -14,6 +14,10 @@
     "value": 148,
     "doc": "Where a character whose row names no map and which has never been in an outpost enters. A setting rather than a rule: the outpost a character starts in is written by creation and by travelling, never derived, and this program holds no map catalogue to pick one from (docs/port/04-configuration.md)."
   },
+  "EquippedBag": {
+    "value": 5,
+    "doc": "The id of the bag a character wears things in. The login's character list draws each character's armour from the items in this bag (slots 2 to 6: body, legs, head, boots, gloves). It must be the bag the world's creation inventory gives type 2 and model 21 (config/World/Vanilla/creation/inventory.json); a different number lists every character with no armour."
+  },
   "BindIP": {
     "value": "0.0.0.0",
     "doc": "The address the listener binds. 0.0.0.0 is every interface."

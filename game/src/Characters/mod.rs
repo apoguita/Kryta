@@ -26,6 +26,9 @@ pub mod metrics;
 #[path = "Titles.rs"]
 pub mod titles;
 
+#[path = "Visibility.rs"]
+pub mod visibility;
+
 pub use equipping::{NotWorn, equip_place};
 pub use sheet::CharacterSheet;
 
@@ -68,13 +71,22 @@ pub const CHARACTER_SETTINGS_LEN: usize = 62;
 /// How many armour pieces a character record carries.
 pub const PIECE_SLOTS: usize = 5;
 
-/// One armour piece as the list carries it: a file id and four colour nibbles.
+/// One armour piece as the list carries it: five bytes, as the retail server sends them in a new
+/// character's block (`recordings/client/raw/creation-armor-head-color-unfiltered.jsonl` seq 1298, an
+/// Elementalist whose four dyeable pieces were coloured 5):
+/// `87 d1 00 00 08`, `f1 01 05 00 08`, `f2 01 05 00 08`, `f3 01 05 00 08`, `f0 01 05 00 08`.
+/// The first two bytes are the item's file id, the third its dye colours, and the fifth is 8 for
+/// every piece, the undyed head included - the dye tint each of those items carries in its own
+/// `0x0161` (seq 1202-1218). GWPS reads the fifth byte as two more colour nibbles and sends zero.
+/// The fourth byte is zero in the one block recorded, and is sent as the high byte of the colours.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArmourPiece {
     /// The `Gw.dat` file id of the piece's model.
     pub file_id: u16,
-    /// Four nibbles of dye colour, packed as GWPS packs them.
+    /// The item's dye colours.
     pub colors: u16,
+    /// The item's dye tint.
+    pub tint: u8,
 }
 
 /// What a character list says about one character.
@@ -126,12 +138,8 @@ impl CharacterSettings {
             match self.pieces.get(index) {
                 Some(piece) => {
                     blob.extend_from_slice(&piece.file_id.to_le_bytes());
-                    blob.push((piece.colors & 0xF) as u8 | (((piece.colors >> 4) & 0xF) as u8) << 4);
-                    blob.push(0); // the piece's unk, zero for every piece the reference sends
-                    blob.push(
-                        (((piece.colors >> 8) & 0xF) as u8)
-                            | ((((piece.colors >> 12) & 0xF) as u8) << 4),
-                    );
+                    blob.extend_from_slice(&piece.colors.to_le_bytes());
+                    blob.push(piece.tint);
                 }
                 None => blob.extend_from_slice(&[0u8; 5]),
             }
@@ -230,13 +238,26 @@ mod tests {
             pieces: vec![
                 ArmourPiece {
                     file_id: 1,
-                    colors: 0x1234
+                    colors: 0x1234,
+                    tint: 8,
                 };
                 5
             ],
             ..CharacterSettings::default()
         };
         assert_eq!(dressed.to_blob().len(), CHARACTER_SETTINGS_LEN);
+
+        // The retail server's own five bytes for a piece (`recordings/client/raw/creation-armor-head-color-unfiltered.jsonl` seq 1298): file `0x01F1`, colours
+        // 5, tint 8.
+        let retail = CharacterSettings {
+            pieces: vec![ArmourPiece {
+                file_id: 0x01F1,
+                colors: 5,
+                tint: 8,
+            }],
+            ..CharacterSettings::default()
+        };
+        assert_eq!(&retail.to_blob()[37..42], &[0xF1, 0x01, 0x05, 0x00, 0x08]);
     }
 
     #[test]

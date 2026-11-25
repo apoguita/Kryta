@@ -72,7 +72,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | the reference client (a test double that speaks the wire) | `client/reference_client.rs` (17 KB) | nothing | **missing**: no test proves a whole conversation against an independent speaker |
 | the trace of every byte | `client/trace.rs` | `shared/src/Network/` trace + logs | ported thin |
 
-## 3. Client -> server: the 37 messages ASURA's code handles, and 3 of this tree's
+## 3. Client -> server: the 37 messages ASURA's code handles, and 4 of this tree's
 
 ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which the table marks
 `Observed` (`dispatch.rs:73`), so its code handles 37.
@@ -97,7 +97,7 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 | `0x8035` | `AUTH_CMSG_ASK_SERVER_RESPONSE` | `lib.rs` | `session.rs` | ported |
 | `0x8038` | `AUTH_CMSG_PORTAL_ACCOUNT_LOGIN` | `lib.rs:572-680` | `session.rs` `answer_login`: the named character is recorded, or the account's first | ported |
 
-### 3.2 The game connection (22, and 3 of this tree's)
+### 3.2 The game connection (22, and 4 of this tree's)
 
 | header | message | ASURA handler | this tree | verdict |
 |---|---|---|---|---|
@@ -113,6 +113,7 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 | `0x8047` | `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` | `agent.rs:1117`, then `dispatch.rs:60-68` | `answer_last_position`, then `cross_portal` | ported (a taken correction crosses a doorway like a step) |
 | `0x8045` | the character's preferences (262; unnamed in the table, `CharMsgSendOrderStorePrefs` in the client, `research/Eden/docs/re/configuration.md` 7.1) | none: the row only. No research project handles it | `CLIENT_STORE_PREFERENCES` -> `answer_store_preferences` (`game/src/Handlers/CharacterHandler.rs`): the counted blob is kept on `characters.preferences` (`data/sql/base/db_characters/0007-character-preferences.sql`) and nothing is sent back | ported from retail recordings of 2026-11-24: two uploads of 50 bytes differing in one byte, with only world updates after each (`recordings/client/feature/preferences/weapon-sets-toggle-20261124.jsonl` seq 476, 696), and an upload whose bytes the next load returns (`recordings/client/feature/preferences/weapon-sets-travel-20261124.jsonl` seq 466, 1608). |
 | `0x804F` | `GAME_CMSG_UNEQUIP_ITEM` (6) | `item.rs:555`, `handle_unequip_item` | `CLIENT_UNEQUIP_ITEM`: ASURA's answer, a log line and nothing on the wire | ported |
+| `0x8057` | `GAME_CMSG_EQUIP_VISIBILITY` (10): the inventory panel's display mode for the cape, the headgear and the two costume slots, a value and its mask | none: the row only. Rurik implements it (`research/Rurik/toolkit/authsrv/visstatus.py` and `authsrv.py:36904-36951`, `handle_visibility_flags`), as a reconstruction with no retail capture | `CLIENT_EQUIP_VISIBILITY` -> `answer_equip_visibility` (`game/src/Handlers/CharacterHandler.rs`), the rule in `game/src/Characters/Visibility.rs`: the byte is kept on `characters.visibility_flags`, the client is answered `0x00EF` with the same two dwords and `0x006F` for each kind whose shown state on this kind of map changed | ported thin, from Rurik, whose reply the retail server's own confirms in a town (`recordings/client/raw/creation-armor-in-game-setting-unfiltered.jsonl` seq 482-1164, the headgear's four choices). Thin: nothing is told to the other players in the map; the cape's mode is stored and never reaches `0x0048`; no capture shows a choice made in an explorable area. The creation screen's own Show box is not this and reaches no server: a character created with it unticked loads with `FF, FF` and its head in `0x006E` (`recordings/client/raw/creation-armor-head-hidden-unfiltered.jsonl` seq 2383, 2827; the owner saw the head shown on live, `recordings/client/raw/creation-armor-head-hidden-from-login-unfiltered.jsonl`) |
 | `0x8058` | `GAME_CMSG_TITLE_DISPLAY` (6) | none: the row only (`packets.rs:422`) | `WorldSession.rs:1577`: the selectable rank, `0x00F4` to the player and its peers | ported thin, from the retail and Preforged recordings (section 5, the title block) |
 | `0x8059` | `GAME_CMSG_TITLE_HIDE` (2) | none: the row only (`packets.rs:423`) | `WorldSession.rs:1577`: rank zero, `0x00F4` to the player and its peers | ported thin, from the retail and Preforged recordings (section 5, the title block) |
 | `0x8060` | `GAME_CMSG_CHAR_CREATION_CHANGE_PROF` (4) | `creation.rs:275` | handled | ported: the body is `chapter, profession`, chapter `0` for a PvP character and `1`-`3` for Prophecies, Factions, Nightfall (`docs/game-rules.md` E226); the client sends it on entry, on every campaign change and on every profession change, and follows each one with seven `0x8084` |
@@ -121,16 +122,17 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 | `0x8088` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_SPAWN` | `agent.rs:1219`, `map.rs:13-20` | `load_map`, the entry position | ported: one `0x0196` frame, which is `spawn_block` whole (the answer used to append a first `0x001E` of its own; the ticker sends the ticks) |
 | `0x8089` | `GAME_CMSG_CHAR_CREATION_REQUEST_PLAYER` (2) | `creation.rs:190` | handled | ported |
 | `0x808A` | `GAME_CMSG_CHAR_CREATION_REQUEST_ARMORS` (2) | `creation.rs:259` | handled | ported |
+| `0x8084` | `GAME_CMSG_ITEM_UPDATE_EQUIPPED_COLOR` (4) | none: the row only. GWPS's handler is an empty function (`research/OpenTyria/code/OpenTyria/GameSrv.c:1684-1690`) and no other project answers it | `CHAR_CREATION_ITEM_COLOR` -> `answer_creation_item_color` (`game/src/Handlers/CharacterHandler.rs`), on the creation screen only: the item in the named slot is sent again as `0x0161` with the colour as its dye colours, then `0x015A` with the profession on screen, then `0x015B` with the item's id twice; the colour is kept and written onto the created character's item (`Repository.rs`, `dye_item`) | **ported thin**, from a retail recording of 2026-11-24 (`recordings/client/feature/character_creation/creation-armor-color-20261124.jsonl` seq 1272-1287 for four changes by hand, 1226-1240 for the seven after a profession change, 1314-1330 for the colours on the created character). An item whose flags carry `0x200` is not answered: the Warrior's head (`0x20001006`) is re-sent and the Elementalist's (`0x20001202`) is not (`recordings/client/raw/creation-armor-head-color-unfiltered.jsonl` seq 1132-1140 against 1218), and the client's dye rule refuses the same bit (`research/preforged-source/src/runtime/gw_dye_transactions.h:20-30`). The answer to `0x8060` around it is the retail server's too (section 5, the creation conversation). Outside the creation screen the message is not answered |
 | `0x808B` | `GAME_CMSG_CHAR_CREATION_CONFIRM` (58) | `creation.rs:346` | handled | **ported thin**: the counted name and the appearance word are read and written (the row writer is shared with the management panel, while starting inventory and unlock initialization remain in the handler); the next dword (8 bytes of which only the first 4 are the appearance's unused half) and the trailing `createFlags` - Reforged `0x1`, Dhuum `0x2`, Melandru `0x4` (`docs/game-rules.md` E222-E223) - are read by neither this tree nor ASURA, and no column stores them |
 | `0x8090` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_PLAYERS` (19) | `player.rs:430` | handled | ported |
 | `0x8091` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_ITEMS` (4) | `item.rs:448` | handled | ported: ASURA sends no `0x015E` either |
 | `0x80B1` | `GAME_CMSG_PARTY_TRAVEL` (9) | `travel.rs:279`, `handle_party_travel` | `answer_party_travel` and `begin_transfer` | ported |
 | `0x80C1` | `GAME_CMSG_TRAVEL_INIT` (10) | `travel.rs:147`, `handle_travel_init` (`dispatch.rs:73`) | `answer_travel_init` | ported - **missing until round 17**, and it starts no transfer in either tree |
 
-**Score: 37 of ASURA's ported or ported thin (15 auth + 22 game), 0 missing; 3 more from recordings
-(`0x8045` ported, `0x8058` and `0x8059` ported thin).**
+**Score: 37 of ASURA's ported or ported thin (15 auth + 22 game), 0 missing; 5 more from recordings
+(`0x8045` ported, `0x8057`, `0x8058`, `0x8059` and `0x8084` ported thin).**
 
-## 4. Server -> client: the 87 messages ASURA emits, and 4 of this tree's
+## 4. Server -> client: the 87 messages ASURA emits, and 7 of this tree's
 
 ### 4.1 The auth connection (8)
 
@@ -139,13 +141,13 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 | `0x0000` | `AUTH_SMSG_HEARTBEAT` | `client/messages.rs:540` | `login_reply::heartbeat` | ported |
 | `0x0001` | `AUTH_SMSG_SESSION_INFO` | `messages.rs:532` | `login_reply::session_info` | ported |
 | `0x0003` | `AUTH_SMSG_REQUEST_RESPONSE` | `RequestResponse::frame` | `login_reply::request_response` | ported |
-| `0x0007` | `AUTH_SMSG_CHARACTER_INFO` (138) | `messages.rs:498` | `login_reply::character_info` | ported |
+| `0x0007` | `AUTH_SMSG_CHARACTER_INFO` (138) | `messages.rs:498`; the settings block's armour pieces as in aeratemark's fork (`research/Kryta-aeratemark/game/src/Characters/Repository.rs:1480-1521`), its port of the ASURA test fork (`research/ASURA_testfork/crates/asura-db/src/game.rs:229-241`) | `login_reply::character_info`; the block's five pieces are the equipped bag's slots 2..=6 (body, legs, head, boots, gloves), read from the item rows on every list (`Repository.rs`, `pieces_worn_by`), the file id cut to 16 bits and an unworn piece left out. The bag's id is the login program's `EquippedBag` setting (5), where aeratemark reads the world's creation inventory from the login program; this tree's login program reads no world content (`docs/decisions/0010-auth-and-the-game-library.md`), so the owner made it a setting on 2026-11-24. **Sources differ on where the pieces live**: GWPS keeps them as columns on the character row, written at the creation confirm (`research/OpenTyria/code/OpenTyria/GameSrv.c:1728-1760`); the bytes sent are the same. Until 2026-11-24 this tree sent every character with no pieces and the client drew them naked | ported |
 | `0x0009` | `AUTH_SMSG_GAME_SERVER_INFO` (42) | `messages.rs:690`, `host_for` | `login_reply::game_server_info`, `host_blob` | ported |
 | `0x0011` | `AUTH_SMSG_ACCOUNT_INFO` (275) | `messages.rs:593` | `login_reply::account_info` | ported (the EULA byte was ours until 2026-11-12) |
 | `0x0014` | `AUTH_SMSG_FRIEND_STREAM_END` | `messages.rs:524` | `login_reply::friend_stream_end` | ported |
 | `0x0016` | `AUTH_SMSG_ACCOUNT_SETTINGS` (2058) | `messages.rs:572`; the blob chosen as in aeratemark's fork, `research/Kryta-aeratemark/authserver/src/Server/session.rs:244-284`, `1234-1246` | `login_reply::account_settings_frame`, carrying the account's stored upload, or the committed 591-byte block when it has none (`session.rs` `settings_for_login`; `docs/evidence/ui-settings-persistence.md`) | ported |
 
-### 4.2 The game connection (79, and 4 of this tree's)
+### 4.2 The game connection (79, and 7 of this tree's)
 
 | header | message | ASURA builder | this tree | verdict |
 |---|---|---|---|---|
@@ -176,7 +178,8 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 | `0x005D` | chat: the body, one fragment | `chat_message_core` | `chat_packets::chat_message_core` over `all_chat_body`, fragmented at 121 | ported: the body is a **coded string** (`0x0108 0x0107 text 0x0001`, `GmText.c:43-57` and `Rurik/studies/chat/FINDINGS.md:263`) and long text is fragmented, not truncated. ASURA's table and this tree before 0012 wrote bare text capped at 122, which is what left `/maps` past one frame |
 | `0x005E` | chat: the server speaking | `chat_message_server` | `chat_packets::chat_message_server(player, channel)` | ported: `[u16 player, u8 channel]`, **5 bytes** (`msgdefs.info` `GAME_SMSG_0094`; bytes `5e00 0100 06`, `FINDINGS.md:264`). ASURA wrote two dwords; **it is sent now** (`answer_line`, `Channel_Global`) as `GmChat.c:116-143` sends it, and the owner's live client read `/maps`'s answer off the screen - the first authored text rendered on this channel in either server |
 | `0x0061` | chat: which player spoke | `chat_message_local` | `chat_packets::chat_message_local(player, channel)` | ported: `[u16 player, u8 channel]`, **5 bytes** (`msgdefs.info` `GAME_SMSG_0097`; bytes `6100 0100 03`). ASURA wrote two dwords |
-| `0x006E` | visual equipment | `update_agent_visual_equipment` | same | ported |
+| `0x006E` | visual equipment | `update_agent_visual_equipment` | same, with each position the character's display mode hides on this kind of map sent as zero (`characters::visibility::strip_visual`, from Rurik's; no capture shows a load under a hiding mode) | ported |
+| `0x006F` | `GAME_SMSG_UPDATE_AGENT_VISUAL_EQUIPMENT_SLOT` (14): the agent, a position of the visual list, the item id or 0 | none: the row only | `misc_packets::update_agent_visual_equipment_slot`, sent after a display mode change (row `0x8057`) | ported thin, from the retail recording (`recordings/client/raw/creation-armor-in-game-setting-unfiltered.jsonl` seq 490: `6f000000 b3020000 06000000 00000000`). Sent nowhere else: an equip still sends the whole `0x006E` |
 | `0x0070` | hard mode | `hard_mode_unlocked` | same | ported |
 | `0x008A` | cartography data (262) | `cartography_data` | `instance_packets::cartography_data` | ported |
 | `0x008B` | map init start (14) | `map_init_start` | `instance_packets::map_init_start` | ported |
@@ -194,13 +197,14 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 | `0x00DB` | unlocked skills (518) | `update_unlocked_skills` | empty, as ASURA sends it | ported |
 | `0x00E9` | the progress record (62) | `character_update_factions` | same | ported |
 | `0x00EA`-`0x00ED` | the four faction caps | `faction_max` | same | ported |
-| `0x00EF` | visibility flags | `char_visibility_flags` | same | ported |
+| `0x00EF` | visibility flags | `char_visibility_flags`, always `FFFFFFFF, FFFFFFFF` | the character's display-mode byte under the mask `FF` at a load, and the echo of a `0x8057` | ported. The retail load is `FF, FF` (`recordings/client/raw/creation-armor-head-hidden-unfiltered.jsonl` seq 2383), not ASURA's `FFFFFFFF, FFFFFFFF`; a stored byte goes out in the same shape, as Rurik's `load_message` |
 | `0x00F0` | initial effects | `agent_initial_effects` | same | ported |
 | `0x00F2` | instance loaded | `instance_loaded` | same | ported |
 | `0x00F3` | title rank data (34) | none: the row only (`packets.rs:771`) | `title_packets::rank_data`, out of `Titles.rs:371` during the load | ported thin, from the retail and Preforged recordings (section 5, the title block) |
 | `0x00F4` | title rank display (8) | none: the row only (`packets.rs:772`) | `title_packets::rank_display`, after the load and on `0x8058`/`0x8059` (`WorldSession.rs:1525,1567,1577`) | ported thin, from the retail and Preforged recordings (section 5, the title block) |
 | `0x00F6` | title track info (82) | none: the row only (`packets.rs:774`) | `title_packets::track_info`, out of `Titles.rs:379` during the load | ported thin, from the retail and Preforged recordings (section 5, the title block) |
 | `0x013E` | item moved to a location | `item_move_to_location` | same | ported |
+| `0x014B` | `GAME_SMSG_ITEM_CHANGE_LOCATION` (11) | none: the row only | `item_packets::item_change_location`, which moves each piece of a creation screen's new set from the backpack's slot 0 to its slot of the equipped bag | ported thin, from the retail recording (`recordings/client/raw/creation-armor-head-color-unfiltered.jsonl` seq 1205: `4b010000 0d000000 f3040000 22000000 02000000`). Sent nowhere else |
 | `0x013F` | inventory create bag | `inventory_create_bag` | same | ported |
 | `0x0141` | gold | `update_gold_storage` | same | ported |
 | `0x0144` | item stream create | `item_stream_create` | same | ported |
@@ -213,7 +217,8 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 | `0x017C` | instance load head | `instance_load_head(pve, pvp)` | `(0x3F, 0x3F)` - ASURA's own default | ported |
 | `0x017D` | the player's name | `instance_load_player_name` | same | ported |
 | `0x0186` | player-data start | `instance_player_data_start` | same | ported |
-| `0x0188` | creation success (1092) | `char_creation_success` | same | ported: the u16 after the name is a **map id** - the capture carries the creation instance `416` there, and two lineages name the field `mapId`; OpenTyria's `0x2211` is its own filler (`docs/game-rules.md` E231) |
+| `0x015B` | unnamed in the table (10): an item id, twice | none: the row only | `item_packets::item_creation_redyed`, the third message of the answer to a creation-screen colour (`0x8084`) | ported thin, from the retail recording (`recordings/client/feature/character_creation/creation-armor-color-20261124.jsonl` seq 1275: `5b010000 20000000 20000000`). What the client does with it is not known; it is sent because the retail server sends it |
+| `0x0188` | creation success (1092) | `char_creation_success` | same; its settings block carries **no armour pieces** (`CharacterHandler.rs`), where the login's `0x0007` now does and the retail server's `0x0188` does too (`recordings/client/raw/creation-armor-head-color-unfiltered.jsonl` seq 1298, five pieces with the chosen colours, each five bytes - file id, colours, a zero, and the item's dye tint - in slot order 4, 2, 6, 3, 5, which is how `0x0007` now sends them; the same message in `creation-armor-color-20261124.jsonl` lost those bytes to the cleaning of 2026-11-24). Not ported for the pieces. The projects disagree: GWPS builds the whole block (`GameSrv.c:1788-1798`), the ASURA test fork sends an empty one (`asura-world/src/creation.rs:476`) | ported: the u16 after the name is a **map id** - the capture carries the creation instance `416` there, and two lineages name the field `mapId`; OpenTyria's `0x2211` is its own filler (`docs/game-rules.md` E231) |
 | `0x0189` | creation start | `char_creation_start` | same | ported |
 | `0x018A` | player-data done | `instance_player_data_done` | same | ported |
 | `0x018B` | creation error | `char_creation_error` | same | **ported thin**: the body is a `u32` code, and the code this tree sends is `0x0106` (262), which appears in no reading of the client's own create-error table - 25 "already have a character with the name", 29 "already in use", 31 "not permitted" per the binary read, 39 per a second client-table read (`docs/game-rules.md` E230) - so a refused name shows the client's generic network error instead of the name message |
@@ -230,8 +235,8 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 | `0x01D3` | party create | `party_create` | same | ported |
 | `0x01D4` | party member stream end | `party_member_stream_end` | same | ported |
 
-**Score: 79 of ASURA's ported or ported thin, 0 missing; 4 more ported thin from recordings
-(`0x00B5`, `0x00F3`, `0x00F4`, `0x00F6`).**
+**Score: 79 of ASURA's ported or ported thin, 0 missing; 7 more ported thin from recordings
+(`0x006F`, `0x00B5`, `0x00F3`, `0x00F4`, `0x00F6`, `0x014B`, `0x015B`).**
 
 ### 4.3 Builders ASURA has that no message above covers
 
@@ -249,7 +254,7 @@ sniffer's; this tree has both forms of each movement builder (`agent_packets`, 4
 |---|---|---|---|
 | the greeting before the login | `session_info` then `heartbeat` | same | ported |
 | the login answer | one `character_info` per character, `account_settings`, `friend_stream_end`, `account_info`, `request_response` (`asura-auth/src/lib.rs:669-746`) | same five, same order | ported |
-| the creation conversation | `0x8089` -> the player-data block; `0x808A` -> the PvP half; `0x8060` -> removals, `0x00DB`, `0x00B7`, the new set; `0x808B` -> `0x0188` + `0x0099` (`creation.rs:190-519`) | same | ported, with one message neither tree answers: after each `0x8060` the client sends seven `0x8084` (`{u8 equipSlot, u8 colour}`, slots `4, 2, 3, 6, 5, 0, 1`) carrying the armour colours it picked, and both trees ignore them - the created armour keeps the colours the equipment data names (`docs/game-rules.md` E226-E227) |
+| the creation conversation | `0x8089` -> the player-data block; `0x808A` -> the PvP half; `0x8060` -> removals, `0x00DB`, `0x00B7`, the new set; `0x808B` -> `0x0188` + `0x0099` (`creation.rs:190-519`) | same | ported, with the answer to `0x8060` taken from the retail server instead (`recordings/client/raw/creation-armor-head-color-unfiltered.jsonl` seq 1194-1225): the removals, `0x00B7`, `0x00DB`, and for each new piece `0x0161`, `0x015A` with the profession on screen, `0x013E` into the backpack's slot 0, `0x014B` to the equipped bag. ASURA and GWPS send `0x00DB` before `0x00B7` and add each piece to the equipped bag directly with no `0x015A`. Two things follow from the retail order: the creation backpack must be empty, so the two stacks the reference seeds there are removed from `config/World/Vanilla/creation/inventory.json` (the retail backpack is empty on the creation screen and on the new character, seq 10-660 and 1308-1333); and `0x00DB` still carries this tree's empty list where the retail server sends 520 bytes. And one message more than ASURA answers: after each `0x8060` the client sends seven `0x8084` (`{u8 equipSlot, u8 colour}`, slots `4, 2, 3, 6, 5, 0, 1`) carrying the armour colours it picked, and one more for every colour changed by hand. ASURA ignores them; this tree answers each as the retail server does and keeps the colour on the created character (3.2, row `0x8084`) |
 | the items ask | the stream, the bags and items, four weapon sets, the gold, four faction caps, the hard-mode flag, the character summary, the map, ready-for-spawn, the manifest (`item.rs:70`) | same, plus the reference's own `0x0196`-before-manifest order | ported |
 | the spawn ask | the entry point (`agent.rs:1219`, `map.rs:13-20`) | the same one frame | ported |
 | the players ask | 34 frames, in one order (`player.rs:382-388` for the party) | the same 34 in order, with the title definitions during load and the test display selection afterward | ported for the ASURA block |
@@ -270,11 +275,11 @@ sniffer's; this tree has both forms of each movement builder (`agent_packets`, 4
 | ... this tree handles as ASURA does | **35** |
 | ... this tree handles, ported thin | **2** (`0x8029`, `0x808B`) |
 | ... this tree does not handle | **0** |
-| messages this tree handles that ASURA does not | **4**: `0x8045`, `0x8058` and `0x8059` (from recordings, 3.2), and the district-count query `0x800B` on the auth connection, answered with that connection's `0x001A` (`authserver/src/Server/session.rs`, `QUERY_INSTANCE_COUNT`; in no table of section 3 or 4) |
+| messages this tree handles that ASURA does not | **6**: `0x8045`, `0x8057`, `0x8058`, `0x8059` and `0x8084` (from recordings, 3.2), and the district-count query `0x800B` on the auth connection, answered with that connection's `0x001A` (`authserver/src/Server/session.rs`, `QUERY_INSTANCE_COUNT`; in no table of section 3 or 4) |
 | messages ASURA emits (server -> client) | 87 |
 | ... this tree emits | **87** (8 auth, 79 game), one of them ported thin (`0x018B`) |
 | ... this tree does not emit | **0** |
-| messages this tree emits that ASURA does not have | 5: the district-count answer on the auth connection, and `0x00B5`, `0x00F3`, `0x00F4`, `0x00F6` (from recordings) |
+| messages this tree emits that ASURA does not have | 8: the district-count answer on the auth connection, and `0x006F`, `0x00B5`, `0x00F3`, `0x00F4`, `0x00F6`, `0x014B`, `0x015B` (from recordings) |
 | sequences | **13**: the 11 of ASURA's ported, none ported thin and none missing; the title block, ported thin from recordings; and the custom title text, which has no source |
 | the packet table | identical, 782 rows (682 game + 100 auth) |
 | `ASURA/crates/asura-world/src` | 35 files | all 35 have a verdict in 9: 28 ported (code or data), 4 this tree's arrangement, 3 ASURA's own harness |
@@ -514,8 +519,7 @@ keeps its traversal order, its tie-breaking and its quirks; the dump keeps its b
    `NoGraph`. `worldserver` never opens `Gw.dat`.
 
 No subject is queued after these three. The owner names the next one once what already exists is
-fixed (owner, 2026-11-23). Candidates this ledger already records, not a queue: `0x808B`'s unread `createFlags` (3.2), `0x018B`'s error code (4.2), the seven
-`0x8084` armour colours neither tree reads (5, the creation conversation), the missing reference
+fixed (owner, 2026-11-23). Candidates this ledger already records, not a queue: `0x808B`'s unread `createFlags` (3.2), `0x018B`'s error code (4.2), the missing reference
 client (2), the title block's earning and persistence (5), the custom titles feature, which the owner
 names as unfinished (5), and ASURA's three unported `map_data.rs` tests (7b, step 4).
 

@@ -157,6 +157,8 @@ pub struct Inventory {
 
 /// The bag a character wears things in: `BagType_Equipped`.
 const BAG_EQUIPPED: u8 = 2;
+/// The backpack: bag kind 1, the first bag the retail server creates (`recordings/client/raw/creation-armor-head-color-unfiltered.jsonl` seq 10).
+const BAG_BACKPACK: u8 = 1;
 
 impl Tables {
     /// Read the three record lists: the inventory, the profession sets and the equipped slots.
@@ -614,6 +616,12 @@ pub fn equipped_bag(tables: &Tables) -> Option<&Bag> {
     tables.bags.iter().find(|bag| bag.kind == BAG_EQUIPPED)
 }
 
+/// The backpack: the bag the retail server adds each piece of a creation screen's set to before it
+/// moves the piece to the equipped bag.
+pub fn backpack(tables: &Tables) -> Option<&Bag> {
+    tables.bags.iter().find(|bag| bag.kind == BAG_BACKPACK)
+}
+
 /// An item as `CREATE_NAMED_ITEM` carries it.
 pub fn named_item(item: &Item) -> item_packets::NamedItem {
     item_packets::NamedItem {
@@ -751,7 +759,7 @@ mod tests {
         let tables = tables();
         let (bags, items, sets) = tables.counts();
         assert_eq!(bags, 6, "the reference creates six bags");
-        assert_eq!(items, 9, "and nine items before a profession is chosen");
+        assert_eq!(items, 7, "and seven items before a profession is chosen: the reference has nine, two of them stacks in the backpack, which the retail creation screen leaves empty");
         assert_eq!(sets, 32, "thirty-two (campaign, profession) sets");
         let total: usize = tables.sets.iter().map(|set| set.items.len()).sum();
         assert_eq!(total, 179, "and a hundred and seventy-nine items between them");

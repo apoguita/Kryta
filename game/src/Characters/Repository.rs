@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use common::logging::{Log, LogLevel};
 use database::database::{DatabaseWorkerPool, Param};
 
-use crate::characters::{uuid_bytes, Character, CharacterSettings};
+use crate::characters::{uuid_bytes, ArmourPiece, Character, CharacterSettings, PIECE_SLOTS};
 use crate::creation::Inventory;
 
 /// `BagModelId_EquippedItems` (`GmInventory.h`): the bag whose slots are the nine worn items.
@@ -153,12 +153,28 @@ pub struct HeldItem {
 pub struct DatabaseCharacters {
     pool: Arc<Mutex<DatabaseWorkerPool>>,
     log: Log,
+    /// The bag a character wears things in, from the world's creation content: the login list's
+    /// settings block carries that bag's armour pieces. `None` is a caller that does not draw a
+    /// character list (the world's own item work), and then no pieces are read.
+    equipped_bag: Option<u16>,
 }
 
 impl DatabaseCharacters {
     /// A source that asks this pool.
     pub fn new(pool: Arc<Mutex<DatabaseWorkerPool>>, log: Log) -> Self {
-        Self { pool, log }
+        Self {
+            pool,
+            log,
+            equipped_bag: None,
+        }
+    }
+
+    /// The bag a character wears things in, when the caller knows it (the login program's
+    /// `EquippedBag` setting). The login list needs it: without it every character is
+    /// sent with no armour pieces and the client draws them all naked at character select.
+    pub fn with_equipped_bag(mut self, bag: Option<u16>) -> Self {
+        self.equipped_bag = bag;
+        self
     }
 
     /// Every character of the account the portal identified, read as the list needs them.
@@ -539,6 +555,33 @@ impl DatabaseCharacters {
         }
     }
 
+    /// Give one of a character's items its dye colours.
+    ///
+    /// The creation screen's chosen colours are written this way, after the starting items
+    /// (`game/src/Handlers/CharacterHandler.rs`, the confirm). `false` means no such item row.
+    pub fn dye_item(&self, uuid: &str, item_id: u32, colors: u16) -> Result<bool, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "UPDATE \"item_instance\" SET \"dye_colors\" = $1::bigint WHERE \"character_uuid\" = $2 AND \"item_id\" = $3::bigint RETURNING 1",
+                vec![
+                    Param::Integer(i64::from(colors)),
+                    Param::Text(uuid.to_string()),
+                    Param::Integer(i64::from(item_id)),
+                ],
+            ),
+            Err(_) => {
+                return Err(
+                    "the character database pool is poisoned; the item was not dyed".to_string(),
+                );
+            }
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Err(error)) => Err(format!("the item was not dyed: {error}")),
+            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+        }
+    }
+
     /// The preferences blob the character last uploaded, or `None` when it never uploaded one.
     ///
     /// The read a load makes: `GAME_SMSG_PREFERENCES_BLOB` (`0x00B5`) carries the blob back
@@ -574,6 +617,67 @@ impl DatabaseCharacters {
             .try_get(0)
             .map_err(|error| format!("column preferences: {error}"))?;
         hex.map(|hex| decode_hex(&hex)).transpose()
+    }
+
+    /// The display-mode byte the character last set, or `None` when it never set one
+    /// (`data/sql/base/db_characters/0008-character-visibility.sql`).
+    pub fn visibility_flags(&self, uuid: &str) -> Result<Option<u8>, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "SELECT \"visibility_flags\" FROM \"characters\" WHERE \"uuid\" = $1",
+                vec![Param::Text(uuid.to_string())],
+            ),
+            Err(_) => {
+                return Err(
+                    "the character database pool is poisoned; no visibility flags can be read"
+                        .to_string(),
+                );
+            }
+        };
+        let rows = match reply.recv() {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(error)) => return Err(format!("the visibility flags cannot be read: {error}")),
+            Err(_) => {
+                return Err(
+                    "the character database answered no query: it is shutting down".to_string(),
+                );
+            }
+        };
+        let Some(row) = rows.first() else {
+            return Ok(None);
+        };
+        let flags: Option<i64> = row
+            .try_get(0)
+            .map_err(|error| format!("column visibility_flags: {error}"))?;
+        Ok(flags.map(|flags| (flags & 0xFF) as u8))
+    }
+
+    /// Keep the display-mode byte a `0x8057` left the character with, and with it the headgear's
+    /// bit of the character list (`helm_status`), which the client packs from the same byte
+    /// (`characters::visibility::helm_status`). `false` means no row matched.
+    pub fn record_visibility_flags(&self, uuid: &str, flags: u8) -> Result<bool, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "UPDATE \"characters\" SET \"visibility_flags\" = $1::bigint, \"helm_status\" = $2::bigint \
+                 WHERE \"uuid\" = $3 RETURNING 1",
+                vec![
+                    Param::Integer(i64::from(flags)),
+                    Param::Integer(i64::from(crate::characters::visibility::helm_status(flags))),
+                    Param::Text(uuid.to_string()),
+                ],
+            ),
+            Err(_) => {
+                return Err(
+                    "the character database pool is poisoned; the visibility flags were not recorded"
+                        .to_string(),
+                );
+            }
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Err(error)) => Err(format!("the visibility flags were not recorded: {error}")),
+            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+        }
     }
 
     /// Keep the preferences blob the client uploaded for this character (`0x0045`).
@@ -1096,6 +1200,53 @@ impl DatabaseCharacters {
         Ok(rows.iter().map(|row| row.get::<usize, i64>(0) as u32).collect())
     }
 
+    /// The five armour pieces the character-list settings block carries: the equipped bag's slots
+    /// 4, 2, 6, 3 and 5, the order the retail server lists them in (`recordings/client/raw/creation-armor-head-color-unfiltered.jsonl` seq 1298: files `d187`,
+    /// `01f1`, `01f2`, `01f3`, `01f0`, which seq 1202-1221 put in slots 4, 2, 6, 3 and 5). GWPS and
+    /// the ASURA test fork list slots 2..=6 in number order.
+    ///
+    /// Ported from `research/Kryta-aeratemark/game/src/Characters/Repository.rs:1480-1521`, which is
+    /// aeratemark's port of the ASURA test fork's `settings`
+    /// (`research/ASURA_testfork/crates/asura-db/src/game.rs:229-241`) and `item_in_equipped_slot`
+    /// (`asura-db/src/inventory.rs:145-156`). The slot numbers are GWPS's `EquippedItemSlot`
+    /// (`GmInventory.h`): 2 body, 3 legs, 4 head, 5 boots, 6 gloves; this tree's
+    /// `config/World/Vanilla/creation/worn_slots.json` names the same cells by kind. The file id is
+    /// cut to 16 bits as GWPS cuts it (`research/OpenTyria/code/OpenTyria/GameSrv.c:1740`), and a
+    /// piece that is not worn is left out, not sent as zeros (`GmChar.c:24-31`).
+    fn pieces_worn_by(&self, uuid: &str) -> Vec<ArmourPiece> {
+        let Some(bag_id) = self.equipped_bag else {
+            return Vec::new();
+        };
+        let held = match self.items_of(uuid) {
+            Ok(held) => held,
+            Err(error) => {
+                // A list whose armour could not be read still arrives: the client gets the
+                // character undressed rather than no character at all.
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("Cannot read the armour of {uuid} for the character list: {error}"),
+                );
+                return Vec::new();
+            }
+        };
+        let mut pieces = Vec::with_capacity(PIECE_SLOTS);
+        for slot in [4u8, 2, 6, 3, 5] {
+            let Some(item) = held
+                .iter()
+                .find(|item| item.bag_id == bag_id && item.slot == slot)
+            else {
+                continue;
+            };
+            pieces.push(ArmourPiece {
+                file_id: (item.file_id & 0xFFFF) as u16,
+                colors: item.dye_colors,
+                tint: item.dye_tint,
+            });
+        }
+        pieces
+    }
+
     /// One row, as the list reads it.
     fn character(&self, row: &postgres::Row) -> Option<Character> {
         let uuid_text: String = row.get("uuid");
@@ -1131,10 +1282,11 @@ impl DatabaseCharacters {
                 is_pvp: row.get("is_pvp"),
                 secondary_profession: secondary as u8,
                 helm_status: helm as u8,
-                // The armour pieces are the equipped bag's rows, which this list does not read:
-                // every character is listed with five empty slots, which is what GWPS's own
-                // record sends for a character wearing nothing.
-                pieces: Vec::new(),
+                // The armour pieces are the equipped bag's rows, derived on every read as the
+                // ASURA test fork derives them
+                // (`research/ASURA_testfork/crates/asura-db/src/game.rs:229-241`), not kept on the
+                // character row as GWPS keeps them.
+                pieces: self.pieces_worn_by(&uuid_text),
             },
         })
     }
@@ -1264,6 +1416,60 @@ mod tests {
             "the list carries a whole settings block, whatever the character wears"
         );
 
+        // The armour the login list draws: the equipped bag's five garment slots, derived from the
+        // item rows on every read. A character whose rows name pieces must not be sent to character
+        // select naked (`research/Kryta-aeratemark/game/src/Characters/Repository.rs:1659-1721`).
+        assert!(
+            characters[0].settings.pieces.is_empty(),
+            "a source that was not told the equipped bag reads no pieces"
+        );
+        // Bag 5: the equipped bag of `config/World/Vanilla/creation/inventory.json`, and the default of
+        // the login program's `EquippedBag`.
+        let equipped = 5u16;
+        {
+            let mut pool = pool.lock().unwrap();
+            pool.query_with(
+                "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1",
+                &[&uuid],
+            )
+            .unwrap();
+            // Slots 6, 2 and 5 only, written out of order: the list is in the retail slot order, and a
+            // slot with nothing in it is left out, not sent as an empty piece.
+            for (slot, file_id) in [(6u8, 0x5678u32), (2, 0x1_1234), (5, 0x4567)] {
+                pool.query_with(
+                    "INSERT INTO \"item_instance\" (\"character_uuid\", \"file_id\", \"dye_colors\", \"item_id\", \"bag_id\", \"slot\")                      VALUES ($1, $2, $3, $4, $5, $6)",
+                    &[
+                        &uuid,
+                        &i64::from(file_id),
+                        &11i64,
+                        &(1000 + i64::from(slot)),
+                        &i64::from(equipped),
+                        &i64::from(slot),
+                    ],
+                )
+                .unwrap();
+            }
+        }
+        let dressed = DatabaseCharacters::new(Arc::clone(&source.pool), Log::new())
+            .with_equipped_bag(Some(equipped));
+        assert_eq!(
+            dressed.for_account(account)[0].settings.pieces,
+            vec![
+                ArmourPiece { file_id: 0x1234, colors: 11, tint: 0 },
+                ArmourPiece { file_id: 0x5678, colors: 11, tint: 0 },
+                ArmourPiece { file_id: 0x4567, colors: 11, tint: 0 },
+            ],
+            "the worn pieces, in the retail order of slots 4, 2, 6, 3, 5, the file id cut to 16 bits"
+        );
+        {
+            let mut pool = pool.lock().unwrap();
+            pool.query_with(
+                "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1",
+                &[&uuid],
+            )
+            .unwrap();
+        }
+
         // And a different account's characters are not in it.
         assert!(source.for_account("00000000-0000-0000-0000-000000000000").is_empty());
 
@@ -1296,6 +1502,57 @@ mod tests {
         assert_eq!(encode_hex(&[0x05, 0x00, 0x3c]), "05003c");
         assert!(decode_hex("abc").is_err());
         assert!(decode_hex("zz").is_err());
+    }
+
+    #[test]
+    #[ignore = "needs the character database"]
+    fn a_characters_visibility_flags_are_stored_and_read_back() {
+        let _serial = database::updater::apply::test_lock("characters");
+        let Some(source) = source() else {
+            panic!("the character database is not reachable");
+        };
+        let account = "00000000-0000-0000-0000-00000000C10E";
+        let uuid = "00000000-0000-0000-0000-0000000000AD";
+        let pool = Arc::clone(&source.pool);
+        {
+            let mut pool = pool.lock().unwrap();
+            pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid])
+                .unwrap();
+            pool.query_with(
+                "INSERT INTO \"characters\" (\"uuid\", \"account_uuid\", \"name\", \"appearance\", \"primary_profession\", \"unlocked_professions\", \"campaign\", \"level\") \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                &[&uuid, &account, &"Visible One", &0xABCDEFi64, &1i64, &2i64, &0i64, &1i64],
+            )
+            .unwrap();
+        }
+
+        assert_eq!(source.visibility_flags(uuid).expect("read"), None);
+        // Hide in Towns and Outposts, as the retail client sent it (`recordings/client/raw/creation-armor-in-game-setting-unfiltered.jsonl` seq 1027: value 4 under
+        // the headgear's mask) applied to the default byte.
+        assert!(source.record_visibility_flags(uuid, 0xF7).expect("stored"));
+        assert_eq!(source.visibility_flags(uuid).expect("read"), Some(0xF7));
+        let listed = source
+            .list()
+            .into_iter()
+            .find(|character| character.name == "Visible One")
+            .expect("the character is listed");
+        assert_eq!(listed.settings.helm_status, 0, "hidden in towns, so hidden in the list");
+        assert!(source.record_visibility_flags(uuid, 0xFF).expect("stored"));
+        let listed = source
+            .list()
+            .into_iter()
+            .find(|character| character.name == "Visible One")
+            .expect("the character is listed");
+        assert_eq!(listed.settings.helm_status, 1);
+        assert!(
+            !source
+                .record_visibility_flags("00000000-0000-0000-0000-0000000000AE", 0xFF)
+                .expect("answered")
+        );
+        pool.lock()
+            .unwrap()
+            .query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid])
+            .unwrap();
     }
 
     #[test]
