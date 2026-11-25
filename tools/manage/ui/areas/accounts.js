@@ -40,6 +40,7 @@
         { label: "State", sort: function (row) { return row.active ? 0 : 1; }, value: stateBadge },
         { label: "EULA", value: eulaText },
         { label: "Players", num: true, sort: function (row) { return row.players; }, value: function (row) { return row.players; } },
+        { label: "Slots", num: true, sort: function (row) { return row.character_slots; }, value: function (row) { return row.character_slots; } },
         { label: "", class: "actions", value: function (row) { return ui.link("Open", "#/accounts/" + row.id, "small"); } }
       ],
       onRow: function (row) { Kryta.go("#/accounts/" + row.id); },
@@ -87,7 +88,10 @@
       fields: [
         { name: "username", label: "Login name", value: account.username, full: true },
         { name: "user_id", label: "Portal user id", value: account.user_id },
-        { name: "token", label: "Portal token", type: "password", placeholder: "leave blank to keep the current one" }
+        { name: "token", label: "Portal token", type: "password", placeholder: "leave blank to keep the current one" },
+        { name: "character_slots", label: "Character slots (2 to 32)", type: "number", min: 2, max: 32,
+          value: account.character_slots,
+          hint: "How many characters this account can hold. Takes effect at the account's next login." }
       ],
       onSubmit: async function (values) {
         await api.post(base + "/update", values);

@@ -1279,12 +1279,49 @@ impl AuthSession {
         // `research/Kryta-aeratemark/authserver/src/Server/session.rs:1234-1246`).
         let account_settings = self.settings_for_login(peer, &login.user_id);
 
+        // The account's number of character slots, which its row states
+        // (`data/sql/base/db_auth/account_character_slots.sql`). A session with no account table,
+        // or a read that fails, answers with the research servers' own six and says so: one login
+        // with fewer slots shown rather than no login.
+        let reference = crate::server::login_reply::CHARACTER_SLOTS_DEFAULT;
+        let character_slots = match self.accounts.as_ref().map(|accounts| {
+            accounts.character_slots_for_user(&game::characters::uuid_text(&login.user_id))
+        }) {
+            Some(Ok(Some(slots))) => slots.clamp(
+                game::accounts::CHARACTER_SLOTS_MIN,
+                game::accounts::CHARACTER_SLOTS_MAX,
+            ),
+            Some(Ok(None)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.authserver",
+                    format!("Connection from {peer}: no account row states this login's character slots; it is told {reference}."),
+                );
+                reference
+            }
+            Some(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.authserver",
+                    format!("Connection from {peer}: the account's character slots could not be read ({error}); it is told {reference}."),
+                );
+                reference
+            }
+            None => reference,
+        };
+        self.log.out(
+            LogLevel::Debug,
+            "server.authserver",
+            format!("Connection from {peer}: the account is told it has {character_slots} character slots."),
+        );
+
         let frames = crate::server::login_reply::reply_frames(
             login.request,
             login.user_id,
             &characters,
             eula_accepted,
             &account_settings,
+            character_slots,
         );
         self.account = Some(login.user_id);
         // The login's number: the time it happened, in microseconds, so a later login has a larger

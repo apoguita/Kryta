@@ -37,10 +37,10 @@ pub struct Manage {
     pub(crate) worlds: Arc<shared::worlds::WorldList>,
     /// The databases whose updater records the schema area shows.
     pub(crate) schemas: Vec<DatabaseSchema>,
-    /// The world program's settings file, shown and never rewritten. Its `WorldPack` names the
+    /// The world program's settings file, shown and changed by the settings area. Its `WorldPack` names the
     /// content the world serves.
     pub(crate) world_config: Option<String>,
-    /// The login program's settings file, shown and never rewritten.
+    /// The login program's settings file, shown and changed by the settings area.
     pub(crate) auth_config: Option<String>,
     /// The portable graph cache the navigation area inspects and updates.
     pub(crate) path_graphs_file: String,

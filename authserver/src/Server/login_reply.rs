@@ -81,6 +81,7 @@ pub fn reply_frames(
     characters: &[ReplyCharacter],
     eula_accepted: u8,
     account_settings: &[u8],
+    character_slots: u16,
 ) -> Vec<Vec<u8>> {
     let mut frames = Vec::new();
 
@@ -89,7 +90,13 @@ pub fn reply_frames(
     }
     frames.push(account_settings_frame(request, account_settings));
     frames.push(friend_stream_end(request));
-    frames.push(account_info(request, account, characters.first(), eula_accepted));
+    frames.push(account_info(
+        request,
+        account,
+        characters.first(),
+        eula_accepted,
+        character_slots,
+    ));
     frames.push(request_response(request, GM_ERROR_NONE));
 
     frames
@@ -136,22 +143,47 @@ fn friend_stream_end(request: u32) -> Vec<u8> {
     frame(0x0014, body)
 }
 
+/// The slots every account has before feature 1 adds any: the client's own `+ 2`
+/// (`research/Eden/docs/re/char-select.md:316-317`).
+pub const CHARACTER_SLOTS_FREE: u16 = 2;
+/// The slots GWPS's feature list gives an account: its count of 4, and the client's 2.
+pub const CHARACTER_SLOTS_DEFAULT: u16 = 6;
+
 /// `AUTH_SMSG_ACCOUNT_INFO` (`0x0011`): the account, the selected character, and the feature list.
 ///
 /// Every literal is GWPS's, and the last `u32` is on the wire - a client that is not sent it reads
 /// the next message's header in its place and desynchronises.
+///
+/// The one value that is not a literal is the count of feature 1, which is how many character slots
+/// the account has: the client's character select pads its list to
+/// `NetGameClientGetFeatureCount(1) + 2` entries (`research/Eden/docs/re/char-select.md:316-317`), so
+/// GWPS's count of 4 is the six slots a client shows. The account's row states its slots
+/// (`account.character_slots`), and the count sent is that less [`CHARACTER_SLOTS_FREE`].
 fn account_info(
     request: u32,
     account: [u8; 16],
     selected: Option<&ReplyCharacter>,
     eula_accepted: u8,
+    character_slots: u16,
 ) -> Vec<u8> {
     /// GWPS's `h000E`.
     const H000E: [u8; 8] = [0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
     /// GWPS's `h0016`: which campaigns the account owns.
     const H0016: [u8; 8] = [0x80, 0x3F, 0x42, 0x00, 0x83, 0x00, 0x0C, 0x02];
-    /// GWPS's feature list; its third `u16` is the account's character slots.
-    const FEATURES: [u8; 8] = [0x01, 0x00, 0x04, 0x00, 0x57, 0x00, 0x01, 0x00];
+    // GWPS's feature list (`research/OpenTyria/code/OpenTyria/AuthSrv.c:515`,
+    // `01 00 04 00 57 00 01 00`): two pairs of a feature id and its count. The first pair's count
+    // is the one the setting replaces.
+    let slots_feature = character_slots.saturating_sub(CHARACTER_SLOTS_FREE).to_le_bytes();
+    let features: [u8; 8] = [
+        0x01,
+        0x00,
+        slots_feature[0],
+        slots_feature[1],
+        0x57,
+        0x00,
+        0x01,
+        0x00,
+    ];
 
     let mut body = Vec::with_capacity(79);
     body.extend_from_slice(&request.to_le_bytes());
@@ -162,8 +194,8 @@ fn account_info(
     body.extend_from_slice(&account);
     body.extend_from_slice(&selected.map(|character| character.id).unwrap_or([0u8; 16]));
     body.extend_from_slice(&8u32.to_le_bytes()); // h003E
-    body.extend_from_slice(&(FEATURES.len() as u16).to_le_bytes());
-    body.extend_from_slice(&FEATURES);
+    body.extend_from_slice(&(features.len() as u16).to_le_bytes());
+    body.extend_from_slice(&features);
     body.push(eula_accepted);
     body.extend_from_slice(&3u32.to_le_bytes()); // unk5
 
@@ -311,7 +343,7 @@ mod tests {
 
     #[test]
     fn no_characters_answers_five_messages_of_the_recorded_sizes() {
-        let frames = reply_frames(7, account(), &[], 0, &settings());
+        let frames = reply_frames(7, account(), &[], 0, &settings(), CHARACTER_SLOTS_DEFAULT);
 
         // Nothing per character, then settings, friend stream end, account info, response.
         assert_eq!(frames.len(), 4);
@@ -326,7 +358,7 @@ mod tests {
 
     #[test]
     fn the_headers_are_the_recorded_ones_in_order() {
-        let frames = reply_frames(7, account(), &[], 0, &settings());
+        let frames = reply_frames(7, account(), &[], 0, &settings(), CHARACTER_SLOTS_DEFAULT);
         let headers: Vec<u16> = frames
             .iter()
             .map(|frame| u16::from_le_bytes([frame[0], frame[1]]))
@@ -344,7 +376,7 @@ mod tests {
             name: "Asura".to_string(),
             settings: vec![0u8; game::characters::CHARACTER_SETTINGS_LEN],
         };
-        let frames = reply_frames(7, account(), &[character], 0, &settings());
+        let frames = reply_frames(7, account(), &[character], 0, &settings(), CHARACTER_SLOTS_DEFAULT);
         assert_eq!(frames.len(), 5);
         assert_eq!(frames[0][..2], [0x07, 0x00], "character info first");
         assert_eq!(frames[0].len(), 102, "the trace's own size");
@@ -360,7 +392,7 @@ mod tests {
             name: "A".to_string(),
             settings: vec![0u8; game::characters::CHARACTER_SETTINGS_LEN],
         };
-        for frame in reply_frames(0xDEAD_BEEF, account(), &[character], 0, &settings()) {
+        for frame in reply_frames(0xDEAD_BEEF, account(), &[character], 0, &settings(), CHARACTER_SLOTS_DEFAULT) {
             let request = u32::from_le_bytes([frame[2], frame[3], frame[4], frame[5]]);
             assert_eq!(request, 0xDEAD_BEEF);
         }
@@ -446,8 +478,14 @@ mod tests {
         #[test]
         fn the_account_info_starts_with_the_traced_twenty_four_bytes() {
             // 11 00 | 01 00 00 00 | 00 00 00 00 | 04 00 00 00 | 3F 00 00 00 00 00 00 00 | 80 3F
-            let frame = account_info(REQUEST, [0x11; 16], None, 0);
+            let frame = account_info(REQUEST, [0x11; 16], None, 0, CHARACTER_SLOTS_DEFAULT);
             assert_eq!(frame.len(), 81);
+            // The feature list is GWPS's own eight bytes at the default, and only the count of
+            // feature 1 moves with the setting: 32 slots is a count of 30.
+            assert_eq!(hex(&frame[68..76]), "01 00 04 00 57 00 01 00");
+            let many = account_info(REQUEST, [0x11; 16], None, 0, 32);
+            assert_eq!(hex(&many[68..76]), "01 00 1E 00 57 00 01 00");
+            assert_eq!(many.len(), 81);
             assert_eq!(
                 hex(&frame[..24]),
                 "11 00 01 00 00 00 00 00 00 00 04 00 00 00 3F 00 00 00 00 00 00 00 80 3F"

@@ -67,11 +67,11 @@ No function is longer than 60 lines.
 | overview | `#/overview` | `GET /api/v1/overview` - the counts and the "needs attention" list (recordings unsanitised or not indexed, schema files changed or new, characters with unsound item rows). The page shows the services and the world's status beside it, from their own areas. |
 | services | `#/services` | `GET /api/v1/services`; `POST /api/v1/services/{name}/restart`; `POST /api/v1/services/{name}/stop`; `POST /api/v1/services/stop-all`. Refreshes every four seconds. |
 | console | `#/console` | `GET /api/v1/console/operations` (the world's `world.operations`, parsed into rows); `GET /api/v1/console/status` (`world.status`); `POST /api/v1/console/run`. The form is built from the operation's own argument names; when a line of the list cannot be parsed, the free `name=value` area is offered instead. |
-| accounts | `#/accounts`, `#/accounts/{id}` | `GET /api/v1/accounts`; `POST /api/v1/accounts`; `GET /api/v1/accounts/{id}`; `GET /api/v1/accounts/{id}/token`; `POST /api/v1/accounts/{id}/update`, `/active`, `/eula`, `/delete` |
+| accounts | `#/accounts`, `#/accounts/{id}` | `GET /api/v1/accounts`; `POST /api/v1/accounts`; `GET /api/v1/accounts/{id}`; `GET /api/v1/accounts/{id}/token`; `POST /api/v1/accounts/{id}/update`, `/active`, `/eula`, `/delete`. The update also carries `character_slots`: how many character slots the account has (2 to 32; an account is created with 6) |
 | players | `#/players`, `#/players/{uuid}` | `GET /api/v1/players`; `POST /api/v1/players`; `GET /api/v1/players/{uuid}`; `POST /api/v1/players/{uuid}/rename`, `/level`, `/delete` |
 | content | `#/content/{maps,creation,titles,instances,worlds}` | `GET /api/v1/content/maps`, `/creation`, `/titles`, `/instances`, `/worlds` |
 | navigation | `#/navigation` | `GET /api/v1/navigation`; `POST /api/v1/navigation/dump` |
-| settings | `#/settings` | `GET /api/v1/settings` |
+| settings | `#/settings` | `GET /api/v1/settings`; `POST /api/v1/settings/{program}/set` (`world` or `login`, with a `key` and a `value`). Each row has a Change button when its value is one number, flag or text and is not a database connection string. A setting the program's `.dist` file states and its own file does not is listed with the `.dist`'s value, marked "default, not in the file"; saving it adds it to the file with its `doc`. A change rewrites only the value's characters, is read back before it is written, and takes effect when the service is restarted. The panel does not know a setting's limits: the program refuses to start on a value it does not accept. |
 | schema | `#/schema` | `GET /api/v1/schema` |
 | recordings | `#/recordings/{client,server,library}` | `GET /api/v1/recordings`; `GET /api/v1/recordings/preflight`; `GET /api/v1/recordings/describe?path=`; `POST /api/v1/recordings/index` |
 
@@ -156,13 +156,13 @@ committed index was not changed; the line it builds is covered by a test).
 | area | state |
 |---|---|
 | administrator login (`docs/decisions/0013-the-admin-identity-is-a-file.md`) | not built; the token is the only gate |
-| editing settings and content | read-only everywhere; nothing in the tree writes a settings file or a `config/` file |
+| editing content | read-only; nothing in the tree writes a `config/` file. Of the settings, lists (the loggers and appenders), the database connection strings and a setting inside a section the file lacks are still changed in the file (owner, 2026-11-24: the panel changes a program's settings) |
 | logs and monitoring | not built; the supervisor keeps a 30-line tail per service and does not expose it |
 | starting a stopped service | the supervisor has no start verb; `restart` starts a stopped service |
 | online players, kick, announcements | not built; the world registers 8 operations, mostly status and exit |
 | items, unlocks, gold, titles of a player | read-only |
 | comparing two recordings | not built; `tools/capture/diff.py` is run by hand |
-| the server capture driven from the panel | instructions only, until the panel may change a setting |
+| the server capture driven from the panel | instructions only; the panel can now change `Network.Trace`, and the loggers it needs are lists, which it does not edit |
 | the server's own character creation | the panel still has its own (below) |
 
 ## Adding an area
@@ -252,8 +252,7 @@ node; and in `ui`: `table`, `form`, `formModal`, `modal`, `confirm`, `drawer`, `
 `head({crumb, sub, actions})`, `every(ms, fn)`, `reload()` and `route` (`parts`, `query`). An area
 may also give `count` (the number beside its menu entry) and `find` (entries for the palette).
 
-The smallest real area is `settings`: 54 lines of Rust before its test, and 40 lines of script;
-`schema` is 32 lines of script.
+The smallest real area is `schema`: 89 lines of Rust before its test, and 31 lines of script.
 
 The tests in `areas/mod.rs` fail on an area that declares no route, a route outside its area's
 prefix, two routes that could answer the same address, an area registered twice, and a script that

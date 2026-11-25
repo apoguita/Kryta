@@ -32,11 +32,21 @@ pub struct Account {
     pub eula: i64,
     /// Whether the account may start a new portal login.
     pub active: bool,
+    /// The character slots this account has; an account is created with 6
+    /// (`data/sql/base/db_auth/account_character_slots.sql`).
+    pub character_slots: u16,
 }
 
-const SELECT_ALL: &str = "SELECT \"id\"::bigint, \"username\", \"user_id\", \"token\", \"eula\"::bigint, \"active\" FROM \"account\" ORDER BY \"id\"";
+/// The fewest character slots an account can be told it has: the client adds 2 of its own to the
+/// count it is sent (`research/Eden/docs/re/char-select.md:316-317`), so fewer cannot be said.
+pub const CHARACTER_SLOTS_MIN: u16 = 2;
+/// The most character slots an account may be given (owner, 2026-11-24: "we can hold up to 32
+/// characters").
+pub const CHARACTER_SLOTS_MAX: u16 = 32;
 
-const SELECT_ONE: &str = "SELECT \"id\"::bigint, \"username\", \"user_id\", \"token\", \"eula\"::bigint, \"active\" FROM \"account\" WHERE \"username\" = $1";
+const SELECT_ALL: &str = "SELECT \"id\"::bigint, \"username\", \"user_id\", \"token\", \"eula\"::bigint, \"active\", \"character_slots\"::bigint AS \"character_slots\" FROM \"account\" ORDER BY \"id\"";
+
+const SELECT_ONE: &str = "SELECT \"id\"::bigint, \"username\", \"user_id\", \"token\", \"eula\"::bigint, \"active\", \"character_slots\"::bigint AS \"character_slots\" FROM \"account\" WHERE \"username\" = $1";
 
 /// An account is created with the identifiers the portal will issue for it, so a fresh account can log
 /// in without a second step.
@@ -150,6 +160,40 @@ impl DatabaseAccounts {
             vec![Param::Text(id.to_string()), Param::Text(active.to_string())],
         )?;
         Ok(!rows.is_empty())
+    }
+
+    /// Set how many character slots an account has, from [`CHARACTER_SLOTS_MIN`] to
+    /// [`CHARACTER_SLOTS_MAX`]; a number outside them is refused.
+    pub fn set_character_slots(&self, id: i64, slots: u16) -> Result<bool, String> {
+        if !(CHARACTER_SLOTS_MIN..=CHARACTER_SLOTS_MAX).contains(&slots) {
+            return Err(format!(
+                "an account has from {CHARACTER_SLOTS_MIN} to {CHARACTER_SLOTS_MAX} character slots, not {slots}"
+            ));
+        }
+        let rows = self.query(
+            "UPDATE \"account\" SET \"character_slots\" = $2::text::int WHERE \"id\" = $1::text::int RETURNING \"id\"::bigint",
+            vec![Param::Text(id.to_string()), Param::Text(slots.to_string())],
+        )?;
+        Ok(!rows.is_empty())
+    }
+
+    /// The character slots of the account the portal identified, or `None` when no row is keyed by
+    /// that identifier. This is the read the login answer makes for the count of feature 1 in
+    /// `AUTH_SMSG_ACCOUNT_INFO`.
+    pub fn character_slots_for_user(&self, user_id: &str) -> Result<Option<u16>, String> {
+        let rows = self.query(
+            "SELECT \"character_slots\"::bigint FROM \"account\" WHERE \"user_id\" = $1::text",
+            vec![Param::Text(user_id.to_string())],
+        )?;
+        let Some(row) = rows.first() else {
+            return Ok(None);
+        };
+        let slots: i64 = row
+            .try_get(0)
+            .map_err(|error| format!("column character_slots: {error}"))?;
+        u16::try_from(slots)
+            .map(Some)
+            .map_err(|_| format!("column character_slots: {slots} is not a slot count"))
     }
 
     /// Record the EULA version for the account the portal identified, by its own identifier.
@@ -292,6 +336,8 @@ fn account_of(row: &postgres::Row) -> Result<Account, String> {
         active: row
             .try_get("active")
             .map_err(|error| format!("column active: {error}"))?,
+        character_slots: u16::try_from(read_number("character_slots")?)
+            .map_err(|error| format!("column character_slots: {error}"))?,
     })
 }
 
@@ -381,6 +427,17 @@ mod tests {
         assert_eq!(row.username, name);
         assert_eq!(row.eula, 0, "a new account has accepted no EULA");
         assert!(row.active, "a new account can log in");
+
+        // Its character slots: six when it is created, then the number it is given.
+        let user = "00000000-0000-0000-0000-00000000AAA1";
+        assert_eq!(row.character_slots, 6);
+        assert_eq!(accounts.character_slots_for_user(user).expect("read"), Some(6));
+        assert!(accounts.set_character_slots(row.id, 32).expect("set"));
+        assert_eq!(accounts.character_slots_for_user(user).expect("read"), Some(32));
+        assert_eq!(accounts.find(name).expect("read").expect("there").character_slots, 32);
+        assert!(accounts.set_character_slots(row.id, 33).is_err(), "over the limit");
+        assert!(accounts.set_character_slots(row.id, 1).is_err(), "under it");
+        assert_eq!(accounts.character_slots_for_user("no-such-user").expect("read"), None);
 
         assert!(
             accounts

@@ -49,6 +49,7 @@ fn account_json(account: &game::accounts::Account, players: usize) -> Value {
         "token_masked": mask_token(&account.token),
         "eula": account.eula,
         "active": account.active,
+        "character_slots": account.character_slots,
         "players": players,
     })
 }
@@ -148,8 +149,24 @@ fn update(manage: &Manage, call: &Call) -> Reply {
         blank if blank.is_empty() => current.token,
         stated => stated,
     };
+    // How many character slots the account has.
+    let (least, most) = (
+        game::accounts::CHARACTER_SLOTS_MIN,
+        game::accounts::CHARACTER_SLOTS_MAX,
+    );
+    let slots = call
+        .text("character_slots")
+        .parse::<u16>()
+        .ok()
+        .filter(|slots| (least..=most).contains(slots))
+        .ok_or_else(|| bad(format!("Character slots are a number from {least} to {most}.")))?;
     match manage.accounts().update(id, &username, &user_id, &token) {
         Ok(true) => {
+            match manage.accounts().set_character_slots(id, slots) {
+                Ok(true) => {}
+                Ok(false) => return Err(missing(format!("No account has id {id}."))),
+                Err(error) => return Err(table_error(error)),
+            }
             manage.say(format!("account {id}: updated as {username}"));
             Ok(json!({ "id": id }))
         }
@@ -244,9 +261,11 @@ mod tests {
             token: "a-very-secret-portal-token".into(),
             eula: 0,
             active: true,
+            character_slots: 12,
         };
         let text = account_json(&account, 2).to_string();
         assert!(!text.contains("a-very-secret"));
         assert!(text.contains("\"players\":2"));
+        assert!(text.contains("\"character_slots\":12"));
     }
 }

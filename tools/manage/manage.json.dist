@@ -4,7 +4,7 @@
   "information": {
     "what this program is for": "everything an operator does without playing: accounts (create, edit, activate, the EULA version, delete), characters (create, rename, level, delete), the stack's services, the world's operations, and reading the content, the settings, the schema record and the recordings.",
     "why it is not part of a server program": "the two server programs serve clients, and a client-facing listener must not carry operator power. This is a third binary in tools/, and neither server knows it exists.",
-    "where it writes": "rows in kryta_login and kryta_characters, the path-graph cache (PathGraphsFile), and one appended line per indexed recording in recordings/index.jsonl. Content files and a program's own settings file are shown, never rewritten."
+    "where it writes": "rows in kryta_login and kryta_characters, the path-graph cache (PathGraphsFile), and one appended line per indexed recording in recordings/index.jsonl. It also writes one value at a time into a program's own settings file, from the settings page. Content files are shown, never rewritten."
   },
 
   "Bind": {
@@ -71,11 +71,11 @@
   },
   "WorldConfigFile": {
     "value": "worldserver/worldserver.json",
-    "doc": "The world program's own settings file, shown by the settings page and never written by this tool. Its WorldPack names the content the world serves, and its InventoryFile/EquipmentFile/EquippedSlotsFile are the creation lists a new character is made from. Relative to where the tool is started. Empty leaves the world half of the panel out."
+    "doc": "The world program's own settings file, shown by the settings page, which also changes one value of it at a time; worldserver.json.dist beside it is read for the settings the file does not state. Its WorldPack names the content the world serves, and its InventoryFile/EquipmentFile/EquippedSlotsFile are the creation lists a new character is made from. Relative to where the tool is started. Empty leaves the world half of the panel out."
   },
   "AuthConfigFile": {
     "value": "authserver/authserver.json",
-    "doc": "The login program's own settings file, shown by the settings page and never written by this tool. Relative to where the tool is started. Empty leaves that half of the page out."
+    "doc": "The login program's own settings file, shown by the settings page, which also changes one value of it at a time; authserver.json.dist beside it is read for the settings the file does not state. Relative to where the tool is started. Empty leaves that half of the page out."
   },
   "PathGraphsFile": {
     "value": "data/path-graphs.bin",

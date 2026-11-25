@@ -72,7 +72,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | the reference client (a test double that speaks the wire) | `client/reference_client.rs` (17 KB) | nothing | **missing**: no test proves a whole conversation against an independent speaker |
 | the trace of every byte | `client/trace.rs` | `shared/src/Network/` trace + logs | ported thin |
 
-## 3. Client -> server: the 37 messages ASURA's code handles, and 4 of this tree's
+## 3. Client -> server: the 37 messages ASURA's code handles, and 5 of this tree's
 
 ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which the table marks
 `Observed` (`dispatch.rs:73`), so its code handles 37.
@@ -97,7 +97,7 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 | `0x8035` | `AUTH_CMSG_ASK_SERVER_RESPONSE` | `lib.rs` | `session.rs` | ported |
 | `0x8038` | `AUTH_CMSG_PORTAL_ACCOUNT_LOGIN` | `lib.rs:572-680` | `session.rs` `answer_login`: the named character is recorded, or the account's first | ported |
 
-### 3.2 The game connection (22, and 4 of this tree's)
+### 3.2 The game connection (22, and 5 of this tree's)
 
 | header | message | ASURA handler | this tree | verdict |
 |---|---|---|---|---|
@@ -143,7 +143,7 @@ ASURA's table marks 36 rows `Handled`; its dispatch also answers `0x80C1`, which
 | `0x0003` | `AUTH_SMSG_REQUEST_RESPONSE` | `RequestResponse::frame` | `login_reply::request_response` | ported |
 | `0x0007` | `AUTH_SMSG_CHARACTER_INFO` (138) | `messages.rs:498`; the settings block's armour pieces as in aeratemark's fork (`research/Kryta-aeratemark/game/src/Characters/Repository.rs:1480-1521`), its port of the ASURA test fork (`research/ASURA_testfork/crates/asura-db/src/game.rs:229-241`) | `login_reply::character_info`; the block's five pieces are the equipped bag's slots 2..=6 (body, legs, head, boots, gloves), read from the item rows on every list (`Repository.rs`, `pieces_worn_by`), the file id cut to 16 bits and an unworn piece left out. The bag's id is the login program's `EquippedBag` setting (5), where aeratemark reads the world's creation inventory from the login program; this tree's login program reads no world content (`docs/decisions/0010-auth-and-the-game-library.md`), so the owner made it a setting on 2026-11-24. **Sources differ on where the pieces live**: GWPS keeps them as columns on the character row, written at the creation confirm (`research/OpenTyria/code/OpenTyria/GameSrv.c:1728-1760`); the bytes sent are the same. Until 2026-11-24 this tree sent every character with no pieces and the client drew them naked | ported |
 | `0x0009` | `AUTH_SMSG_GAME_SERVER_INFO` (42) | `messages.rs:690`, `host_for` | `login_reply::game_server_info`, `host_blob` | ported |
-| `0x0011` | `AUTH_SMSG_ACCOUNT_INFO` (275) | `messages.rs:593` | `login_reply::account_info` | ported (the EULA byte was ours until 2026-11-12) |
+| `0x0011` | `AUTH_SMSG_ACCOUNT_INFO` (275) | `messages.rs:593` | `login_reply::account_info`; the count of feature 1 in the feature list is the account's number of character slots less 2 (`account.character_slots`, 2 to 32; an account is created with 6, and it is changed on the account's page in the control panel), where ASURA and GWPS send a fixed 4. No setting states it. The client shows that count plus 2 slots (`research/Eden/docs/re/char-select.md:316-317`), so an account as it is created sends GWPS's own bytes | ported (the EULA byte was ours until 2026-11-12) |
 | `0x0014` | `AUTH_SMSG_FRIEND_STREAM_END` | `messages.rs:524` | `login_reply::friend_stream_end` | ported |
 | `0x0016` | `AUTH_SMSG_ACCOUNT_SETTINGS` (2058) | `messages.rs:572`; the blob chosen as in aeratemark's fork, `research/Kryta-aeratemark/authserver/src/Server/session.rs:244-284`, `1234-1246` | `login_reply::account_settings_frame`, carrying the account's stored upload, or the committed 591-byte block when it has none (`session.rs` `settings_for_login`; `docs/evidence/ui-settings-persistence.md`) | ported |
 
@@ -498,6 +498,36 @@ road.
 
 Nothing in 1-4 is restructured or improved. The types keep ASURA's names and field order; the search
 keeps its traversal order, its tie-breaking and its quirks; the dump keeps its byte layout.
+
+## 7c. The new character's cinematic (R67), surveyed and not ported
+
+**Nothing here is ported.** `game/src/Cinematics/mod.rs` is three lines, and no research server sends
+a cinematic: ASURA, its test fork and OpenTyria only carry the rows, and OpenTyria hardcodes
+`is_cinematic = 0` (`research/OpenTyria/code/OpenTyria/GameSrv.c:1430`). The sources are the client,
+read by Eden (`research/Eden/docs/re/cinematic.md`, 801 lines: section 2.1 the eight messages and
+their order, section 4 the script container, section 7 the skip), and three retail recordings of a
+new Prophecies character, all three skipped by the owner: `recordings/client/raw/creation-armor-head-hidden-unfiltered.jsonl` (the seq numbers below),
+`recordings/client/raw/creation-armor-head-color-unfiltered.jsonl` and
+`recordings/client/raw/creation-armor-head-hidden-from-login-unfiltered.jsonl`.
+
+The binary's names (Eden 2.2) against this tree's table: `0x00FE` Abort, `0x00FF` AbortStatus,
+`0x0100` ActivateChain, `0x0101` AlreadyPlaying, `0x0102` LabelCharacter, `0x0103` Play, `0x0104`
+Script, `0x0105` Terminate; client `0x8063` AbortRequest.
+
+| step | the retail server, seq | what this tree has |
+|---|---|---|
+| the load | the ordinary load of map 148; the character is created near the map's spawn point 1, at (9655.68, 7928.07) (seq 2826; `spawns.json` idx 1 is (9686.74, 7979.27)); `0x0022 [agent, 3]` (3600) | the load, without the `3` unverified |
+| the script | `0x0133 [0x4000]` (3728), then `0x0104` three times in one tick - 1024 bytes, 397 bytes, and a zero count that builds it (3730-3732) - before the party block and `0x018E` load finish (3751). The 1421 bytes are identical in all three recordings | no builder; the bytes are content and belong in a world file |
+| play | about 0.9 s after the load finish: `0x0194 [0]` (3768), `0x0103` (3785), `0x0067 [+Inf, +Inf, 0]` (3786), `0x0100 [0]`, `0x0100 [1]` (3787-3788) | no builder for `0x0103`, `0x0100`, `0x0067` |
+| the world is rebuilt | every agent removed, the player's own included (`0x0021`, 3830); `0x0022 [0x26D, 1]`, an agent that is never created (3880); `0x0115 [6, 0]` and `[8, 0]`; every agent created again, the player at the same point with its dress (4121-4130) | `0x0021`, `0x0020`, `0x0022` exist; no NPC or gadget is spawned by this tree |
+| the cast | `0x0102 [1, agent 0x59, encoded name]` and `[2, agent 0x4A, encoded name]` (4595-4596): two of the map's own NPCs, the same ids in all three recordings | no builder, and no NPC to name |
+| during | a second instance manifest (`0x0199`, `0x0197`, `0x0198 [3, 148, ...]`, 4676-4681), ten `0x01A0`, the client's `0x8093 [148]` (4635) | not ported |
+| the skip | client `0x8063` (4865); the server answers in one tick: `0x009F [8, agent, 1]` (4872), `0x0111` and `0x010E` for map object `0x6E86`, `0x0115` twice, every agent created again (the player at 5124), `0x0022 [agent, 1]` (5591), `0x00FE` (5592) | `0x8063` is unanswered |
+| the spawn | after `0x00FE`: `0x002C [agent, 9250.0, -1200.0, 0]` (5713), `0x0027 [agent, 288.0]`, `0x009F [8, agent, 0]` (5721). The same point in all three recordings: this is where a new Prophecies character stands when the cinematic is over | `agent_update_position` exists; the point is nowhere in `config/` |
+
+Not recorded, and needed before the port is whole: the cinematic played to its end (`0x0105`
+Terminate, when it comes and what follows it - Eden saw 70.000 s for another script), and the other
+campaigns' scripts and points.
 
 ## 8. The order this audit imposes
 
