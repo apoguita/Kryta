@@ -5,7 +5,8 @@ direction the owner gave on 2026-11-23, and what is built. What the owner ruled 
 what is left is under "Not settled" and "Not built". Statements marked *recommended* are the
 assistant's advice, not the owner's ruling.
 
-Custom titles are the first and, so far, the only feature that needs any of this.
+Custom titles were the first feature that needed any of this. Loose map files are the second
+(`docs/port/24-custom-maps.md`): built, and not yet run in a client.
 
 ## How it was first done
 
@@ -271,6 +272,7 @@ a recorder for the live game: it loads itself into a patched client.
 | - the hook layer | `src/runtime/hooks.rs`, port of Reforged's `hooker.cpp` and `MemoryPatcher::SetRedirect`, over the `minhook` crate | built |
 | - start-up and the link client | `src/runtime/mod.rs` | built |
 | - custom titles | `src/titles.rs` (the logic of `title-runtime.cpp`) and `src/runtime/title_hooks.rs` (the three hooks of `title_patch.py`, installed at run time) | built |
+| - the server's maps | `src/map_cache.rs` (the server's list, the cache at `%LOCALAPPDATA%\Kryta\maps\`, a file stored under its SHA-256, the rule for one open) and `src/runtime/file_hooks.rs` (one detour on the client's archive open, which opens the cached file with the client's own open by name); offsets in `config/Client/offsets/files.json`; the plan and the owner's decisions are `docs/port/24-custom-maps.md`, "The delivery plan" | built 2026-11-27; tested as a unit; not yet run in a client. It replaces the folder beside the client of 2026-11-26, which is removed |
 | the patcher | `tools/client/patch-gw.py` with `tools/client/dll_patch.py`: the connection patch and one import-table entry, no build check; it builds the DLL with cargo and installs it beside the client | built |
 | one login per account, on the login connection | `authserver/src/Server/logins.rs` | built; a test logs in twice and sees the first connection closed |
 | one login per account, in the world | `game/src/Accounts/Logins.rs`; the login's number travels on the hand-off row (`travel.login`, `data/sql/base/db_auth/travel_login.sql`) | built; tested as a unit and through the database tests, not with two real clients |
@@ -279,7 +281,11 @@ a recorder for the live game: it loads itself into a patched client.
 
 The conversation of the link, as built: the DLL says hello (its process id and the build stamp of
 the client's file), the server sends the offset documents, the DLL reports which resolved, the server
-sends the custom title text, and the connection stays open (`tools/client-link/src/lib.rs`).
+sends the custom title text, then its flavor's name and the list of the map files it hosts, each
+with its size and checksum; the DLL asks for a file its cache does not hold when a map load needs it, holding the load
+until it is whole, and for the others in the background, and the server sends each in parts; and
+the connection stays open (`tools/client-link/src/lib.rs`, link protocol 3). A DLL and a server of
+different protocols refuse each other, so both are installed together.
 
 ### What was proved, and how
 

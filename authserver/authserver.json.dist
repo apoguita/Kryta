@@ -67,6 +67,10 @@
     "TitleWorldConfig": {
       "value": "worldserver/worldserver.json",
       "doc": "World program configuration whose WorldPack supplies the custom title text a client's DLL is sent. An empty value sends none."
+    },
+    "MapPartPauseMs": {
+      "value": 0,
+      "doc": "Milliseconds the server waits before each 256 KiB part of a map file it sends to a client (docs/port/24-custom-maps.md, D8). 0 sends at full speed, which is what a server in use wants. A value above 0 stands in for a slow link or a very large map, to try a map load that has to wait for its file: a 2.9 MB map is 12 parts, so 5000 makes it take a minute."
     }
   },
 

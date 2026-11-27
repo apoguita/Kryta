@@ -456,7 +456,7 @@ fn load_world(
     let operations = load_operations_and_commands(&files, log, &mut world)?;
     start_wire_capture(config, log)?;
     load_world_settings(config, log, &mut world)?;
-    load_graphs(config, log, &hostable, &mut world)?;
+    load_graphs(config, log, &hostable, &pack, &mut world)?;
     load_creation(&files, log, &mut world)?;
     load_doorways(&pack, log, &mut world);
     open_instances(&databases.world, log, &mut world);
@@ -667,16 +667,73 @@ fn load_world_settings(
 /// The path graphs are extracted data. ASURA's standard startup at
 /// `crates/asura-worldserver/src/main.rs:366-391` may fall back to the client archive; Kryta's
 /// serving process is detached from that archive and reads only the shipped cache. A cache may be
-/// partial: maps it does not contain remain `NoGraph`, including future custom maps.
+/// partial: maps it does not contain remain `NoGraph`.
+///
+/// A map made outside the game is not in the cache: its graph is read from the finished map file
+/// its pack folder carries (`docs/port/24-custom-maps.md`).
 fn load_graphs(
     config: &Config,
     log: &Log,
     hostable: &[game::world::MapEntry],
+    pack: &game::maps::pack::Pack,
     world: &mut game::world::World,
 ) -> Result<(), String> {
     let graph_dump = read_string(config, "PathGraphs", "data/path-graphs.bin")?;
     let graphs = load_path_graphs(&graph_dump, hostable, log)?;
+    load_map_files(pack.map_files(), hostable, &graphs, log)?;
     world.set_graphs(graphs);
+    Ok(())
+}
+
+/// Read the map files the pack carries: check each, and take the walk graph from each finished one.
+///
+/// A file that is not a map stops the program, as any broken file of the pack does: a client sent
+/// to a map whose file it cannot read ends by its own assertion
+/// (`docs/port/24-custom-maps.md`, "What phase 3 has"). A map with a stripped file and no finished
+/// one is served and has no graph until a client has compiled it and the result is put beside it.
+fn load_map_files(
+    files: &[game::maps::pack::MapFiles],
+    hostable: &[game::world::MapEntry],
+    graphs: &game::terrain::pathfind::PathGraphs,
+    log: &Log,
+) -> Result<(), String> {
+    for files in files {
+        if let Some(path) = &files.stripped {
+            game::maps::pack::read_map_file(path, files.map_id)?;
+        }
+        match &files.finished {
+            Some(path) => {
+                let bytes = std::fs::read(path)
+                    .map_err(|error| format!("cannot read the map file {}: {error}", path.display()))?;
+                graphs.insert_file(files.file_id, &bytes).map_err(|error| {
+                    format!(
+                        "{} holds no walk graph for map {}: {error}",
+                        path.display(),
+                        files.map_id
+                    )
+                })?;
+                log.out(
+                    LogLevel::Info,
+                    "server.worldserver",
+                    format!(
+                        "Map {}: walk graph read from its map file {}.",
+                        files.map_id,
+                        path.display()
+                    ),
+                );
+            }
+            None => log.out(
+                LogLevel::Info,
+                "server.worldserver",
+                format!(
+                    "Map {} has a stripped map file and no finished one ({}): it has no walk graph until a client has compiled it and that file is in its folder.",
+                    files.map_id,
+                    game::maps::pack::finished_file_name(files.file_id)
+                ),
+            ),
+        }
+    }
+    graphs.bind(hostable);
     Ok(())
 }
 
@@ -1171,6 +1228,88 @@ mod tests {
 
     fn parse(args: &[&str]) -> Options {
         Options::parse(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap()
+    }
+
+    fn vale(file_id: u32) -> game::world::MapEntry {
+        game::world::MapEntry {
+            id: 148,
+            kind: Some(0),
+            file_id,
+            name: "a vale".to_string(),
+            instance_value: None,
+        }
+    }
+
+    /// A pack's map files at start-up: a stripped file alone is served and has no graph, and a file
+    /// that is not a map stops the program, whichever of the two it is.
+    #[test]
+    fn a_map_file_that_is_not_a_map_stops_the_start() {
+        use game::maps::pack::MapFiles;
+        let folder = std::env::temp_dir().join("kryta-worldserver-test-map-files");
+        std::fs::remove_dir_all(&folder).ok();
+        std::fs::create_dir_all(&folder).expect("the folder");
+        let good = folder.join("0005F100.stripped.ffna");
+        std::fs::write(&good, b"ffna\x03").expect("a map container with no record");
+        let bad = folder.join("0005F100.ffna");
+        std::fs::write(&bad, b"not a map").expect("a file that is not a map");
+        let maps = [vale(0x5F100)];
+        let log = Log::new();
+        let files = |stripped: Option<&std::path::PathBuf>, finished: Option<&std::path::PathBuf>| {
+            [MapFiles {
+                map_id: 148,
+                file_id: 0x5F100,
+                stripped: stripped.cloned(),
+                finished: finished.cloned(),
+            }]
+        };
+
+        let graphs = game::terrain::pathfind::PathGraphs::empty();
+        load_map_files(&files(Some(&good), None), &maps, &graphs, &log).expect("a stripped file alone");
+        assert!(graphs.maps().is_empty(), "a map nobody compiled has no graph");
+
+        let error = load_map_files(&files(Some(&bad), None), &maps, &graphs, &log)
+            .expect_err("a stripped file that is not a map");
+        assert!(error.contains("is not a map file"), "{error}");
+        let error = load_map_files(&files(Some(&good), Some(&bad)), &maps, &graphs, &log)
+            .expect_err("a finished file that is not a map");
+        assert!(error.contains("holds no walk graph"), "{error}");
+        // A stripped file holds no path record of stage 2, so it is not a finished file either.
+        let error = load_map_files(&files(None, Some(&good)), &maps, &graphs, &log)
+            .expect_err("a stripped file under the finished name");
+        assert!(error.contains("holds no walk graph"), "{error}");
+        std::fs::remove_dir_all(&folder).ok();
+    }
+
+    /// With a finished file a client compiled (`KRYTA_FINISHED_MAP`, and its spawn point in
+    /// `KRYTA_FINISHED_MAP_SPAWN` as `x,y`): the graph is bound and a walk from the spawn point is
+    /// answered from it. The run of 2026-11-27 is `docs/port/24-custom-maps.md`.
+    #[test]
+    fn a_finished_map_file_gives_the_map_its_walk_graph() {
+        let (Ok(path), Ok(spawn)) =
+            (std::env::var("KRYTA_FINISHED_MAP"), std::env::var("KRYTA_FINISHED_MAP_SPAWN"))
+        else {
+            eprintln!("skipped: no KRYTA_FINISHED_MAP and KRYTA_FINISHED_MAP_SPAWN");
+            return;
+        };
+        let (x, y) = spawn.split_once(',').expect("x,y");
+        let (x, y): (f32, f32) = (x.trim().parse().expect("x"), y.trim().parse().expect("y"));
+        let files = [game::maps::pack::MapFiles {
+            map_id: 148,
+            file_id: 0x5F100,
+            stripped: None,
+            finished: Some(path.into()),
+        }];
+        let graphs = game::terrain::pathfind::PathGraphs::empty();
+        load_map_files(&files, &[vale(0x5F100)], &graphs, &Log::new()).expect("the file imports");
+        assert_eq!(graphs.maps(), vec![148]);
+        let from = game::terrain::Pos { x, y, plane: 0 };
+        let to = game::terrain::Pos { x: x + 100.0, y, plane: 0 };
+        let walk = graphs.walk(148, from, to);
+        assert!(
+            !matches!(walk, game::terrain::Walk::NoGraph),
+            "the map has a graph: {walk:?}"
+        );
+        eprintln!("walk from the spawn point: {walk:?}");
     }
 
     #[test]

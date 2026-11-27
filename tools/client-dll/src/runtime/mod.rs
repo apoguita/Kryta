@@ -14,6 +14,7 @@
 //! ends. Once started, a link that drops is opened again.
 
 mod crash;
+mod file_hooks;
 mod hooks;
 mod log;
 mod title_hooks;
@@ -239,7 +240,50 @@ fn run() -> Result<(), String> {
     unsafe { title_hooks::install(title_addresses) }
         .map_err(|error| format!("The title hooks could not be installed: {error}"))?;
     log::line("titles: hooks installed");
+
+    // The server's maps (`docs/port/24-custom-maps.md`, "The delivery plan"): the hook answers from
+    // the list the server sends, and the files are fetched into one cache for this Windows user.
+    // A build the file offsets do not fit, or a user with no local application data folder, runs
+    // without them, and the log says so.
+    let served: &'static crate::map_cache::Served = Box::leak(Box::default());
+    let cache = std::env::var_os("LOCALAPPDATA")
+        .map(|local| crate::map_cache::Cache::new(crate::map_cache::folder(std::path::Path::new(&local))));
+    let maps_hooked = match (
+        addresses.get(file_hooks::RESOLVERS[0]),
+        addresses.get(file_hooks::RESOLVERS[1]),
+        &cache,
+    ) {
+        (Some(&open_archive), Some(&open_by_name), Some(cache)) => {
+            // SAFETY: the two addresses were resolved, in this process, from the offsets that
+            // describe them.
+            match unsafe { file_hooks::install([open_archive, open_by_name], served) } {
+                Ok(()) => {
+                    log::line(format!("maps: hook installed; the cache is {}", cache.folder().display()));
+                    true
+                }
+                Err(error) => {
+                    log::line(format!("maps: not installed: {error}"));
+                    false
+                }
+            }
+        }
+        (_, _, None) => {
+            log::line("maps: not served: this user has no LOCALAPPDATA folder for the cache");
+            false
+        }
+        _ => {
+            log::line("maps: not served: the file offsets did not resolve in this build");
+            false
+        }
+    };
     drop(scanner);
+    // The files being fetched, by file id.
+    let mut fetching: std::collections::HashMap<u32, crate::map_cache::Fetch> =
+        std::collections::HashMap::new();
+    // The folder of the flavor the connected server named, under the cache's root.
+    let mut flavor_cache: Option<crate::map_cache::Cache> = None;
+    // A load asks for its file on the link from the client's own thread.
+    file_hooks::set_link(stream.try_clone().ok());
 
     // 5. What the server sends, for as long as the client runs.
     loop {
@@ -250,12 +294,103 @@ fn run() -> Result<(), String> {
                     Err(error) => log::line(format!("titles: the list was refused: {error}")),
                 }
             }
+            Ok(Message::Maps { flavor, files }) => {
+                fetching.clear();
+                let Some(root) = cache.as_ref().filter(|_| maps_hooked) else {
+                    continue;
+                };
+                // The server's flavor names its own folder of the cache. A server that runs no
+                // world pack names none and lists nothing: nothing is served and no folder is
+                // touched.
+                let Some(flavor_folder) = flavor
+                    .as_deref()
+                    .and_then(|flavor| crate::map_cache::Cache::of_flavor(root.folder(), flavor))
+                else {
+                    served.set_list(&[], root);
+                    flavor_cache = None;
+                    log::line("maps: the server names no flavor and lists no file");
+                    continue;
+                };
+                served.set_list(&files, &flavor_folder);
+                flavor_cache = Some(flavor_folder.clone());
+                let listed = files.len();
+                log::line(format!(
+                    "maps: the server lists {listed} file(s); its folder is {}",
+                    flavor_folder.folder().display()
+                ));
+                // Every listed map is copied here, silently, one after another, so it is in the
+                // cache before it is needed; a map a load needs before it has arrived is fetched on
+                // that load, which waits for it (`file_hooks`). First the folder is made equal to
+                // the list, so no stale map stays in it (owner, 2026-11-27).
+                std::thread::spawn(move || {
+                    let removed = flavor_folder.sweep(&files);
+                    if removed > 0 {
+                        log::line(format!(
+                            "maps: {removed} file(s) the server no longer lists were removed"
+                        ));
+                    }
+                    if listed > 0 {
+                        let ready = served.fetch_all(file_hooks::PATIENCE, &file_hooks::ask);
+                        log::line(format!(
+                            "maps: {ready} of the {listed} listed file(s) are in the cache"
+                        ));
+                    }
+                });
+            }
+            Ok(Message::MapPart { file_id, sha256, offset, total, data }) => {
+                // A fetch begins with the first part of a file that was asked for.
+                let fetch = match fetching.entry(file_id) {
+                    std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        let Some(file) = served.fetching_file(file_id) else {
+                            continue;
+                        };
+                        entry.insert(crate::map_cache::Fetch::new(file))
+                    }
+                };
+                match fetch.part(&sha256, offset, total, &data) {
+                    Ok(false) => served.part_arrived(),
+                    Ok(true) => {
+                        let Some(fetch) = fetching.remove(&file_id) else {
+                            continue;
+                        };
+                        let stored = flavor_cache
+                            .as_ref()
+                            .ok_or_else(|| "no cache".to_string())
+                            .and_then(|cache| cache.store(fetch.file(), fetch.bytes(), std::process::id()));
+                        match stored {
+                            Ok(path) => {
+                                log::line(format!(
+                                    "maps: file {file_id:#x} fetched, {total} byte(s), into {}",
+                                    path.display()
+                                ));
+                                served.ready(fetch.file(), path);
+                            }
+                            Err(error) => {
+                                log::line(format!("maps: file {file_id:#x} was not stored: {error}"));
+                                served.failed(fetch.file());
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        log::line(format!("maps: {error}"));
+                        if let Some(fetch) = fetching.remove(&file_id) {
+                            served.failed(fetch.file());
+                        }
+                    }
+                }
+            }
             Ok(Message::Refused { reason }) => {
                 log::line(format!("link: refused by the server: {reason}"));
             }
             Ok(other) => log::line(format!("link: a message this DLL does not take: {other:?}")),
             Err(error) => {
                 log::line(format!("link: lost ({error}); opening it again"));
+                // What was being fetched will not arrive on the lost link; the list the server
+                // sends on the new one asks again.
+                fetching.clear();
+                file_hooks::set_link(None);
+                served.link_lost();
                 stream = loop {
                     std::thread::sleep(RECONNECT_PAUSE);
                     let Ok(mut stream) = open_link(&address, &hello) else {
@@ -269,6 +404,7 @@ fn run() -> Result<(), String> {
                         break stream;
                     }
                 };
+                file_hooks::set_link(stream.try_clone().ok());
                 log::line("link: open again");
             }
         }

@@ -29,6 +29,20 @@ pub struct ClientLink {
     offsets: Vec<Value>,
     /// The custom title text, as the world pack's `custom_tracks`.
     custom_tracks: Vec<Value>,
+    /// The map files this server hosts for its clients (`docs/port/24-custom-maps.md`, "The
+    /// delivery plan").
+    maps: Vec<HostedMap>,
+    /// The server's flavor, its world pack's name; none when it runs no pack.
+    flavor: Option<String>,
+    /// How long the server waits before each part of a map file it sends
+    /// (`ClientLink.MapPartPauseMs`). Zero in use; a test of a slow link sets it.
+    map_part_pause: std::time::Duration,
+}
+
+/// One map file the server hosts: what the list says of it, and its bytes.
+struct HostedMap {
+    file: client_link::MapFile,
+    bytes: Arc<Vec<u8>>,
 }
 
 impl ClientLink {
@@ -68,7 +82,77 @@ impl ClientLink {
         Ok(Self {
             offsets,
             custom_tracks,
+            maps: Vec::new(),
+            flavor: None,
+            map_part_pause: std::time::Duration::ZERO,
         })
+    }
+
+    /// Send map files slowly: wait this long before each part. It stands in for a slow link or a
+    /// very large map, neither of which a test machine has, so that a map load that has to wait
+    /// for its file can be tried with a real client (owner, 2026-11-27).
+    pub fn set_map_part_pause(&mut self, pause: std::time::Duration) {
+        self.map_part_pause = pause;
+    }
+
+    /// Take the finished map files of a world pack as the maps this server hosts.
+    ///
+    /// The server holds the maps and serves them (owner, 2026-11-27): each finished file
+    /// (`<file id>.ffna` in a map's folder, `game/src/Maps/Pack.rs`) is read here, once, checked to
+    /// be a map, and given its checksum. A file that is not a map stops the program, as it stops the
+    /// world program (`worldserver/src/main.rs`, `load_map_files`). A map with a stripped file and
+    /// no finished one is not served: a client is only ever given a finished map. Returns how many
+    /// files are hosted.
+    ///
+    /// `flavor` names the build and setup this server runs: its world pack's name. A client keeps
+    /// one folder of maps for each flavor and keeps it equal to this server's list, so no stale
+    /// map stays in it (owner, 2026-11-27). The name becomes a folder on the client's machine, so a
+    /// pack whose name is not a plain one stops the program.
+    pub fn host_maps(
+        &mut self,
+        flavor: &str,
+        files: &[game::maps::pack::MapFiles],
+    ) -> Result<usize, String> {
+        if !client_link::is_flavor_name(flavor) {
+            return Err(format!(
+                "the world pack's name '{flavor}' cannot name its clients' map folder: use 1 to 64 letters, digits, '_' and '-'"
+            ));
+        }
+        self.flavor = Some(flavor.to_string());
+        for files in files {
+            let Some(path) = &files.finished else {
+                continue;
+            };
+            let bytes = game::maps::pack::read_map_file(path, files.map_id)?;
+            let size = u32::try_from(bytes.len())
+                .map_err(|_| format!("{} is too large to serve", path.display()))?;
+            // Two maps may name one file id, as two of the game's maps share a file; it is one file.
+            if self.maps.iter().any(|held| held.file.file_id == files.file_id) {
+                continue;
+            }
+            self.maps.push(HostedMap {
+                file: client_link::MapFile {
+                    file_id: files.file_id,
+                    size,
+                    sha256: client_link::sha256_hex(&bytes),
+                },
+                bytes: Arc::new(bytes),
+            });
+        }
+        Ok(self.maps.len())
+    }
+
+    /// How many map files are hosted.
+    pub fn hosted_maps(&self) -> usize {
+        self.maps.len()
+    }
+
+    /// The list a client is sent.
+    fn map_list(&self) -> Message {
+        Message::Maps {
+            flavor: self.flavor.clone(),
+            files: self.maps.iter().map(|held| held.file.clone()).collect(),
+        }
     }
 
     /// How many offset documents are served.
@@ -222,10 +306,65 @@ impl Session for ClientLinkSession {
                 ),
             );
 
-            // The connection stays open for as long as the client runs. Nothing the client sends
-            // after its report is acted on yet; a message is logged and the link goes on.
+            // 5. The maps this server hosts. The list is sent even when it is empty: it is the
+            // whole truth for this client, and an empty one says no map file is served.
+            if io.write_all(&self.link.map_list().encode()).await.is_err() {
+                return;
+            }
+            self.say(
+                LogLevel::Info,
+                format!("{client}: listed {} map file(s).", self.link.maps.len()),
+            );
+
+            // The connection stays open for as long as the client runs. A client asks for the map
+            // files it does not hold; any other message is logged and the link goes on.
             loop {
                 match next_message(&mut io, &mut decoder).await {
+                    Ok(Some(Message::MapWanted { file_id, sha256 })) => {
+                        let Some(held) = self
+                            .link
+                            .maps
+                            .iter()
+                            .find(|held| held.file.file_id == file_id && held.file.sha256 == sha256)
+                        else {
+                            // The list is sent again: what the client asked for is not on it.
+                            self.say(
+                                LogLevel::Warn,
+                                format!("{client}: asked for map file {file_id:#x} with a checksum this server does not host."),
+                            );
+                            if io.write_all(&self.link.map_list().encode()).await.is_err() {
+                                return;
+                            }
+                            continue;
+                        };
+                        let bytes = Arc::clone(&held.bytes);
+                        let mut offset = 0usize;
+                        // A file with no bytes is still one part, so the client knows it is whole.
+                        loop {
+                            if !self.link.map_part_pause.is_zero() {
+                                io.pause(self.link.map_part_pause).await;
+                            }
+                            let end = (offset + client_link::MAP_PART).min(bytes.len());
+                            let part = Message::MapPart {
+                                file_id,
+                                sha256: sha256.clone(),
+                                offset: offset as u32,
+                                total: held.file.size,
+                                data: bytes[offset..end].to_vec(),
+                            };
+                            if io.write_all(&part.encode()).await.is_err() {
+                                return;
+                            }
+                            offset = end;
+                            if offset >= bytes.len() {
+                                break;
+                            }
+                        }
+                        self.say(
+                            LogLevel::Info,
+                            format!("{client}: sent map file {file_id:#x}, {} byte(s).", bytes.len()),
+                        );
+                    }
                     Ok(Some(message)) => {
                         self.say(LogLevel::Debug, format!("{client}: sent {message:?}"));
                     }
@@ -259,10 +398,49 @@ mod tests {
         assert_eq!(link.custom_titles(), 0);
     }
 
+    /// A map container with one record of `length` bytes: a file the server will host.
+    fn a_map(length: usize) -> Vec<u8> {
+        let mut map = Vec::from(*b"ffna\x03");
+        map.extend_from_slice(&0x2000_0000u32.to_le_bytes());
+        map.extend_from_slice(&(length as u32).to_le_bytes());
+        map.extend((0..length).map(|at| at as u8));
+        map
+    }
+
+    /// A folder holding one finished map file, as a pack's map folder does.
+    fn a_pack_file(name: &str, bytes: &[u8]) -> game::maps::pack::MapFiles {
+        let folder = std::env::temp_dir().join(format!("kryta-link-maps-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("0005F100.ffna");
+        std::fs::write(&path, bytes).unwrap();
+        game::maps::pack::MapFiles {
+            map_id: 148,
+            file_id: 0x5F100,
+            stripped: None,
+            finished: Some(path),
+        }
+    }
+
     /// A listener serving the shipped offsets and one custom title, and a client connected to it.
     fn served() -> (shared::network::socket_mgr::SocketMgr, std::net::TcpStream) {
+        served_with(&[])
+    }
+
+    fn served_with(
+        maps: &[game::maps::pack::MapFiles],
+    ) -> (shared::network::socket_mgr::SocketMgr, std::net::TcpStream) {
+        served_slowly(maps, std::time::Duration::ZERO)
+    }
+
+    fn served_slowly(
+        maps: &[game::maps::pack::MapFiles],
+        pause: std::time::Duration,
+    ) -> (shared::network::socket_mgr::SocketMgr, std::net::TcpStream) {
         let track = serde_json::json!({ "id": 48, "name": "Hog Jumper" });
-        let link = Arc::new(ClientLink::load(&shipped(), vec![track]).unwrap());
+        let mut link = ClientLink::load(&shipped(), vec![track]).unwrap();
+        link.host_maps("Vanilla", maps).unwrap();
+        link.set_map_part_pause(pause);
+        let link = Arc::new(link);
         let factory: shared::network::socket::SessionFactory = Arc::new(move || {
             Box::new(ClientLinkSession::new(Arc::clone(&link), None)) as Box<dyn Session>
         });
@@ -288,7 +466,10 @@ mod tests {
         let Message::Offsets { documents } = client_link::read(&mut stream).unwrap() else {
             panic!("the hello was not answered with the offsets");
         };
-        assert_eq!(documents[0]["namespace"], "titles");
+        // Every document in the folder is sent, in the order of their file names.
+        let namespaces: Vec<&str> =
+            documents.iter().filter_map(|document| document["namespace"].as_str()).collect();
+        assert_eq!(namespaces, ["files", "titles"]);
 
         let report = Message::Resolved {
             found: vec!["titles.rank_call".to_string()],
@@ -299,9 +480,196 @@ mod tests {
             panic!("the report was not answered with the titles");
         };
         assert_eq!(custom_tracks[0]["name"], "Hog Jumper");
+        // A server that hosts no map file says so: the list is the whole truth.
+        assert_eq!(
+            client_link::read(&mut stream).unwrap(),
+            Message::Maps { flavor: Some("Vanilla".to_string()), files: Vec::new() }
+        );
 
         drop(stream);
         sockets.stop_network();
+    }
+
+    /// The hello, the offsets, the report and the titles, as a client goes through them.
+    fn up_to_the_map_list(stream: &mut std::net::TcpStream) -> Vec<client_link::MapFile> {
+        let hello = Message::Hello { protocol: PROTOCOL, pid: 7, time_date_stamp: 0 };
+        client_link::write(stream, &hello).unwrap();
+        assert!(matches!(client_link::read(stream).unwrap(), Message::Offsets { .. }));
+        let report = Message::Resolved { found: Vec::new(), missing: Vec::new() };
+        client_link::write(stream, &report).unwrap();
+        assert!(matches!(client_link::read(stream).unwrap(), Message::Titles { .. }));
+        let Message::Maps { flavor, files } = client_link::read(stream).unwrap() else {
+            panic!("the titles were not followed by the map list");
+        };
+        assert_eq!(flavor.as_deref(), Some("Vanilla"), "the server names its flavor");
+        files
+    }
+
+    /// The server lists the finished map file of its pack with its size and checksum, and sends it
+    /// in parts to a client that asks: a file larger than one part arrives whole.
+    #[test]
+    fn a_hosted_map_is_listed_and_sent_in_parts() {
+        let map = a_map(client_link::MAP_PART * 2 + 1000);
+        let (mut sockets, mut stream) = served_with(&[a_pack_file("parts", &map)]);
+        let files = up_to_the_map_list(&mut stream);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].file_id, 0x5F100);
+        assert_eq!(files[0].size as usize, map.len());
+        assert_eq!(files[0].sha256, client_link::sha256_hex(&map));
+
+        let wanted = Message::MapWanted { file_id: 0x5F100, sha256: files[0].sha256.clone() };
+        client_link::write(&mut stream, &wanted).unwrap();
+        let mut got = Vec::new();
+        let mut parts = 0;
+        while got.len() < map.len() {
+            let Message::MapPart { file_id, sha256, offset, total, data } =
+                client_link::read(&mut stream).unwrap()
+            else {
+                panic!("the request was not answered with a part");
+            };
+            assert_eq!((file_id, sha256.as_str()), (0x5F100, files[0].sha256.as_str()));
+            assert_eq!((offset as usize, total as usize), (got.len(), map.len()));
+            got.extend_from_slice(&data);
+            parts += 1;
+        }
+        assert_eq!(parts, 3, "two full parts and the rest");
+        assert_eq!(got, map);
+
+        // A checksum the server does not host is answered with the list again.
+        let stale = Message::MapWanted { file_id: 0x5F100, sha256: client_link::sha256_hex(b"old") };
+        client_link::write(&mut stream, &stale).unwrap();
+        assert!(matches!(client_link::read(&mut stream).unwrap(), Message::Maps { .. }));
+
+        drop(stream);
+        sockets.stop_network();
+    }
+
+    /// A server told to send slowly waits before each part, and the file still arrives whole.
+    #[test]
+    fn a_map_sent_slowly_takes_the_pauses_and_arrives_whole() {
+        let map = a_map(client_link::MAP_PART * 2 + 10);
+        let pause = std::time::Duration::from_millis(100);
+        let (mut sockets, mut stream) = served_slowly(&[a_pack_file("slow", &map)], pause);
+        let files = up_to_the_map_list(&mut stream);
+        let wanted = Message::MapWanted { file_id: 0x5F100, sha256: files[0].sha256.clone() };
+        let began = std::time::Instant::now();
+        client_link::write(&mut stream, &wanted).unwrap();
+        let mut got = Vec::new();
+        while got.len() < map.len() {
+            let Message::MapPart { data, .. } = client_link::read(&mut stream).unwrap() else {
+                panic!("the request was not answered with a part");
+            };
+            got.extend_from_slice(&data);
+        }
+        assert!(began.elapsed() >= pause * 3, "three parts, a pause before each");
+        assert_eq!(got, map);
+        drop(stream);
+        sockets.stop_network();
+    }
+
+    /// Both ends together, as a client's DLL goes through them (`tools/client-dll/src/runtime/mod.rs`,
+    /// the link's loop) with everything but the hook itself: the list arrives and fetches nothing;
+    /// the client's load of that file id finds the cache without it, asks the server on the link
+    /// and is held; the parts are taken and the file stored under its checksum; and the load is
+    /// then answered with the cached file. A second client of the same cache asks for nothing.
+    #[test]
+    fn a_load_fetches_a_hosted_map_into_the_cache_and_a_second_client_does_not() {
+        use kryta_client::map_cache::{Answer, Cache, Fetch, OPEN_READ, Served};
+        let map = a_map(client_link::MAP_PART + 77);
+        let hosted = a_pack_file("fetch", &map);
+        let folder = std::env::temp_dir().join(format!("kryta-link-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let cache = Cache::new(folder.clone());
+        let patience = std::time::Duration::from_secs(10);
+
+        let (mut sockets, mut stream) = served_with(std::slice::from_ref(&hosted));
+        let files = up_to_the_map_list(&mut stream);
+        let served = Arc::new(Served::new());
+        served.set_list(&files, &cache);
+        assert_eq!(served.fetching_file(0x5F100), None, "the list alone asks for nothing");
+
+        // The client's load, on its own thread: it asks on the link and is held.
+        let load = {
+            let served = Arc::clone(&served);
+            let writer = std::sync::Mutex::new(stream.try_clone().unwrap());
+            std::thread::spawn(move || {
+                served.answer(0x5F100, 1, OPEN_READ, patience, &|file| {
+                    let wanted =
+                        Message::MapWanted { file_id: file.file_id, sha256: file.sha256.clone() };
+                    client_link::write(&mut *writer.lock().unwrap(), &wanted).is_ok()
+                })
+            })
+        };
+        // The link's thread: the parts of the file the load asked for.
+        let mut fetch = None;
+        loop {
+            let Message::MapPart { file_id, sha256, offset, total, data } =
+                client_link::read(&mut stream).unwrap()
+            else {
+                panic!("the request was not answered with a part");
+            };
+            let fetch = fetch.get_or_insert_with(|| {
+                Fetch::new(served.fetching_file(file_id).expect("the load asked for it"))
+            });
+            if fetch.part(&sha256, offset, total, &data).unwrap() {
+                break;
+            }
+            served.part_arrived();
+            assert!(!load.is_finished(), "the load is held while the file arrives");
+        }
+        let fetch = fetch.expect("a part arrived");
+        let path = cache.store(fetch.file(), fetch.bytes(), 1).unwrap();
+        served.ready(fetch.file(), path.clone());
+        assert_eq!(load.join().unwrap(), Answer::Cached(path.clone()));
+        assert_eq!(std::fs::read(&path).unwrap(), map, "the cached file is the server's file");
+        drop(stream);
+        sockets.stop_network();
+
+        // A second client, the same cache: its load is answered without asking the server.
+        let never = |_: &client_link::MapFile| -> bool { panic!("a cached file was asked for") };
+        let (mut sockets, mut stream) = served_with(std::slice::from_ref(&hosted));
+        let second = Served::new();
+        second.set_list(&up_to_the_map_list(&mut stream), &cache);
+        assert_eq!(second.answer(0x5F100, 1, OPEN_READ, patience, &never), Answer::Cached(path));
+        drop(stream);
+        sockets.stop_network();
+
+        // The server changes the map: another checksum, and a load asks for it.
+        let changed = a_pack_file("fetch", &a_map(client_link::MAP_PART + 78));
+        let (mut sockets, mut stream) = served_with(&[changed]);
+        let third = Served::new();
+        let list = up_to_the_map_list(&mut stream);
+        third.set_list(&list, &cache);
+        let asked = std::sync::Mutex::new(Vec::new());
+        let refuse = |file: &client_link::MapFile| {
+            asked.lock().unwrap().push(file.sha256.clone());
+            false
+        };
+        assert_eq!(third.answer(0x5F100, 1, OPEN_READ, patience, &refuse), Answer::NotFound);
+        assert_eq!(*asked.lock().unwrap(), [list[0].sha256.clone()]);
+        drop(stream);
+        sockets.stop_network();
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// A finished file that is not a map stops the load, and a map with no finished file is not
+    /// hosted.
+    #[test]
+    fn a_file_that_is_not_a_map_is_not_hosted() {
+        let mut link = ClientLink::load(&shipped(), Vec::new()).unwrap();
+        let error = link.host_maps("Vanilla", &[a_pack_file("bad", b"not a map")]).err().unwrap();
+        assert!(error.contains("is not a map file"), "{error}");
+        // A pack whose name cannot be a folder on a client's machine stops the load too.
+        let error = link.host_maps("two words", &[]).err().unwrap();
+        assert!(error.contains("cannot name"), "{error}");
+
+        let stripped_only = game::maps::pack::MapFiles {
+            map_id: 148,
+            file_id: 0x5F100,
+            stripped: Some("nowhere".into()),
+            finished: None,
+        };
+        assert_eq!(link.host_maps("Vanilla", &[stripped_only]).unwrap(), 0);
     }
 
     #[test]

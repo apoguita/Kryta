@@ -14,6 +14,8 @@ path = "src/lib.rs"
 
 # The messages of the link between the client DLL and the server, written once and used by both
 # ends (docs/port/22-client-platform.md). It is built for the server's target and for the 32-bit
-# client's, so it depends on nothing but the JSON reader.
+# client's, so it depends on little: the JSON reader, and the hash a map file's checksum is taken
+# with, so both ends take it the same way.
 [dependencies]
 serde_json = "1"
+sha2 = "0.10"

@@ -11,6 +11,7 @@
 //! | offsets | [`scanner`], [`patterns`] | places in the client found by byte pattern, from JSON the server sends |
 //! | hooks | `runtime::hooks` | detours and call redirects written at the addresses found |
 //! | features | [`titles`], `runtime::title_hooks` | custom title text, the first feature |
+//! | | [`map_cache`], `runtime::file_hooks` | the maps the server hosts: fetched over the link into one cache, and opened in an archive file's place |
 //!
 //! The scanner, the offset resolver and the hook layer are ported from Py4GW Reforged Native
 //! (`C:\Users\Apo\Py4GW_Reforged_Native` at `e2f5664`), which is the reference for how a DLL finds
@@ -19,6 +20,7 @@
 //! The parts that touch the client are `runtime`, built only for the 32-bit Windows client. The
 //! rest is safe code that builds and is tested anywhere.
 
+pub mod map_cache;
 pub mod patterns;
 pub mod scanner;
 pub mod titles;

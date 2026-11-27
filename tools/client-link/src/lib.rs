@@ -22,13 +22,82 @@
 //! | 2 | server | [`Message::Offsets`] | the offset documents, in Reforged's format |
 //! | 3 | client | [`Message::Resolved`] | which offsets were found and which were not |
 //! | 4 | server | [`Message::Titles`] | the custom title text; sent again whenever it changes |
+//! | 5 | server | [`Message::Maps`] | every map file the server hosts for its clients, each with its size and checksum |
+//! | 6 | client | [`Message::MapWanted`] | one of those files, which the client does not hold |
+//! | 7 | server | [`Message::MapPart`] | that file, in parts of at most [`MAP_PART`] bytes |
 //!
 //! The server answers a message it will not serve with [`Message::Refused`] and closes.
+//!
+//! # Map files
+//!
+//! The server holds the maps and the client fetches what the server lists
+//! (`docs/port/24-custom-maps.md`, "The delivery plan"). The list is the whole truth for a client
+//! of that server. A file is named by its checksum, the SHA-256 of its bytes as lower-case
+//! hexadecimal ([`sha256_hex`]): a map the server has changed has another checksum, and so is
+//! another file to fetch. A part's bytes travel as hexadecimal text, because a frame is JSON.
 
 use serde_json::{Value, json};
 
 /// The version of this conversation. A server refuses a client that names another.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 3;
+
+/// The most bytes of a map file one [`Message::MapPart`] carries. As hexadecimal text it is twice
+/// that, which with the rest of the message stays under [`MAX_FRAME`].
+pub const MAP_PART: usize = 256 * 1024;
+
+/// One map file the server hosts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapFile {
+    /// The file id the client asks its archive for: the map record's `map_file_id`.
+    pub file_id: u32,
+    /// How many bytes the file is.
+    pub size: u32,
+    /// Its checksum, [`sha256_hex`] of its bytes.
+    pub sha256: String,
+}
+
+/// The checksum of a map file: the SHA-256 of its bytes, as lower-case hexadecimal.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    to_hex(&sha2::Sha256::digest(bytes))
+}
+
+/// Whether `text` can name a server's flavor: 1 to 64 ASCII letters, digits, `_` and `-`. A flavor
+/// is used as a folder name by the client, so nothing else is taken as one.
+pub fn is_flavor_name(text: &str) -> bool {
+    (1..=64).contains(&text.len())
+        && text.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+/// Whether `text` has the shape of a checksum: 64 lower-case hexadecimal digits. A checksum is used
+/// as a file name by the client, so nothing else is taken as one.
+pub fn is_sha256_hex(text: &str) -> bool {
+    text.len() == 64 && text.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        text.push(DIGITS[usize::from(byte >> 4)] as char);
+        text.push(DIGITS[usize::from(byte & 0x0F)] as char);
+    }
+    text
+}
+
+fn from_hex(text: &str) -> Option<Vec<u8>> {
+    let digit = |byte: u8| match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    };
+    let (pairs, rest) = text.as_bytes().as_chunks::<2>();
+    if !rest.is_empty() {
+        return None;
+    }
+    pairs.iter().map(|pair| Some(digit(pair[0])? << 4 | digit(pair[1])?)).collect()
+}
 
 /// The largest frame either end reads. The offset documents and the title text are far smaller; the
 /// limit exists so a connection that sends a wild length cannot grow the process.
@@ -65,6 +134,38 @@ pub enum Message {
     Titles {
         /// One object per custom track.
         custom_tracks: Vec<Value>,
+    },
+    /// Every map file the server hosts for its clients. Sent after the titles, and again whenever
+    /// the list changes. A file that is not in the list is not served by this server.
+    Maps {
+        /// The server's flavor: the name of the build and setup it runs, which is its world
+        /// pack's name ("Vanilla"). The client keeps one folder of maps for each flavor, and that
+        /// folder holds exactly what this list names. None when the server runs no world pack, and
+        /// then it lists no file.
+        flavor: Option<String>,
+        /// The files.
+        files: Vec<MapFile>,
+    },
+    /// The client does not hold this file of the list, and asks for it.
+    MapWanted {
+        /// The file id.
+        file_id: u32,
+        /// The checksum the list gave it.
+        sha256: String,
+    },
+    /// Some of a file the client asked for. The parts of one file are sent in order, and the last
+    /// one ends at `total`.
+    MapPart {
+        /// The file id.
+        file_id: u32,
+        /// The checksum of the whole file.
+        sha256: String,
+        /// Where in the file these bytes begin.
+        offset: u32,
+        /// How many bytes the whole file is.
+        total: u32,
+        /// The bytes, at most [`MAP_PART`] of them.
+        data: Vec<u8>,
     },
     /// The server will not serve this client.
     Refused {
@@ -121,6 +222,29 @@ impl Message {
             Self::Titles { custom_tracks } => {
                 json!({ "type": "titles", "custom_tracks": custom_tracks })
             }
+            Self::Maps { flavor, files } => json!({
+                "type": "maps",
+                "flavor": flavor,
+                "files": files
+                    .iter()
+                    .map(|file| json!({
+                        "file_id": file.file_id,
+                        "size": file.size,
+                        "sha256": file.sha256,
+                    }))
+                    .collect::<Vec<_>>(),
+            }),
+            Self::MapWanted { file_id, sha256 } => {
+                json!({ "type": "map_wanted", "file_id": file_id, "sha256": sha256 })
+            }
+            Self::MapPart { file_id, sha256, offset, total, data } => json!({
+                "type": "map_part",
+                "file_id": file_id,
+                "sha256": sha256,
+                "offset": offset,
+                "total": total,
+                "data": to_hex(data),
+            }),
             Self::Refused { reason } => json!({ "type": "refused", "reason": reason }),
         }
     }
@@ -155,6 +279,45 @@ impl Message {
             "titles" => Ok(Self::Titles {
                 custom_tracks: array(value, "custom_tracks")?.clone(),
             }),
+            "maps" => {
+                let flavor = match value.get("flavor") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(name)) if is_flavor_name(name) => Some(name.clone()),
+                    Some(_) => return Err(malformed("'flavor' is not a flavor name")),
+                };
+                let files: Vec<MapFile> = array(value, "files")?
+                    .iter()
+                    .map(|file| {
+                        Ok(MapFile {
+                            file_id: number(file, "file_id")?,
+                            size: number(file, "size")?,
+                            sha256: checksum(file)?,
+                        })
+                    })
+                    .collect::<Result<_, LinkError>>()?;
+                if flavor.is_none() && !files.is_empty() {
+                    return Err(malformed("map files are listed without a flavor"));
+                }
+                Ok(Self::Maps { flavor, files })
+            }
+            "map_wanted" => Ok(Self::MapWanted {
+                file_id: number(value, "file_id")?,
+                sha256: checksum(value)?,
+            }),
+            "map_part" => {
+                let data = from_hex(&text(value, "data")?)
+                    .ok_or_else(|| malformed("'data' is not hexadecimal"))?;
+                if data.len() > MAP_PART {
+                    return Err(malformed(format!("a part of {} bytes is larger than {MAP_PART}", data.len())));
+                }
+                Ok(Self::MapPart {
+                    file_id: number(value, "file_id")?,
+                    sha256: checksum(value)?,
+                    offset: number(value, "offset")?,
+                    total: number(value, "total")?,
+                    data,
+                })
+            }
             "refused" => Ok(Self::Refused {
                 reason: text(value, "reason")?,
             }),
@@ -189,6 +352,16 @@ fn text(value: &Value, key: &str) -> Result<String, LinkError> {
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| malformed(format!("'{key}' is missing or is not text")))
+}
+
+/// A message's `sha256`, which must have a checksum's shape: the client names a file by it.
+fn checksum(value: &Value) -> Result<String, LinkError> {
+    let sha256 = text(value, "sha256")?;
+    if is_sha256_hex(&sha256) {
+        Ok(sha256)
+    } else {
+        Err(malformed("'sha256' is not 64 lower-case hexadecimal digits"))
+    }
 }
 
 fn number(value: &Value, key: &str) -> Result<u32, LinkError> {
@@ -288,10 +461,79 @@ mod tests {
             Message::Titles {
                 custom_tracks: vec![json!({ "id": 48, "name": "Hog Jumper" })],
             },
+            Message::Maps { flavor: None, files: Vec::new() },
+            Message::Maps {
+                flavor: Some("fantasy_modded".to_string()),
+                files: vec![MapFile {
+                    file_id: 0x5F100,
+                    size: 3,
+                    sha256: sha256_hex(b"abc"),
+                }],
+            },
+            Message::MapWanted {
+                file_id: 0x5F100,
+                sha256: sha256_hex(b"abc"),
+            },
+            Message::MapPart {
+                file_id: 0x5F100,
+                sha256: sha256_hex(b"abc"),
+                offset: 0,
+                total: 3,
+                data: b"abc".to_vec(),
+            },
             Message::Refused {
                 reason: "protocol 2 is not served".to_string(),
             },
         ]
+    }
+
+    /// The checksum is SHA-256 as lower-case hexadecimal: the value for `abc` is the standard's own
+    /// example (FIPS 180-2, appendix B.1).
+    #[test]
+    fn the_checksum_is_sha256_in_lower_case_hexadecimal() {
+        let sum = sha256_hex(b"abc");
+        assert_eq!(sum, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert!(is_sha256_hex(&sum));
+        assert!(!is_sha256_hex(&sum.to_uppercase()), "one spelling only");
+        assert!(!is_sha256_hex("..\\..\\evil"), "a checksum is used as a file name");
+        assert!(!is_sha256_hex(&sum[1..]));
+    }
+
+    /// A flavor names a folder on the client's machine, so only a plain name is one, and a list
+    /// that names files without a flavor is refused.
+    #[test]
+    fn a_flavor_is_a_plain_name() {
+        assert!(is_flavor_name("Vanilla"));
+        assert!(is_flavor_name("fantasy_modded-2"));
+        for bad in ["", "..", "a/b", "a\\b", "two words", "C:", &"x".repeat(65)] {
+            assert!(!is_flavor_name(bad), "{bad}");
+        }
+        let escaping = json!({ "type": "maps", "flavor": "..\\..", "files": [] });
+        assert!(Message::from_json(&escaping).is_err());
+        let nameless = json!({
+            "type": "maps",
+            "files": [{ "file_id": 1, "size": 3, "sha256": sha256_hex(b"abc") }],
+        });
+        assert!(Message::from_json(&nameless).is_err());
+    }
+
+    /// A part as large as a part may be still fits a frame, and a checksum that is not one is
+    /// refused where the message is read.
+    #[test]
+    fn a_full_part_fits_a_frame_and_a_bad_checksum_is_malformed() {
+        let part = Message::MapPart {
+            file_id: 1,
+            sha256: sha256_hex(b""),
+            offset: 0,
+            total: MAP_PART as u32,
+            data: vec![0xA5; MAP_PART],
+        };
+        let frame = part.encode();
+        assert!(frame.len() - 4 <= MAX_FRAME, "{} bytes", frame.len());
+        assert_eq!(Message::decode(&frame[4..]).unwrap(), part);
+
+        let body = br#"{"type":"map_wanted","file_id":1,"sha256":"../../somewhere"}"#;
+        assert!(matches!(Message::decode(body), Err(LinkError::Malformed(_))));
     }
 
     #[test]

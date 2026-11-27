@@ -10,9 +10,16 @@
 //!   basic.json     the map's record: its id, kind, blob, name and instance-table value
 //!   spawns.json    where a character may stand on entry
 //!   portals.json   the walls a step crosses, and where an arrival from another map lands
+//!   <file id>.stripped.ffna   a map made outside the game, as its editor built it
+//!   <file id>.ffna            the same map as a client compiled it, which holds its walk graph
 //! ```
 //!
-//! The last two are optional: a map with no `spawns.json` has no measured entry point, and a map with
+//! The two map files belong to a custom map (`docs/port/24-custom-maps.md`): the file id is the
+//! record's `map_file_id` as eight hexadecimal digits. The finished file is the one the server
+//! hosts for its clients (`authserver/src/Server/client_link.rs`, `host_maps`). A map of the game's
+//! own has neither, and its walk graph comes from the extracted cache.
+//!
+//! The last two JSON files are optional: a map with no `spawns.json` has no measured entry point, and a map with
 //! no `portals.json` has no doorway. A folder whose name is not the `map_id` its record states is an
 //! error, not a warning - the number is how a client names a map, and two answers cannot both be
 //! right. Catalogue readers walk recursively, so where a map sits in the tree decides nothing but
@@ -37,6 +44,49 @@ pub struct Pack {
     arches: Vec<Arch>,
     /// Every arrival point, keyed by the map the character arrived on and the map it came from.
     arrivals: Vec<Arrival>,
+    /// The map files the pack carries, for the maps made outside the game.
+    map_files: Vec<MapFiles>,
+}
+
+/// The map files one map's folder carries (`docs/port/24-custom-maps.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapFiles {
+    /// The map.
+    pub map_id: u32,
+    /// Its record's `map_file_id`, which names both files.
+    pub file_id: u32,
+    /// `<file id>.stripped.ffna`: the map as its editor built it.
+    pub stripped: Option<PathBuf>,
+    /// `<file id>.ffna`: the map as a client compiled it.
+    pub finished: Option<PathBuf>,
+}
+
+/// Read a map file of the pack and check that it is one: the game's map container, of a map type,
+/// whose records parse. A client sent to a map whose file is not a map ends by its own assertion
+/// (`docs/port/24-custom-maps.md`, "What phase 3 has"), so both programs that read these files
+/// refuse one here, at start-up.
+pub fn read_map_file(path: &Path, map_id: u32) -> Result<Vec<u8>, String> {
+    use crate::terrain::map_data::{Chunks, RIFF_MAP1, RIFF_MAP2, riff_type};
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("cannot read the map file {}: {error}", path.display()))?;
+    let is_map = matches!(riff_type(&bytes), Some(RIFF_MAP1 | RIFF_MAP2));
+    if !is_map || Chunks::parse(&bytes).is_err() {
+        return Err(format!(
+            "{} is not a map file: map {map_id} cannot be served from it",
+            path.display()
+        ));
+    }
+    Ok(bytes)
+}
+
+/// The name of a map's stripped file: the file id as eight hexadecimal digits.
+pub fn stripped_file_name(file_id: u32) -> String {
+    format!("{file_id:08X}.stripped.ffna")
+}
+
+/// The name of a map's finished file.
+pub fn finished_file_name(file_id: u32) -> String {
+    format!("{file_id:08X}.ffna")
 }
 
 impl Pack {
@@ -98,6 +148,11 @@ impl Pack {
         Ok(self.arches.clone())
     }
 
+    /// The map files the pack carries: one entry for each map whose folder holds either file.
+    pub fn map_files(&self) -> &[MapFiles] {
+        &self.map_files
+    }
+
     /// One map's folder: its record, its spawn points and its doorways.
     fn read_map(&mut self, folder: &Path, log: &Log) -> Result<(), String> {
         let id = folder
@@ -143,6 +198,14 @@ impl Pack {
             },
             instance_value: number(&record, "instance_value")?.map(|value| value as u32),
         });
+
+        if let Some(file_id) = self.maps.last().map(|map| map.file_id).filter(|file_id| *file_id != 0) {
+            let stripped = Some(folder.join(stripped_file_name(file_id))).filter(|path| path.is_file());
+            let finished = Some(folder.join(finished_file_name(file_id))).filter(|path| path.is_file());
+            if stripped.is_some() || finished.is_some() {
+                self.map_files.push(MapFiles { map_id: id, file_id, stripped, finished });
+            }
+        }
 
         let spawns = folder.join("spawns.json");
         if spawns.exists() {
@@ -333,6 +396,38 @@ mod tests {
         .expect("the record");
         let error = Pack::load(&root, &Log::new()).expect_err("a lie is refused");
         assert!(error.contains("folder 148"), "{error}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A custom map's folder carries its map files under its file id, and the shipped pack, whose
+    /// maps are the game's own, carries none.
+    #[test]
+    fn a_folder_carries_the_map_files_its_file_id_names() {
+        assert!(shipped().map_files().is_empty(), "the game's own maps have no file here");
+
+        let root = std::env::temp_dir().join("kryta-pack-test-map-files");
+        std::fs::remove_dir_all(&root).ok();
+        let folder = root.join("maps").join("Custom").join("148");
+        std::fs::create_dir_all(&folder).expect("the folder");
+        std::fs::write(
+            folder.join("basic.json"),
+            "{\"map_id\": 148, \"map_type\": 0, \"map_file_id\": 389376, \"name\": \"a vale\"}",
+        )
+        .expect("the record");
+        std::fs::write(folder.join("0005F100.stripped.ffna"), b"ffna\x03").expect("the stripped file");
+        std::fs::write(folder.join("0005F101.ffna"), b"ffna\x03").expect("another id's file");
+
+        let pack = Pack::load(&root, &Log::new()).expect("the pack reads");
+        assert_eq!(
+            pack.map_files(),
+            [MapFiles {
+                map_id: 148,
+                file_id: 389_376,
+                stripped: Some(folder.join("0005F100.stripped.ffna")),
+                finished: None,
+            }],
+            "the files are the ones the record's file id names"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 }

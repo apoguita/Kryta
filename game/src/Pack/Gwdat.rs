@@ -300,6 +300,62 @@ impl GwDat {
         Ok(Some(content))
     }
 
+    /// The decompressed bytes of one **stream** of a file, or `None` when the archive has no such file
+    /// or the file has no such stream.
+    ///
+    /// A file is a chain of entries: the entry its id names, then the entry each one's `next_stream`
+    /// names, until a `next_stream` of 0. `next_stream` is a row of the file table counted from one,
+    /// as the table of contents' `file_index` is, so the entry is at that number less one. For a map
+    /// the entry the id names is stream 1, the finished map, and the next is stream 0, the stripped
+    /// map the client compiles it from. Ported from Rurik's reader
+    /// (`research/Rurik/toolkit/mapdata/mapchunks.py:320-383`: `alloc_stream`, `next_stream`,
+    /// `MapIndex.chain`; `archive.py:357-388` for the row counted from one).
+    pub fn stream(&mut self, file_id: u32, stream: u8) -> io::Result<Option<Vec<u8>>> {
+        let Some(mut index) = self.by_id.get(&file_id).copied() else {
+            return Ok(None);
+        };
+        // `MapIndex.chain` stops at a row it has seen; a chain is never longer than the table.
+        for _ in 0..self.entries.len() {
+            let Some(entry) = self.entries.get(index).copied() else {
+                return Ok(None);
+            };
+            if entry.stream == stream {
+                return self.content(file_id, entry).map(Some);
+            }
+            if entry.next_stream == 0 {
+                return Ok(None);
+            }
+            index = entry.next_stream as usize - 1;
+        }
+        Ok(None)
+    }
+
+    /// One entry's decompressed bytes: `FaGetFile`'s read of it, as [`GwDat::file`] does for the
+    /// entry a file id names. `file_id` is for the error's wording.
+    fn content(&mut self, file_id: u32, entry: Entry) -> io::Result<Vec<u8>> {
+        let mut stored = vec![0u8; entry.size as usize];
+        self.file.seek(SeekFrom::Start(entry.offset))?;
+        self.file.read_exact(&mut stored)?;
+        if entry.compressed == 0 {
+            return Ok(stored);
+        }
+        let Some(tail) = stored.last_chunk::<4>() else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("a stream of {file_id:#X} is compressed but too short to carry its size"),
+            ));
+        };
+        let announced = u32::from_le_bytes(*tail);
+        crate::pack::fa_compress::decompress(&stored[..stored.len() - 4], announced as usize).map_err(
+            |error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("a stream of {file_id:#X} did not decompress: {error}"),
+                )
+            },
+        )
+    }
+
     /// The decompressed size an entry announces: the low `u32` of its last four bytes. `None` for a stored
     /// entry, which needs no size.
     pub fn announced_size(&mut self, file_id: u32) -> io::Result<Option<u32>> {
@@ -341,6 +397,87 @@ mod tests {
             }
         }
         None
+    }
+
+    /// A map's two streams, against the real archive: the entry map 148's file id names is stream 1,
+    /// the finished map, whose records are of stage 2; its stream 0 is the stripped map, the same
+    /// container with records of stage 1; and it has no third. With `KRYTA_STREAM_OUT` set to a
+    /// folder, the two are saved there as `<file id>.ffna` and `<file id>.stripped.ffna`, which is
+    /// how a test input for the client is made (`docs/port/24-custom-maps.md`, D1).
+    #[test]
+    fn a_map_has_a_finished_stream_and_a_stripped_one() {
+        let Some(path) = gw_dat_path() else {
+            eprintln!("skipped: no local Gw.dat (set KRYTA_GW_DAT or put one beside the workspace)");
+            return;
+        };
+        let mut archive = GwDat::open(&path).expect("open Gw.dat");
+        let file_id = 0x1B97D;
+        assert_eq!(archive.entry(file_id).expect("map 148's file").stream, 1);
+
+        let finished = archive.stream(file_id, 1).expect("read").expect("stream 1");
+        assert_eq!(Some(&finished), archive.file(file_id).expect("read").as_ref());
+        let stripped = archive.stream(file_id, 0).expect("read").expect("stream 0");
+        assert!(archive.stream(file_id, 2).expect("read").is_none(), "a map has two streams");
+        assert!(archive.stream(0x7FFF_FFFE, 0).expect("read").is_none(), "an id nobody put there");
+
+        // A record's id carries its stage in its top four bits (`MapData.rs`, `STAGE_SHIFT`).
+        let stages = |map: &[u8]| -> Vec<u32> {
+            let chunks = crate::terrain::map_data::Chunks::parse(map).expect("a map container");
+            let mut stages: Vec<u32> = chunks.iter().map(|chunk| chunk.chunk_id >> 28).collect();
+            stages.dedup();
+            stages
+        };
+        assert_eq!(&finished[..5], b"ffna\x03");
+        assert_eq!(&stripped[..5], b"ffna\x03");
+        assert_eq!(stages(&finished), [2], "the finished map's records");
+        assert_eq!(stages(&stripped), [1], "the stripped map's records");
+        eprintln!(
+            "file {file_id:#X}: finished {} bytes, stripped {} bytes",
+            finished.len(),
+            stripped.len()
+        );
+
+        if let Ok(folder) = std::env::var("KRYTA_STREAM_OUT") {
+            let folder = std::path::Path::new(&folder);
+            std::fs::create_dir_all(folder).expect("the folder");
+            std::fs::write(folder.join(format!("{file_id:08X}.ffna")), &finished).expect("write");
+            std::fs::write(folder.join(format!("{file_id:08X}.stripped.ffna")), &stripped)
+                .expect("write");
+        }
+    }
+
+    /// A custom map never enters the archive (`docs/port/24-custom-maps.md`): the file ids named in
+    /// `KRYTA_ABSENT_FILE_IDS` (comma separated, hexadecimal with `0x` or decimal) are not in it. Run
+    /// with the client closed, after a client has loaded those maps; it prints the census it read.
+    #[test]
+    fn the_archive_holds_none_of_the_named_custom_file_ids() {
+        let (Some(path), Ok(named)) = (gw_dat_path(), std::env::var("KRYTA_ABSENT_FILE_IDS")) else {
+            eprintln!("skipped: no local Gw.dat, or no KRYTA_ABSENT_FILE_IDS");
+            return;
+        };
+        let archive = GwDat::open(&path).expect("open Gw.dat");
+        let ids = archive.file_ids();
+        eprintln!(
+            "{path}: {} entries, {} file ids, the highest below bit 31 is {:#X}",
+            archive.len(),
+            ids.len(),
+            ids.iter().copied().filter(|id| id & 0x8000_0000 == 0).max().unwrap_or(0)
+        );
+        for name in named.split(',').map(str::trim).filter(|name| !name.is_empty()) {
+            let file_id = match name.strip_prefix("0x").or_else(|| name.strip_prefix("0X")) {
+                Some(hex) => u32::from_str_radix(hex, 16),
+                None => name.parse(),
+            }
+            .unwrap_or_else(|_| panic!("'{name}' is not a file id"));
+            // A pending replacement is the same id with bit 31 set, and speaks for it.
+            for spelling in [file_id, file_id | 0x8000_0000] {
+                assert!(
+                    archive.entry(spelling).is_none(),
+                    "file id {spelling:#X} is in the archive"
+                );
+            }
+            eprintln!("file id {file_id:#X} is not in the archive");
+        }
     }
 
     /// The index, against the real archive: the file ids a map's own record names are entries in it, an

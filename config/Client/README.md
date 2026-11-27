@@ -40,4 +40,5 @@ every offset in this folder against that file and prints the addresses.
 
 | file | concern |
 |---|---|
+| `offsets/files.json` | the client's own functions for opening an archive file, reading it whole and letting it go. The maps the server hosts for its clients hook the first and call the second (`docs/port/24-custom-maps.md`); a build they do not fit runs without that feature |
 | `offsets/titles.json` | the three places the custom title feature hooks: the title rank message's call to its worker, the hover text's call to its formatter, and the title table lookup |

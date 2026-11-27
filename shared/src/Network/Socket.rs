@@ -170,6 +170,11 @@ impl SessionIo {
         written
     }
 
+    /// Wait, without holding the thread: for a session that sends at a pace it was configured with.
+    pub async fn pause(&mut self, wait: std::time::Duration) {
+        tokio::time::sleep(wait).await;
+    }
+
     /// Close the connection.
     pub async fn close(&mut self) -> std::io::Result<()> {
         self.stream.shutdown().await

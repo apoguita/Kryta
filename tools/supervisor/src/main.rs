@@ -49,6 +49,9 @@ const DEFAULT_STACK: &str = "tools/supervisor/stack.json";
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
 /// How many times one service may ask to be restarted (exit code `2`) before the stack is stopped.
 const MAX_RESTARTS: u32 = 5;
+/// The exit status Windows gives a process ended by Ctrl+C that does not handle the event itself
+/// (`STATUS_CONTROL_C_EXIT`, ntstatus.h). It is the operator's stop, not a service failing.
+const STATUS_CONTROL_C_EXIT: u32 = 0xC000_013A;
 
 /// One service, as `stack.json` states it.
 #[derive(Debug, Clone)]
@@ -781,10 +784,21 @@ fn main() -> std::process::ExitCode {
         if !all_up {
             break;
         }
+        // Ctrl+C reaches every process on the console, so the children are already going down with
+        // it. That is the operator's stop, not a service dying: leave before reading their statuses.
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
         let mut asked: Vec<String> = Vec::new();
         for (service, child) in children.iter_mut() {
             if let Ok(Some(status)) = child.try_wait() {
                 let code = status.code().unwrap_or(1);
+                // The same Ctrl+C, seen in a child before this process's own handler has set `stop`:
+                // Windows ends a process that does not handle the event with STATUS_CONTROL_C_EXIT.
+                if code as u32 == STATUS_CONTROL_C_EXIT {
+                    all_up = false;
+                    break;
+                }
                 state_word(&state, &service.name, &format!("exited {code}"));
                 if code == 2 {
                     let count = restarts.entry(service.name.clone()).or_insert(0);

@@ -641,12 +641,9 @@ fn start_portal(
     Ok(portal_sockets)
 }
 
-/// The custom title text of the world pack, as the JSON document a patched client is given, and the
-/// file it was read from. `None` when `ClientLink.TitleWorldConfig` is empty.
-///
-/// The pack is the world program's (`WorldPack` in its configuration); this program reads the
-/// titles file of the same pack so the text a client shows is the text the world sends ranks for.
-fn read_custom_titles(config: &Config, log: &Log) -> Result<Option<(Vec<u8>, PathBuf)>, String> {
+/// The world pack the client link serves from: `WorldPack` of the world program's configuration,
+/// which `ClientLink.TitleWorldConfig` names. `None` when that setting is empty.
+fn read_world_pack(config: &Config) -> Result<Option<String>, String> {
     let title_world_config =
         read_string(config, "ClientLink.TitleWorldConfig", "worldserver/worldserver.json")?;
     if title_world_config.is_empty() {
@@ -657,6 +654,18 @@ fn read_custom_titles(config: &Config, log: &Log) -> Result<Option<(Vec<u8>, Pat
     let (pack, _) = world
         .value_string("WorldPack", "config/World/Vanilla")
         .map_err(|error| error.to_string())?;
+    Ok(Some(pack))
+}
+
+/// The custom title text of the world pack, as the JSON document a patched client is given, and the
+/// file it was read from. `None` when `ClientLink.TitleWorldConfig` is empty.
+///
+/// The pack is the world program's (`WorldPack` in its configuration); this program reads the
+/// titles file of the same pack so the text a client shows is the text the world sends ranks for.
+fn read_custom_titles(config: &Config, log: &Log) -> Result<Option<(Vec<u8>, PathBuf)>, String> {
+    let Some(pack) = read_world_pack(config)? else {
+        return Ok(None);
+    };
     let path = std::path::Path::new(&pack).join("titles.json");
     let titles = game::characters::titles::VanillaTitles::load(&path)
         .inspect_err(|error| log.out(LogLevel::Error, "server.authserver", error))?;
@@ -699,18 +708,39 @@ fn start_client_link(
         }
         None => Vec::new(),
     };
-    let link = crate::server::client_link::ClientLink::load(
+    let mut link = crate::server::client_link::ClientLink::load(
         std::path::Path::new(&directory),
         custom_tracks,
     )
     .map_err(|error| format!("the client link's offsets could not be read: {error}"))?;
+    // The maps this server hosts for its clients: the finished map files of the same world pack
+    // the titles come from (`docs/port/24-custom-maps.md`, "The delivery plan").
+    if let Some(pack) = read_world_pack(config)? {
+        // The flavor is the pack's own folder name: "Vanilla" for `config/World/Vanilla`.
+        let flavor = std::path::Path::new(&pack)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let pack = game::maps::pack::Pack::load(&pack, log)?;
+        link.host_maps(&flavor, pack.map_files())?;
+    }
+    let map_part_pause: u64 = read(config, "ClientLink.MapPartPauseMs", 0)?;
+    if map_part_pause > 0 {
+        link.set_map_part_pause(std::time::Duration::from_millis(map_part_pause));
+        log.out(
+            LogLevel::Warn,
+            "server.authserver",
+            format!("Client link: map files are sent slowly, {map_part_pause} ms before each part (ClientLink.MapPartPauseMs)."),
+        );
+    }
     log.out(
         LogLevel::Info,
         "server.authserver",
         format!(
-            "Client link: {} offset document(s) from {directory}, {} custom title(s), binding {bind}.",
+            "Client link: {} offset document(s) from {directory}, {} custom title(s), {} map file(s) hosted, binding {bind}.",
             link.offset_documents(),
-            link.custom_titles()
+            link.custom_titles(),
+            link.hosted_maps()
         ),
     );
 

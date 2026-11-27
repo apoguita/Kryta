@@ -1449,6 +1449,27 @@ impl PathGraphs {
         })))
     }
 
+    /// Add the graph of one finished map file, under the file id the map's record names. A graph
+    /// already held under that id is replaced: a file in the pack is the map the pack states.
+    ///
+    /// The bytes are imported as an archive blob is (`import_graph`, below): the finished file a
+    /// client writes for a map made outside the game is the same container
+    /// (`docs/port/24-custom-maps.md`, "What phase 4 has"). Nothing is bound: call
+    /// [`PathGraphs::bind`] after.
+    pub fn insert_file(
+        &self,
+        file_id: u32,
+        map: &[u8],
+    ) -> Result<(), crate::terrain::map_data::ImportError> {
+        let graph = PathStaticData::import(map)?;
+        self.0
+            .data
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .insert(file_id, std::sync::Arc::new(graph));
+        Ok(())
+    }
+
     /// Bind every map whose blob is among the loaded graphs. Returns how many were bound.
     pub fn bind(&self, maps: &[MapEntry]) -> usize {
         let data = self.0.data.lock().unwrap_or_else(|err| err.into_inner());
