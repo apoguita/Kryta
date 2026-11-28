@@ -254,7 +254,7 @@ sniffer's; this tree has both forms of each movement builder (`agent_packets`, 4
 |---|---|---|---|
 | the greeting before the login | `session_info` then `heartbeat` | same | ported |
 | the login answer | one `character_info` per character, `account_settings`, `friend_stream_end`, `account_info`, `request_response` (`asura-auth/src/lib.rs:669-746`) | same five, same order | ported |
-| the creation conversation | `0x8089` -> the player-data block; `0x808A` -> the PvP half; `0x8060` -> removals, `0x00DB`, `0x00B7`, the new set; `0x808B` -> `0x0188` + `0x0099` (`creation.rs:190-519`) | same | ported, with the answer to `0x8060` taken from the retail server instead (`recordings/client/raw/creation-armor-head-color-unfiltered.jsonl` seq 1194-1225): the removals, `0x00B7`, `0x00DB`, and for each new piece `0x0161`, `0x015A` with the profession on screen, `0x013E` into the backpack's slot 0, `0x014B` to the equipped bag. ASURA and GWPS send `0x00DB` before `0x00B7` and add each piece to the equipped bag directly with no `0x015A`. Two things follow from the retail order: the creation backpack must be empty, so the two stacks the reference seeds there are removed from `config/World/Vanilla/creation/inventory.json` (the retail backpack is empty on the creation screen and on the new character, seq 10-660 and 1308-1333); and `0x00DB` still carries this tree's empty list where the retail server sends 520 bytes. And one message more than ASURA answers: after each `0x8060` the client sends seven `0x8084` (`{u8 equipSlot, u8 colour}`, slots `4, 2, 3, 6, 5, 0, 1`) carrying the armour colours it picked, and one more for every colour changed by hand. ASURA ignores them; this tree answers each as the retail server does and keeps the colour on the created character (3.2, row `0x8084`) |
+| the creation conversation | `0x8089` -> the player-data block; `0x808A` -> the PvP half; `0x8060` -> removals, `0x00DB`, `0x00B7`, the new set; `0x808B` -> `0x0188` + `0x0099` (`creation.rs:190-519`) | same | ported, with the answer to `0x8060` taken from the retail server instead (`recordings/client/raw/creation-armor-head-color-unfiltered.jsonl` seq 1194-1225): the removals, `0x00B7`, `0x00DB`, and for each new piece `0x0161`, `0x015A` with the profession on screen, `0x013E` into the backpack's slot 0, `0x014B` to the equipped bag. ASURA and GWPS send `0x00DB` before `0x00B7` and add each piece to the equipped bag directly with no `0x015A`. Two things follow from the retail order: the creation backpack must be empty, so the two stacks the reference seeds there are removed from `config/flavors/Vanilla/World/creation/inventory.json` (the retail backpack is empty on the creation screen and on the new character, seq 10-660 and 1308-1333); and `0x00DB` still carries this tree's empty list where the retail server sends 520 bytes. And one message more than ASURA answers: after each `0x8060` the client sends seven `0x8084` (`{u8 equipSlot, u8 colour}`, slots `4, 2, 3, 6, 5, 0, 1`) carrying the armour colours it picked, and one more for every colour changed by hand. ASURA ignores them; this tree answers each as the retail server does and keeps the colour on the created character (3.2, row `0x8084`) |
 | the items ask | the stream, the bags and items, four weapon sets, the gold, four faction caps, the hard-mode flag, the character summary, the map, ready-for-spawn, the manifest (`item.rs:70`) | same, plus the reference's own `0x0196`-before-manifest order | ported |
 | the spawn ask | the entry point (`agent.rs:1219`, `map.rs:13-20`) | the same one frame | ported |
 | the players ask | 34 frames, in one order (`player.rs:382-388` for the party) | the same 34 in order, with the title definitions during load and the test display selection afterward | ported for the ASURA block |
@@ -367,7 +367,7 @@ rule** for every destination that is not a main town (`lib.rs:119-134`).
 **What is not settled is the datum, not the rule.** `destination_type` is the *catalogue's* type for
 the map being asked for - the map's record in the world pack (`basic.json`), in this tree - and the login program holds no world
 catalogue: its configuration opens the login and character databases only
-(`authserver/authserver.json`), and the reference's own auth server reads no world database either.
+(the flavor's `authserver.json`), and the reference's own auth server reads no world database either.
 So the caller passes `None`, which is rule 3's own first branch ("the client's own map"), and the
 program says so in its log. Nothing is invented to fill it.
 
@@ -563,7 +563,7 @@ because the reference's structure is this tree's authority for how a thing is ar
 
 | ASURA file | lines | this tree | verdict |
 |---|---|---|---|
-| `default_equipment.rs` | 2,960 | `config/World/Vanilla/creation/equipment.json` | ported as data: 32 sets, 179 `ItemSpec`s, values checked against the file (map 0 / profession 1's first two items match field for field) |
+| `default_equipment.rs` | 2,960 | `config/flavors/Vanilla/World/creation/equipment.json` | ported as data: 32 sets, 179 `ItemSpec`s, values checked against the file (map 0 / profession 1's first two items match field for field) |
 | `pathfind.rs` | 1,794 | `game/Terrain/Pathfind.rs` | ported, and wired: a walk is answered from the map's own graph |
 | `agent.rs` | 1,516 | `game/Agents/mod.rs`, the four handlers in `game/Handlers/MovementHandler.rs` | ported: `AgentState`, `Motion`, `Standing`, `densify`, the cadence, the tolerance and every handler |
 | `map_data.rs` | 1,196 | `game/Terrain/MapData.rs` | ported whole, importer included; three of ASURA's six tests (1025, 1045, 1146) are not (7b) |
@@ -580,10 +580,10 @@ because the reference's structure is this tree's authority for how a thing is ar
 | `graph_dump.rs` | 473 | `game/Terrain/GraphDump.rs` | ported whole |
 | `gwdat.rs` | 431 | `game/Pack/Gwdat.rs` | ported whole |
 | `fa_compress.rs` | 402 | `game/Pack/FaCompress.rs` | ported whole |
-| `chat.rs` | 354 | `game/Chat/`, `config/Server/commands.json`, and `answer_chat_message` + `answer_line` in `game/Handlers/ChatHandler.rs` | ported: the channel rule, `alias_key`; the command table is now **data** (`0011`); `/maps` uses a shared map-list function, with chat output unchanged. The three text frames are **not** ASURA's - they are the measured ones (`0012-chat-text-is-sent.md`) |
+| `chat.rs` | 354 | `game/Chat/`, `config/flavors/Vanilla/Server/commands.json`, and `answer_chat_message` + `answer_line` in `game/Handlers/ChatHandler.rs` | ported: the channel rule, `alias_key`; the command table is now **data** (`0011`); `/maps` uses a shared map-list function, with chat output unchanged. The three text frames are **not** ASURA's - they are the measured ones (`0012-chat-text-is-sent.md`) |
 | `pathfind/directional.rs` | 320 | `game/Terrain/Pathfind/Directional.rs` | ported whole, its PROVISIONAL caveat kept |
 | `replay.rs` | 302 | nothing | ASURA's own capture-replay harness; this tree's equivalent is `recordings/` and the `--ignored` end-to-end tests |
-| `map_spawns.rs` | 264 | each map's `spawns.json` in the world pack (`config/World/Vanilla/maps/`, `docs/decisions/0014-the-world-content-is-a-pack.md`) | ported as data (467 points, with the facing each states) |
+| `map_spawns.rs` | 264 | each map's `spawns.json` in the world pack (`config/flavors/Vanilla/World/maps/`, `docs/decisions/0014-the-world-content-is-a-pack.md`) | ported as data (467 points, with the facing each states) |
 | `instance_table.rs` | 223 | `game/Maps/InstanceTable.rs` | ported; the content is every map record (`basic.json`) with an `instance_value` |
 | `cartography.rs` | 219 | `game/Maps/Cartography.rs` | ported: the grid's announcement and its slices |
 | `dispatch.rs` | 218 | the dispatch in `WorldSession` | ported: 22 arms, 37 messages |

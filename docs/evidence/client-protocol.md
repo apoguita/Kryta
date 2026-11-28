@@ -317,7 +317,7 @@ asura-world --dump-path-graphs data\path-graphs.bin
 asura-world            # picks data\path-graphs.bin up automatically
 ```
 
-Current map-description sources are documented in [World pack files](../../config/World/README.md).
+Current map-description sources are documented in [World pack files](../../config/flavors/README.md).
 
 - `--dump-path-graphs FILE` writes the hosted catalogue's path graphs into FILE;
   `--dump-all` writes every pathing map in the archive instead. `--path-graphs` /
@@ -479,7 +479,7 @@ Zero `0x00C1` in that file. So the world is what decides that the player reached
 same eight-message stream `/tp` and the world map produce (`docs/reference/client-protocol.md` 5f, the eight messages below). The
 implementation therefore has a **doorway table**: where a map's doors are, which instance each leads to,
 and where a character arriving through one stands. Current content sources and file layout are
-documented in [World pack files](../../config/World/README.md); legacy SQL and compiled portal
+documented in [World pack files](../../config/flavors/README.md); legacy SQL and compiled portal
 tables do not supply missing runtime pack content. A crossing fires when the step from the
 last believed position to this one passes **through** a wall (`crates/asura-world/src/travel.rs`,
 `portal_crossed`); a point-shaped doorway still counts within `REACH`. The `0x80C1` arm still names the

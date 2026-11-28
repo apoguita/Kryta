@@ -1,14 +1,19 @@
-//! Settings: each program's own JSON file, shown here and changed here one value at a time.
+//! Settings: each program's settings in the flavor this machine runs, shown here and changed here
+//! one value at a time (`docs/decisions/0016-a-server-is-a-flavor.md`).
 //!
-//! The values are the file's, not the program's effective ones: a program reads its file at
-//! start-up and applies the environment over it, so a change made here takes effect when the
-//! program is restarted. The passwords in a connection string are masked by the settings reader
-//! itself (`Config::describe`), so what this area answers is safe to paste, and a masked setting is
-//! never changed from here.
+//! A program's settings are two files: its own in the flavor's folder
+//! (`config/flavors/<flavor>/<program>.json`), and the section named as the program in
+//! `config/machine.json`, whose values win. Each row says which of the two states it, and a change
+//! is written into that file: a machine's value into the machine's file, a flavor's into the
+//! flavor's. The values are the files', not a running program's: a program reads them at start-up
+//! and applies the environment over them, so a change takes effect when the program is restarted.
+//! The passwords in a connection string are masked by the settings reader itself
+//! (`Config::describe`), so what this area answers is safe to paste, and a masked setting is never
+//! changed from here.
 //!
-//! A program's `.dist` file beside its settings file is the list of what the program reads. A
-//! setting the `.dist` states and the file does not is shown with the `.dist`'s value, marked as
-//! not in the file, and saving it writes it into the file.
+//! `config/machine.json.dist` is the list of what a machine states. A setting it states and
+//! neither file does is shown with its value there, marked as not in the file, and saving it
+//! writes it into the machine's file.
 //!
 //! A change rewrites only the value's own characters, so the file keeps its order, its layout and
 //! its `doc` lines. Before anything is written the changed text is read back, and the write is
@@ -115,10 +120,38 @@ pub fn rows(path: &str) -> Result<Vec<(String, String)>, String> {
     Ok(rows)
 }
 
-/// One program's settings as the page shows them: the file's own, then the ones only its `.dist`
-/// states.
-fn described(path: &str) -> Result<Vec<Value>, String> {
-    let row = |key: &str, value: &str, leaf: Option<&Leaf>, in_file: bool| {
+/// The settings one program's section of a machine file states, with the section's name taken off
+/// each key. A machine file that does not exist states nothing: it is optional.
+fn section_leaves(file: &str, section: &str) -> Result<Vec<Leaf>, String> {
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return Ok(Vec::new());
+    };
+    let prefix = format!("{section}.");
+    Ok(leaves_of(&text)
+        .map_err(|error| format!("{file}: {error}"))?
+        .into_iter()
+        .filter_map(|leaf| {
+            let key = leaf.key.strip_prefix(&prefix)?.to_string();
+            Some(Leaf { key, ..leaf })
+        })
+        .collect())
+}
+
+/// A value as the settings reader would print it, masked where it holds a password.
+fn printed(leaf: &Leaf) -> String {
+    let plain = match &leaf.value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    };
+    common::configuration::masked(&leaf.key, &plain)
+}
+
+/// One program's settings as the page shows them. `path` is the program's own file; `machine` is
+/// the machine's file and the section of it named as the program, for a file in a flavor's folder.
+/// Each row names the file that states it: `machine`, `flavor`, or `file` for a settings file
+/// that is in no flavor.
+fn described(path: &str, machine: Option<(&str, &str)>) -> Result<Vec<Value>, String> {
+    let row = |key: &str, value: &str, leaf: Option<&Leaf>, in_file: bool, source: &str, over: bool| {
         json!({
             "key": key,
             "value": value,
@@ -126,50 +159,87 @@ fn described(path: &str) -> Result<Vec<Value>, String> {
             "kind": leaf.map_or("list", Leaf::kind),
             "editable": leaf.is_some_and(Leaf::editable),
             "in_file": in_file,
+            "source": source,
+            "overrides_flavor": over,
         })
     };
     let text = std::fs::read_to_string(path).map_err(|error| format!("{path}: {error}"))?;
     let own = leaves_of(&text)?;
+    let (stated, defaults) = match machine {
+        Some((file, section)) => (
+            section_leaves(file, section)?,
+            // The template is optional: a machine with none beside its file is shown as it is.
+            section_leaves(&dist_path(file), section).unwrap_or_default(),
+        ),
+        None => (Vec::new(), Vec::new()),
+    };
+    let find = |leaves: &[Leaf], key: &str| leaves.iter().find(|leaf| leaf.key == key).cloned();
+
+    // `rows` is the program's own reading: the flavor's values with the machine's over them.
     let mut shown: Vec<Value> = rows(path)?
         .iter()
-        .map(|(key, value)| row(key, value, own.iter().find(|leaf| &leaf.key == key), true))
-        .collect();
-
-    // The `.dist` is optional: a file with none beside it is shown as it is.
-    let dist = dist_path(path);
-    if let (Ok(dist_text), Ok(dist_rows)) = (std::fs::read_to_string(&dist), rows(&dist)) {
-        let defaults = leaves_of(&dist_text)?;
-        for (key, value) in &dist_rows {
-            if own.iter().all(|leaf| &leaf.key != key) {
-                shown.push(row(key, value, defaults.iter().find(|leaf| &leaf.key == key), false));
+        .map(|(key, value)| {
+            let in_flavor = find(&own, key);
+            match find(&stated, key) {
+                Some(leaf) => row(key, value, Some(&leaf), true, "machine", in_flavor.is_some()),
+                None => {
+                    let source = if machine.is_some() { "flavor" } else { "file" };
+                    row(key, value, in_flavor.as_ref(), true, source, false)
+                }
             }
+        })
+        .collect();
+    for leaf in &defaults {
+        if find(&own, &leaf.key).is_none() && find(&stated, &leaf.key).is_none() {
+            shown.push(row(&leaf.key, &printed(leaf), Some(leaf), false, "machine", false));
         }
     }
     shown.sort_by(|left, right| left["key"].as_str().cmp(&right["key"].as_str()));
     Ok(shown)
 }
 
-/// One program's settings as the API states them.
-fn program(id: &str, label: &str, setting: &str, path: Option<&str>) -> Value {
-    let Some(path) = path else {
-        return json!({
-            "id": id, "label": label, "path": Value::Null, "rows": [],
-            "error": format!("No settings file is named in manage.json ({setting})."),
-        });
-    };
-    match described(path) {
-        Ok(rows) => json!({ "id": id, "label": label, "path": path, "rows": rows }),
-        Err(error) => json!({ "id": id, "label": label, "path": path, "rows": [], "error": error }),
-    }
+/// A path as the page prints it.
+fn shown_path(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
-/// `GET /api/v1/settings`: the world's and the login's settings files.
+/// The programs whose settings this area shows: the page's id and label, and the name the
+/// program's settings file and its machine section carry.
+const PROGRAMS: [(&str, &str, &str); 2] =
+    [("world", "World", "worldserver"), ("login", "Login", "authserver")];
+
+/// One program's two files in the flavor this machine runs: the flavor's name, the program's own
+/// file, and the machine's.
+fn files(manage: &Manage, stem: &str) -> Result<(String, String, String), String> {
+    let flavor = manage.flavor()?;
+    let machine = flavor.config_folder().join(common::configuration::MACHINE_FILE);
+    Ok((flavor.name.clone(), shown_path(&flavor.settings_file(stem)), shown_path(&machine)))
+}
+
+/// One program's settings as the API states them.
+fn program(manage: &Manage, id: &str, label: &str, stem: &str) -> Value {
+    let (flavor, path, machine) = match files(manage, stem) {
+        Ok(files) => files,
+        Err(error) => return json!({ "id": id, "label": label, "rows": [], "error": error }),
+    };
+    let mut answer = json!({
+        "id": id, "label": label, "flavor": flavor, "path": path, "machine_path": machine,
+        "rows": [],
+    });
+    match described(&path, Some((&machine, stem))) {
+        Ok(rows) => answer["rows"] = Value::Array(rows),
+        Err(error) => answer["error"] = Value::String(error),
+    }
+    answer
+}
+
+/// `GET /api/v1/settings`: the world's and the login's settings in the active flavor.
 fn list(manage: &Manage, _: &Call) -> Reply {
     Ok(json!({
-        "programs": [
-            program("world", "World", "WorldConfigFile", manage.world_config.as_deref()),
-            program("login", "Login", "AuthConfigFile", manage.auth_config.as_deref()),
-        ],
+        "programs": PROGRAMS
+            .iter()
+            .map(|(id, label, stem)| program(manage, id, label, stem))
+            .collect::<Vec<Value>>(),
     }))
 }
 
@@ -332,33 +402,56 @@ fn token(leaf: &Leaf, call: &Call) -> Result<String, Failure> {
     }
 }
 
+/// A file's text with one setting's value replaced. `None` when the setting is not in the text.
+pub(crate) fn replaced(text: &str, key: &str, token: &str) -> Option<String> {
+    let (start, end) = locate(text, 0, key)?;
+    Some(format!("{}{token}{}", &text[..start], &text[end..]))
+}
+
 /// A file's text with one setting's value replaced, or with the setting added from the `.dist`.
+///
+/// A setting is added at the end of the file, or at the end of the one section its key names (a
+/// machine file's `worldserver.RealmID`); a section the file does not have is not built here.
 fn changed(text: &str, key: &str, token: &str, adding: Option<&Leaf>) -> Result<String, Failure> {
     let Some(default) = adding else {
-        let (start, end) = locate(text, 0, key)
-            .ok_or_else(|| broken(format!("{key} could not be found in the file's text.")))?;
-        return Ok(format!("{}{token}{}", &text[..start], &text[end..]));
+        return replaced(text, key, token)
+            .ok_or_else(|| broken(format!("{key} could not be found in the file's text.")));
     };
-    if key.contains('.') {
-        return Err(bad(format!(
+    let bytes = text.as_bytes();
+    let (object, name, depth) = match key.split_once('.') {
+        None => (Some(0), key, 0),
+        Some((section, name)) => {
+            let found = members(text, 0).and_then(|all| {
+                all.into_iter()
+                    .find(|(member, start, _)| *member == section && byte(bytes, *start) == b'{')
+                    .map(|(_, start, _)| start)
+            });
+            (found.filter(|_| !name.contains('.')), name, 1)
+        }
+    };
+    let object = object.ok_or_else(|| {
+        bad(format!(
             "{key} is inside a section the file does not have; copy the section from the .dist file by hand."
-        )));
-    }
-    let close = text
-        .rfind('}')
-        .ok_or_else(|| broken("The file does not end with a closing brace."))?;
+        ))
+    })?;
+    let close = value_end(bytes, object)
+        .ok_or_else(|| broken("The file does not end with a closing brace."))?
+        - 1;
     let body = text[..close].trim_end();
+    let comma = if body.ends_with('{') { "" } else { "," };
     let line = if text.contains("\r\n") { "\r\n" } else { "\n" };
-    let name = serde_json::to_string(key).map_err(|error| broken(error.to_string()))?;
+    let pad = "  ".repeat(depth + 1);
+    let closing = "  ".repeat(depth);
+    let name = serde_json::to_string(name).map_err(|error| broken(error.to_string()))?;
     let doc = match &default.doc {
         Some(doc) => format!(
-            ",{line}    \"doc\": {}",
+            ",{line}{pad}  \"doc\": {}",
             serde_json::to_string(doc).map_err(|error| broken(error.to_string()))?
         ),
         None => String::new(),
     };
     Ok(format!(
-        "{body},{line}  {name}: {{{line}    \"value\": {token}{doc}{line}  }}{line}{}",
+        "{body}{comma}{line}{pad}{name}: {{{line}{pad}  \"value\": {token}{doc}{line}{pad}}}{line}{closing}{}",
         &text[close..]
     ))
 }
@@ -397,24 +490,58 @@ fn apply(text: &str, dist: Option<&str>, key: &str, call: &Call) -> Result<Strin
     Ok(text_after)
 }
 
-/// `POST /api/v1/settings/{program}/set`: write one setting's value into the program's file.
-fn set(manage: &Manage, call: &Call) -> Reply {
-    let (path, setting) = match call.param(0) {
-        "world" => (manage.world_config.as_deref(), "WorldConfigFile"),
-        "login" => (manage.auth_config.as_deref(), "AuthConfigFile"),
-        _ => return Err(missing("No program has that name.")),
+/// Where one setting of a program is changed, and the changed text: the machine's file when the
+/// machine states it (or when only the machine's template does), the flavor's file otherwise.
+/// Nothing is written here.
+fn placed(
+    flavor: (&str, &str),
+    machine: (&str, Option<&str>, Option<&str>),
+    section: &str,
+    key: &str,
+    call: &Call,
+) -> Result<(String, String), Failure> {
+    let (flavor_path, flavor_text) = flavor;
+    let (machine_path, machine_text, machine_dist) = machine;
+    let full = format!("{section}.{key}");
+    let states = |text: Option<&str>, key: &str| {
+        text.and_then(|text| leaves_of(text).ok())
+            .is_some_and(|leaves| leaves.iter().any(|leaf| leaf.key == key))
     };
-    let path = path.ok_or_else(|| {
-        unavailable(format!("No settings file is named in manage.json ({setting})."))
-    })?;
+    let in_machine = states(machine_text, &full);
+    if in_machine || (!states(Some(flavor_text), key) && states(machine_dist, &full)) {
+        let text = machine_text.ok_or_else(|| {
+            unavailable(format!(
+                "{machine_path} does not exist; copy {machine_path}.dist to it, and the value is written there."
+            ))
+        })?;
+        return Ok((machine_path.to_string(), apply(text, machine_dist, &full, call)?));
+    }
+    Ok((flavor_path.to_string(), apply(flavor_text, None, key, call)?))
+}
+
+/// `POST /api/v1/settings/{program}/set`: write one setting's value into the file that states it.
+fn set(manage: &Manage, call: &Call) -> Reply {
+    let (_, _, stem) = PROGRAMS
+        .iter()
+        .find(|(id, _, _)| *id == call.param(0))
+        .ok_or_else(|| missing("No program has that name."))?;
+    let (_, flavor_path, machine_path) = files(manage, stem).map_err(unavailable)?;
     let key = call.text("key");
     if key.is_empty() {
         return Err(bad("A change names its setting."));
     }
-    let text = std::fs::read_to_string(path).map_err(|error| broken(format!("{path}: {error}")))?;
-    let dist = std::fs::read_to_string(dist_path(path)).ok();
-    let text_after = apply(&text, dist.as_deref(), &key, call)?;
-    std::fs::write(path, &text_after).map_err(|error| broken(format!("{path}: {error}")))?;
+    let flavor_text = std::fs::read_to_string(&flavor_path)
+        .map_err(|error| broken(format!("{flavor_path}: {error}")))?;
+    let machine_text = std::fs::read_to_string(&machine_path).ok();
+    let machine_dist = std::fs::read_to_string(dist_path(&machine_path)).ok();
+    let (path, text_after) = placed(
+        (&flavor_path, &flavor_text),
+        (&machine_path, machine_text.as_deref(), machine_dist.as_deref()),
+        stem,
+        &key,
+        call,
+    )?;
+    std::fs::write(&path, &text_after).map_err(|error| broken(format!("{path}: {error}")))?;
 
     let value = call.text("value");
     manage.say(format!("settings: {key} in {path} is now {value}"));
@@ -463,15 +590,20 @@ mod tests {
         assert_eq!(again, after.replace("\"value\": 32", "\"value\": 8"));
     }
 
-    /// Every setting the two programs' own `.dist` files offer for editing is found where it is
-    /// written: saving it with the value it has leaves the file byte for byte as it was.
+    /// Every setting the two programs' own files in the base flavor, and the machine's template,
+    /// offer for editing is found where it is written: saving it with the value it has leaves the
+    /// file byte for byte as it was.
     #[test]
-    fn every_editable_setting_of_the_dist_files_is_found_in_its_text() {
+    fn every_editable_setting_of_the_shipped_files_is_found_in_its_text() {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../");
-        for file in ["authserver/authserver.json.dist", "worldserver/worldserver.json.dist"] {
-            let text = std::fs::read_to_string(format!("{root}{file}")).expect("the .dist reads");
+        for file in [
+            "config/flavors/Vanilla/authserver.json",
+            "config/flavors/Vanilla/worldserver.json",
+            "config/machine.json.dist",
+        ] {
+            let text = std::fs::read_to_string(format!("{root}{file}")).expect("the file reads");
             let editable: Vec<Leaf> = leaves_of(&text)
-                .expect("the .dist parses")
+                .expect("the file parses")
                 .into_iter()
                 .filter(Leaf::editable)
                 .collect();
@@ -511,7 +643,7 @@ mod tests {
         )
         .expect("the file is written");
         let rows = rows(&path.to_string_lossy()).expect("the file reads");
-        let shown = described(&path.to_string_lossy()).expect("the file is described");
+        let shown = described(&path.to_string_lossy(), None).expect("the file is described");
         let _ = std::fs::remove_file(&path);
 
         let value = |key: &str| {
@@ -533,8 +665,72 @@ mod tests {
         assert_eq!(shown[1]["editable"], true);
         assert_eq!(shown[1]["kind"], "number");
         assert_eq!(shown[1]["doc"], "d");
+        assert_eq!(shown[1]["source"], "file", "a file in no flavor has nothing laid over it");
+    }
 
-        let shown = program("world", "World", "WorldConfigFile", None);
-        assert!(shown["error"].as_str().is_some_and(|text| text.contains("WorldConfigFile")));
+    /// A program's settings in a flavor: each row names the file that states it, a machine's value
+    /// wins and is changed in the machine's file, a flavor's in the flavor's, and a setting only
+    /// the machine's template states is added to the program's section of the machine's file.
+    #[test]
+    fn a_value_is_shown_and_changed_in_the_file_that_states_it() {
+        const FLAVOR: &str = "{\n  \"CharacterSlots\": { \"value\": 6, \"doc\": \"slots\" },\n  \"BindIP\": { \"value\": \"0.0.0.0\" }\n}\n";
+        const MACHINE: &str = "{\n  \"worldserver\": {\n    \"BindIP\": { \"value\": \"127.0.0.1\", \"doc\": \"bind\" },\n    \"RealmID\": { \"value\": 2 },\n    \"WorldDatabaseInfo\": { \"value\": \"h;1;u;hunter2secret;d\" }\n  },\n  \"authserver\": {\n    \"RealmServerPort\": { \"value\": 6112 }\n  }\n}\n";
+        const TEMPLATE: &str = "{\n  \"worldserver\": {\n    \"RealmID\": { \"value\": 1 },\n    \"PidFile\": { \"value\": \"\", \"doc\": \"pid\" }\n  }\n}\n";
+
+        let config = std::env::temp_dir().join(format!("kryta-manage-flavor-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&config);
+        let flavor = config.join("flavors").join("Vanilla");
+        std::fs::create_dir_all(&flavor).expect("the flavor's folder");
+        let path = shown_path(&flavor.join("worldserver.json"));
+        let machine = shown_path(&config.join("machine.json"));
+        std::fs::write(&path, FLAVOR).expect("the flavor's file");
+        std::fs::write(&machine, MACHINE).expect("the machine's file");
+        std::fs::write(dist_path(&machine), TEMPLATE).expect("the machine's template");
+        let shown = described(&path, Some((&machine, "worldserver"))).expect("described");
+        let _ = std::fs::remove_dir_all(&config);
+
+        let row = |key: &str| {
+            shown.iter().find(|row| row["key"] == key).unwrap_or_else(|| panic!("no row {key}"))
+        };
+        assert_eq!(shown.len(), 5, "the flavor's two, the machine's two more, the template's one");
+        assert_eq!(row("CharacterSlots")["source"], "flavor");
+        assert_eq!(row("BindIP")["source"], "machine");
+        assert_eq!(row("BindIP")["value"], "127.0.0.1", "the machine's value wins");
+        assert_eq!(row("BindIP")["overrides_flavor"], true);
+        assert_eq!(row("BindIP")["doc"], "bind");
+        assert_eq!(row("RealmID")["overrides_flavor"], false);
+        assert_eq!(row("PidFile")["source"], "machine");
+        assert_eq!(row("PidFile")["in_file"], false);
+        assert_eq!(row("WorldDatabaseInfo")["editable"], false);
+        assert!(!serde_json::to_string(&shown).expect("json").contains("hunter2secret"));
+        assert!(shown.iter().all(|row| row["key"] != "RealmServerPort"), "the login's is not shown");
+
+        let request = Request::new("POST", "/api/v1/settings/world/set");
+        let place = |key: &str, value: Value, machine_text: Option<&str>| {
+            let call = Call { request: &request, params: Vec::new(), body: json!({ "key": key, "value": value }) };
+            placed(("flavor.json", FLAVOR), ("machine.json", machine_text, Some(TEMPLATE)), "worldserver", key, &call)
+        };
+        let (file, after) = place("BindIP", json!("10.0.0.1"), Some(MACHINE)).expect("the machine's");
+        assert_eq!(file, "machine.json");
+        assert_eq!(after, MACHINE.replace("127.0.0.1", "10.0.0.1"));
+
+        let (file, after) = place("CharacterSlots", json!(8), Some(MACHINE)).expect("the flavor's");
+        assert_eq!(file, "flavor.json");
+        assert_eq!(after, FLAVOR.replace("\"value\": 6", "\"value\": 8"));
+
+        let (file, after) = place("PidFile", json!("world.pid"), Some(MACHINE)).expect("added");
+        assert_eq!(file, "machine.json");
+        assert_eq!(
+            after,
+            MACHINE.replace(
+                "hunter2secret;d\" }\n  },",
+                "hunter2secret;d\" },\n    \"PidFile\": {\n      \"value\": \"world.pid\",\n      \"doc\": \"pid\"\n    }\n  },"
+            )
+        );
+
+        // A machine with no file of its own is told to make one; a secret is not changed here.
+        assert_eq!(place("PidFile", json!("x"), None).expect_err("no machine file").status, 503);
+        assert_eq!(place("WorldDatabaseInfo", json!("h;1;u;p;d"), Some(MACHINE)).expect_err("masked").status, 400);
+        assert_eq!(place("Nothing", json!("1"), Some(MACHINE)).expect_err("unknown").status, 404);
     }
 }

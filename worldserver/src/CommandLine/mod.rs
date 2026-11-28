@@ -4,7 +4,7 @@
 //! line and queues it), `src/server/game/Chat/Chat.cpp:909` (`CliHandler::ParseCommands`) and
 //! `src/server/game/World/World.cpp:1721-1736` (the world update runs the queue) at 30a36ec4d.
 //!
-//! **The console names no command.** What an operator may type is `config/Server/commands.json` read as rows
+//! **The console names no command.** What an operator may type is `config/flavors/Vanilla/Server/commands.json` read as rows
 //! (`game::chat::commands`), and what a row runs is a registered operation
 //! (`game::chat::operations`). This module turns a typed line into a call and prints the answer; it
 //! holds no command and no operation of its own.
@@ -226,7 +226,7 @@ mod tests {
     }
 
     fn table() -> Table {
-        Table::load("../config/Server/commands.json", &common::logging::Log::new(), &registry()).unwrap()
+        Table::load("../config/flavors/Vanilla/Server/commands.json", &common::logging::Log::new(), &registry()).unwrap()
     }
 
     #[test]

@@ -40,6 +40,7 @@ macro_rules! areas {
 areas! {
     overview,
     services,
+    flavors,
     console,
     accounts,
     players,

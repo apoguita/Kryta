@@ -66,7 +66,7 @@ fn start_auth() -> (Child, Receiver<String>, u16) {
     let exe = env!("CARGO_BIN_EXE_authserver");
     let mut child = Command::new(exe)
         .arg("-c")
-        .arg("authserver/authserver.json")
+        .arg("config/flavors/Vanilla/authserver.json")
         .current_dir("..")
         .env(PORT_ENV, "0")
         .env(PORTAL_ENV, "0")
@@ -171,7 +171,7 @@ fn start_world() -> (Child, Receiver<String>, u16) {
             "worldserver",
             "--",
             "-c",
-            "worldserver/worldserver.json",
+            "config/flavors/Vanilla/worldserver.json",
         ])
         .current_dir("..")
         .stdin(Stdio::null())
@@ -215,7 +215,7 @@ fn start_world() -> (Child, Receiver<String>, u16) {
 /// Remove the copies of map 148 a test's world opened, so the world database is as it was found.
 fn remove_instances(map_id: u32) {
     let log = Log::new();
-    let config = Config::load_json("../worldserver/worldserver.json", false, Policy::default())
+    let config = Config::load_json("../config/flavors/Vanilla/worldserver.json", false, Policy::default())
         .expect("the world program's own configuration");
     let settings = read_settings(&config, DatabaseKind::World).expect("the world settings");
     let mut pool = DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log)
@@ -230,7 +230,7 @@ fn remove_instances(map_id: u32) {
 /// The account the login presents: the owner's own row, read from the login database.
 fn account_of(user: &str) -> [u8; 16] {
     let log = Log::new();
-    let config = Config::load_json("authserver.json", false, Policy::default())
+    let config = Config::load_json("../config/flavors/Vanilla/authserver.json", false, Policy::default())
         .expect("the auth program's own configuration");
     let settings = read_settings(&config, DatabaseKind::Login).expect("the login settings");
     let mut pool = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log)
@@ -249,7 +249,7 @@ fn account_of(user: &str) -> [u8; 16] {
 /// The travel rows the account has, as (map, district, language).
 fn travel_rows(account: &[u8; 16]) -> Vec<(i64, i64, i64)> {
     let log = Log::new();
-    let config = Config::load_json("authserver.json", false, Policy::default())
+    let config = Config::load_json("../config/flavors/Vanilla/authserver.json", false, Policy::default())
         .expect("the auth program's own configuration");
     let settings = read_settings(&config, DatabaseKind::Login).expect("the login settings");
     let mut pool = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log)
@@ -276,7 +276,7 @@ fn travel_rows(account: &[u8; 16]) -> Vec<(i64, i64, i64)> {
 /// Remove every travel row the account has: the test's own hand-off.
 fn remove_travel(account: &[u8; 16]) {
     let log = Log::new();
-    let config = Config::load_json("authserver.json", false, Policy::default())
+    let config = Config::load_json("../config/flavors/Vanilla/authserver.json", false, Policy::default())
         .expect("the auth program's own configuration");
     let settings = read_settings(&config, DatabaseKind::Login).expect("the login settings");
     let mut pool = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log)
@@ -290,7 +290,7 @@ fn remove_travel(account: &[u8; 16]) {
 /// depending on what a client created by hand.
 fn write_character(account: &[u8; 16], name: &str) -> String {
     let log = Log::new();
-    let config = Config::load_json("authserver.json", false, Policy::default())
+    let config = Config::load_json("../config/flavors/Vanilla/authserver.json", false, Policy::default())
         .expect("the auth program's own configuration");
     let settings = read_settings(&config, DatabaseKind::Character).expect("the character settings");
     let mut pool = DatabaseWorkerPool::open(DatabaseKind::Character, &settings, &log)
@@ -323,7 +323,7 @@ fn write_character(account: &[u8; 16], name: &str) -> String {
 /// Remove the row `write_character` wrote, with everything the world then wrote for it.
 fn remove_character(uuid: &str) {
     let log = Log::new();
-    let config = Config::load_json("authserver.json", false, Policy::default())
+    let config = Config::load_json("../config/flavors/Vanilla/authserver.json", false, Policy::default())
         .expect("the auth program's own configuration");
     let settings = read_settings(&config, DatabaseKind::Character).expect("the character settings");
     let mut pool = DatabaseWorkerPool::open(DatabaseKind::Character, &settings, &log)
@@ -341,7 +341,7 @@ fn remove_character(uuid: &str) {
 /// the same repository the login uses.
 fn settings_blob_of(uuid: &str) -> Vec<u8> {
     let log = Log::new();
-    let config = Config::load_json("authserver.json", false, Policy::default())
+    let config = Config::load_json("../config/flavors/Vanilla/authserver.json", false, Policy::default())
         .expect("the auth program's own configuration");
     let settings = read_settings(&config, DatabaseKind::Character).expect("the character settings");
     let pool = DatabaseWorkerPool::open(DatabaseKind::Character, &settings, &log)
@@ -361,7 +361,7 @@ fn settings_blob_of(uuid: &str) -> Vec<u8> {
 /// The world program's own `WorldServerPort`: the hand-off's address is compared with the world
 /// program's configuration, not with a number written into the test.
 fn world_server_port() -> u16 {
-    let config = Config::load_json("../worldserver/worldserver.json", false, Policy::default())
+    let config = Config::load_json("../config/flavors/Vanilla/worldserver.json", false, Policy::default())
         .expect("the world program's own configuration");
     config
         .value::<u16>("WorldServerPort", 6113)
@@ -787,7 +787,7 @@ fn an_end_to_end_login_and_load_against_the_live_programs() {
     {
         // The row is gone from the database, read back through the same repository the login uses.
         let log = Log::new();
-        let config = Config::load_json("authserver.json", false, Policy::default())
+        let config = Config::load_json("../config/flavors/Vanilla/authserver.json", false, Policy::default())
             .expect("the auth program's own configuration");
         let settings =
             read_settings(&config, DatabaseKind::Character).expect("the character settings");

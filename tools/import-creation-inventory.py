@@ -10,8 +10,8 @@ The two sources are ASURA's data files, which are the reference's own numbers:
 Both are Rust literals, so this script reads them rather than asking anyone to retype 200 items. It
 writes two record lists that Kryta's own configuration reader loads:
 
-  * ``config/World/Vanilla/creation/inventory.json`` - the bags, and the items that are not part of a profession's set;
-  * ``config/World/Vanilla/creation/equipment.json`` - one set per (campaign, profession).
+  * ``config/flavors/Vanilla/World/creation/inventory.json`` - the bags, and the items that are not part of a profession's set;
+  * ``config/flavors/Vanilla/World/creation/equipment.json`` - one set per (campaign, profession).
 
 Usage: ``python tools/import-creation-inventory.py [path-to-ASURA]``
 """
@@ -163,10 +163,10 @@ def main():
         "sets": sets,
     }
 
-    with io.open("config/World/Vanilla/creation/inventory.json", "w", encoding="utf-8", newline="\n") as handle:
+    with io.open("config/flavors/Vanilla/World/creation/inventory.json", "w", encoding="utf-8", newline="\n") as handle:
         json.dump(inventory, handle, indent=2)
         handle.write("\n")
-    with io.open("config/World/Vanilla/creation/equipment.json", "w", encoding="utf-8", newline="\n") as handle:
+    with io.open("config/flavors/Vanilla/World/creation/equipment.json", "w", encoding="utf-8", newline="\n") as handle:
         json.dump(equipment, handle, indent=2)
         handle.write("\n")
 

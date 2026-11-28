@@ -53,7 +53,7 @@ never reached us", which is the question that could not be answered before.
 There are three, each one key, and each needs its own logger - the bytes, the statements and the keys
 are written at debug, and a switch that silently does nothing is worse than no switch. If one is on and
 its logger is not, the program says so and names the line to add. The code's default for each key is
-off, and `worldserver.json.dist` ships all three off; `authserver.json.dist` ships all three **on**,
+off, and the Vanilla flavor's `worldserver.json` ships all three off; its `authserver.json` ships all three **on**,
 with their loggers, so a login run from the shipped file traces by default.
 
 | what | key | logger to add, under `Logger` | what it prints |
@@ -90,7 +90,7 @@ a startup that worked until the statements are visible.
 operator can read: the server's own state and its problems. So the lines below that describe what one
 connection did - a load, an item move, a chat line, a travel, a refusal, the entry position, the ping -
 are written at `Debug`, on the `server.worldserver` logger. A line passes the logger's level before any
-appender sees it, and `worldserver.json.dist` sets `Logger.server` - which `server.worldserver`
+appender sees it, and the Vanilla flavor's `worldserver.json` sets `Logger.server` - which `server.worldserver`
 inherits - to `4` (`Info`), so with the shipped file neither the console nor `Server.log` (level 5,
 `Debug`) receives them; and the stack's console shows nothing either way, because it is not a log
 viewer.

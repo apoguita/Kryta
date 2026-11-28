@@ -1210,7 +1210,7 @@ impl DatabaseCharacters {
     /// (`research/ASURA_testfork/crates/asura-db/src/game.rs:229-241`) and `item_in_equipped_slot`
     /// (`asura-db/src/inventory.rs:145-156`). The slot numbers are GWPS's `EquippedItemSlot`
     /// (`GmInventory.h`): 2 body, 3 legs, 4 head, 5 boots, 6 gloves; this tree's
-    /// `config/World/Vanilla/creation/worn_slots.json` names the same cells by kind. The file id is
+    /// `config/flavors/Vanilla/World/creation/worn_slots.json` names the same cells by kind. The file id is
     /// cut to 16 bits as GWPS cuts it (`research/OpenTyria/code/OpenTyria/GameSrv.c:1740`), and a
     /// piece that is not worn is left out, not sent as zeros (`GmChar.c:24-31`).
     fn pieces_worn_by(&self, uuid: &str) -> Vec<ArmourPiece> {
@@ -1365,7 +1365,7 @@ mod tests {
     fn source() -> Option<DatabaseCharacters> {
         let log = Log::new();
         let config =
-            Config::load_json("../authserver/authserver.json", false, Policy::default()).ok()?;
+            Config::load_json("../config/flavors/Vanilla/authserver.json", false, Policy::default()).ok()?;
         let settings = read_settings(&config, DatabaseKind::Character).ok()?;
         let mut pool = DatabaseWorkerPool::open(DatabaseKind::Character, &settings, &log).ok()?;
         pool.ping().ok()?;
@@ -1423,7 +1423,7 @@ mod tests {
             characters[0].settings.pieces.is_empty(),
             "a source that was not told the equipped bag reads no pieces"
         );
-        // Bag 5: the equipped bag of `config/World/Vanilla/creation/inventory.json`, and the default of
+        // Bag 5: the equipped bag of `config/flavors/Vanilla/World/creation/inventory.json`, and the default of
         // the login program's `EquippedBag`.
         let equipped = 5u16;
         {
@@ -1622,9 +1622,9 @@ mod tests {
         let mut world = crate::world::World::new(2);
         world
             .load_creation(
-                    "../config/World/Vanilla/creation/inventory.json",
-                    "../config/World/Vanilla/creation/equipment.json",
-                    Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
+                    "../config/flavors/Vanilla/World/creation/inventory.json",
+                    "../config/flavors/Vanilla/World/creation/equipment.json",
+                    Some(std::path::Path::new("../config/flavors/Vanilla/World/creation/worn_slots.json")),
                     &log,
                 )
             .expect("the creation data");

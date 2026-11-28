@@ -16,12 +16,15 @@ Create a role with access to them. Copy the example configurations if you do not
 ones:
 
 ```powershell
-Copy-Item authserver/authserver.json.dist authserver/authserver.json
-Copy-Item worldserver/worldserver.json.dist worldserver/worldserver.json
+Copy-Item config/machine.json.dist config/machine.json
 Copy-Item tools/manage/manage.json.dist tools/manage/manage.json
 ```
 
-Set the database connection strings in those files, then build:
+`config/machine.json` is what this machine alone knows: the database connection strings, and the
+addresses and ports the programs bind. Everything else about the server is its flavor, the folder
+`config/flavors/Vanilla/`, which `config/flavor.json` names (`config/README.md`).
+
+Set the database connection strings in those two files, then build:
 
 ```powershell
 cargo build --workspace
@@ -30,7 +33,7 @@ cargo build --workspace
 On a fresh database, run the world once to create the schema, then stop it with Ctrl+C:
 
 ```powershell
-cargo run -p worldserver --bin worldserver -- -c worldserver/worldserver.json
+cargo run -p worldserver --bin worldserver
 ```
 
 ## Start Kryta

@@ -15,7 +15,7 @@
 //!   `ARRIVAL_MATCH`.
 //!
 //! **Where the data comes from:** one `portals.json` per map folder of the world pack
-//! (`config/World/<pack>/maps/.../<map>/portals.json`), as ASURA reads it
+//! (`config/flavors/<flavor>/World/maps/.../<map>/portals.json`), as ASURA reads it
 //! (`docs/decisions/0014-the-world-content-is-a-pack.md`). `game/Maps/Pack.rs` reads the files and the
 //! world program hands the arches to [`Portals::new`].
 //!
@@ -286,7 +286,7 @@ mod tests {
                 from_map: 148,
                 idx: 0,
                 to_map: Some(146),
-                // ASURA's measured arch for map 148 (`config/World/Vanilla/maps/Prophecies/`
+                // ASURA's measured arch for map 148 (`config/flavors/Vanilla/World/maps/Prophecies/`
                 // `Ascalon (pre-Searing)/Outposts/148/portals.json`), at the precision an f32 holds.
                 from: (7523.469, 5129.551),
                 to: (7055.75, 5592.349),

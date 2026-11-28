@@ -46,7 +46,7 @@ navigation dump, and the one file that step writes is the cache
 | source | what it is | state |
 |---|---|---|
 | Rurik, `research/Rurik/` | The map writer. `toolkit/mapdata/deploy.py` builds a "stripped" map file from a height field and donor chunks, and installs it into a copy of `Gw.dat` under a new file id (`0x5F0B0` onward). The client's own compiler turns it into the final file, walkable mesh included, on first load. | By its own report: a built map loaded and confined the character (2026-08-11), a created file id compiled (2026-08-20), a 256x256 map walked (2026-08-21), travel between a stock and a created map worked (2026-09-12). `studies/customarea/FINDINGS.md`, `studies/worldmaps/FINDINGS.md`, `studies/slice/FINDINGS.md`. |
-| kryta-cs, `research/kryta-cs/` | [aeratemark/kryta-cs](https://github.com/aeratemark/kryta-cs) at `1ec7df0` (2026-11-26, MIT): a map editor (Python, PySide6) for Kryta. Sculpt, paint textures, place props and spawns, set water; then build with a verbatim copy of Rurik's writer, install into `Gw.dat`, and publish a pack folder. | Its README is its own claim. Its one published map is in the fork: "Kryta Test Vale", 64x64, map 449, file id 389376 (`0x5F100`), at `research/Kryta-aeratemark/config/World/Vanilla/maps/Custom/449/` with the project at `research/Kryta-aeratemark/data/maps/custom/kryta-test-vale.kmap.json`. |
+| kryta-cs, `research/kryta-cs/` | [aeratemark/kryta-cs](https://github.com/aeratemark/kryta-cs) at `1ec7df0` (2026-11-26, MIT): a map editor (Python, PySide6) for Kryta. Sculpt, paint textures, place props and spawns, set water; then build with a verbatim copy of Rurik's writer, install into `Gw.dat`, and publish a pack folder. | Its README is its own claim. Its one published map is in the fork: "Kryta Test Vale", 64x64, map 449, file id 389376 (`0x5F100`), at `research/Kryta-aeratemark/config/flavors/Vanilla/World/maps/Custom/449/` with the project at `research/Kryta-aeratemark/data/maps/custom/kryta-test-vale.kmap.json`. |
 | every other project | A map list by data or by code, stock maps only. | None authors geometry, adds a file to the archive, or pairs a map id with a non-stock file. |
 
 ## The editor's route, end to end
@@ -57,7 +57,7 @@ From `research/kryta-cs/README.md`, "Build & Deploy", and `kryta_cs/kryta.py`:
    stock donor map in the same archive.
 2. Back up `Gw.dat` once, then install the map into it under a new file id, with an empty walkable
    mesh.
-3. Publish `config/World/<pack>/maps/Custom/<map id>/` with `basic.json` (`map_id`, `map_type`,
+3. Publish `config/flavors/<flavor>/World/maps/Custom/<map id>/` with `basic.json` (`map_id`, `map_type`,
    `map_file_id`, `name`, and the `instance_value` of the stock map it stands in for), `spawns.json`
    and `kryta-cs.json`. The pack's own folder for that id is moved to
    `<pack>/kryta-cs-displaced/`, because one id is stated once (`game/src/Maps/Pack.rs:123`).
@@ -333,8 +333,8 @@ modification time did not change.
 
 1. Port Reforged's five file resolvers (`C:\Users\Apo\Py4GW_Reforged_Native\offsets\gw_dat_reader.json`:
    `open_file_by_file_id_func`, `file_hash_to_rec_obj_func`, `read_file_buffer_func`,
-   `free_file_buffer_func`, `close_rec_obj_func`) into `config/Client/offsets/files.json`, and list
-   the file in `config/Client/README.md` and `docs/port/04-configuration.md`.
+   `free_file_buffer_func`, `close_rec_obj_func`) into `config/flavors/Vanilla/Client/offsets/files.json`, and list
+   the file in `config/flavors/Vanilla/Client/README.md` and `docs/port/04-configuration.md`.
 2. Proof: `$env:KRYTA_GW_EXE = 'F:\GW\GW1\Gw.exe'; cargo test -p kryta-client -- --ignored` prints an
    address for each.
 3. Read the client's code around the map loader in build 39167 (the functions the sources name at
@@ -400,8 +400,8 @@ editor's project file.
 
 ### Not in the plan yet
 
-A map id and a name of the custom map's own; the client's downloader asking for an id it lacks;
-portals between custom maps.
+A name of the custom map's own, and a map id past the client's table (both in "The map's row in
+the client" below); the client's downloader asking for an id it lacks; portals between custom maps.
 
 ### What phase 1 found
 
@@ -409,7 +409,7 @@ Read in the code of the stock client, build 39167 (`F:\GW\GW1\Gw.exe`), 2026-11-
 that build's, with the image at `0x400000`.
 
 **The five functions resolve.** `cargo test -p kryta-client -- --ignored` with
-`config/Client/offsets/files.json`:
+`config/flavors/Vanilla/Client/offsets/files.json`:
 
 | resolver | address | what it is |
 |---|---|---|
@@ -633,6 +633,44 @@ Not done: no world has been started with a custom map in its pack and walked by 
 Nothing is sent to a client: the two files are put beside it by hand or by the editor (step 3).
 The finished file reaches the pack only by the editor's publish, from the folder of the client
 that compiled it.
+
+## The map's row in the client (2026-11-27)
+
+The client holds one row for each map id in a table compiled into it (`s_missionClientData`,
+"How the client picks a map file" above): campaign, continent, region, kind, flags, party sizes,
+the world-map icon's place and the map's two footprints, a name id and a description id. It is in
+read-only memory and has one reader, a function that asserts on a map id past the table's end.
+
+**The owner's word, 2026-11-27:** "the map table, it's in the wrong place, it's unable to be
+modified easily, that's why we have the json config files". So a map's row is stated in the map's
+record, and the client is answered with it.
+
+**No source does this.** Every project puts a custom map on a stock map id and lets the client
+show the stock row (Rurik `studies/worldmaps/FINDINGS.md:114-117`: "the map id remains a cosmetic
+label"; kryta-cs publishes onto a stock slot, `README.md:285-287`). Eden rules out patching the
+table because its page is not writable (`research/Eden/docs/re/area-info-provenance.md:81-85`).
+What is built here is this tree's own, on the pattern of its title hook, which answers the same
+kind of table lookup; the decision is `docs/decisions/0017-a-maps-client-row-is-stated-in-the-pack.md`.
+
+**Measured in build 39167** (`measure_the_map_table`, `tools/client-dll/src/lib.rs`, from the
+client's file; time stamp `0x6AE951C4`): the lookup is at `0x5A6770`, `const Row* __cdecl (u32
+map_id)`; it compares the id with `0x382`, so the table has **898 rows**; a row is 124 bytes
+(`imul eax, esi, 0x7c` at `0x5A6793`); the table is at `0x96CF48`; the assertion is line 3035 of
+`ConstMission.cpp`. Row 148 reads campaign 1, continent 1, region 7, type 10, flags `0x400000`,
+world-map place (1062, 684), name id `0x28EE`, description id `0x28EF`. The other builds'
+counts (883, 888, 897) are in `research/Rurik/studies/maprows/FINDINGS.md:668-673`.
+
+| step | what | state |
+|---|---|---|
+| R1 | A map's `basic.json` states `client_row`: any of the row's 31 fields by name (`MAP_ROW_FIELDS`, `tools/client-link/src/lib.rs`; the names are Py4GW Reforged's `AreaInfo`). `game/src/Maps/Pack.rs`, `ClientRow` | built 2026-11-27 |
+| R2 | The login program sends the rows after the map list (`Message::MapRows`, link protocol 4; `ClientLink::host_map_rows`). A field name the row does not have stops the program | built 2026-11-27; the link's test reads the rows as a client does |
+| R3 | The DLL replaces the lookup (`maps.row_lookup`, `config/flavors/Vanilla/Client/offsets/maps.json`; `runtime/map_row_hooks.rs`) and answers a stated map with the client's own row with the stated fields over it (`map_rows.rs`). A row handed out is never moved or freed, because the client may keep the pointer | built 2026-11-27; the offset resolves to `0x5A6770` in the client's file. Run by the owner 2026-11-27: the hook installed on 898 rows and map 148 was answered with a stated row (`Kryta.27552.log`) |
+| R4 | A name and a description of the map's own. The row holds a name id and a description id, which the client codes into a string and decodes from its own text files. `client_row` states `name` and `description` as text; the link carries them (`MapRow::name`, `::description`, link protocol 5); the DLL gives each an id no text file has, from `0x7F000000` up, puts it in the row, and where the client hands a coded string to its decoder replaces the units of that id by the text in the coded form for literal text (`tools/client-dll/src/map_names.rs`, `runtime/text_hooks.rs`). Ported from Py4GW Reforged Native at `82e4746`: the function and its pattern (`ValidateAsyncDecodeStr`, `offsets/ui.json`, `validate_async_decode`, copied unchanged into `config/flavors/Vanilla/Client/offsets/text.json`; it resolves to `0x7C7CA0` in build 39167), the coding of a number (`EncStrToUInt32`) and the literal form. This tree's own: standing in front of the decoder and replacing the id. Without the text hook the row keeps no id of the server's, because the client's decoder asserts on an id its files do not have (`TextCache.cpp`, per `research/Eden/docs/re/text-table.md:214-219`) | built 2026-11-28; map 10000 states its name and description. Run by the owner the same day (`Kryta.25376.log`): the owner read "Kryta Test Vale" on the loading screen and on the mission map, and the log has the id replaced alone (3 units) and inside other texts (6 and 10 units). Not looked at in that run: the world map, the party window and the district selector |
+| R5 | A map id from 898 up. The lookup's assertion is not reached for a stated map, but the client checks a map id against the table's size in other places too (`MsCliMan:368`, `:409`, the `0x019F` handler: `research/Rurik/studies/maprows/FINDINGS.md:631`), and the unlocked-maps bit array is sized by it. No source has sent such an id. Every one of the 898 rows is a map of the game's (none is empty: `measure_the_map_table` with `KRYTA_MAP_ROWS=all`), so there is no free stock id, and the owner's word (2026-11-27) is that custom maps start at 10000 | being tried: the fork's test map is in the pack as map 10000 (`maps/Custom/Kryta Test Vale/Outposts/10000/`), with its whole row stated and no `instance_value`, reached by `/tp 10000` (`chat::pack_target`). The owner's first run, 2026-11-27: `/tp 10000` ended the client with `mission < MISSIONS`, `MsCliMan.cpp(368)`. Read in the client's file (`dump_the_clients_bytes`, `tools/client-dll/src/lib.rs`): the function at `0x850E00` records, for a map id, the value its load ended with, in a record of one bit and one value for each of the 898 maps; it is called when a load's manifest is done (`0x850F5B`, `0x850EED`) with the map and value of that manifest. The same record is what the instance table (`0x01A0`) is compared with, pair by pair, at `0x850C80` (the assertion of line 409): a map whose recorded value differs from the table's is queued to be fetched. So a map's `instance_value` is the content value the client compares, and a map the table leaves out is neither compared nor queued, which is why map 10000 states none. Built after that run: `maps.fetched_store` and `store_detour` (`runtime/map_row_hooks.rs`) leave a map id past the client's table out of the record. The owner's second run, 2026-11-28 (`Kryta.15496.log`): that hook left map 10000 out and the load went on to `missionId < MISSIONS`, `GmHelpGuide.cpp(2025)`: the function at `0x4FC0F0` adds `{map id, kind}` to the help guide's list of the last five places entered. Built after it: `maps.guide_place` and `guide_detour`, which leave such a map out of that list. `measure_the_map_count_checks` lists every place the client's code holds the number 898; those with an assertion that a map id is below it are, besides these two and the lookup: `MsCliMan.cpp(409)` (the instance table's pairs), `GmSelectMission.cpp(147)` and `(747)`, `GmMapCtlLocationTag.cpp(2786)` and `(3271)`, `PtButtons.cpp(868)`, `UiCtlWebLink.cpp(603)`. The owner's third run, 2026-11-28 (`Kryta.28868.log`): the character loaded into map 10000 twice, each time with the file fetched from the server and opened from the flavor's cache folder (`%LOCALAPPDATA%\Kryta\maps\Vanilla\`), and each time left out of the two lists; the owner travelled to Ascalon City and back with `/tp`. Not shown by that run: which of the other assertions a window of the interface reaches on such a map (the world map, the party window, the mission selection). The owner walked by click on it, with glitches the owner puts down to the walk function and has set aside for later |
+
+What a client run has to show for R3: a map whose record states, say, another `x` and `y` appears
+at that place on the world map, and the DLL's log has `map rows: hook installed` and
+`map rows: map <id> states x, y over the client's own row`.
 
 ## The delivery plan (2026-11-27)
 

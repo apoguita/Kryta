@@ -1,7 +1,7 @@
 # Title research: what a title is, what the projects prove, and what remains
 
 Status: research, and the record of the title slice implemented in commit `7679ba1`. That
-slice reads `config/World/Vanilla/titles.json` and `vanilla-title-wire.json`
+slice reads `config/flavors/Vanilla/World/titles.json` and `vanilla-title-wire.json`
 (`game/src/Characters/Titles.rs`), sends the title messages during load
 (`game/src/Server/Packets/TitlePackets.rs`), answers a title's display and hide (`0x8058`, `0x8059`)
 with `0x00F4` to the player and its peers, keeps a metric catalog with every value at zero
@@ -485,7 +485,7 @@ is still open.
 
 The stock-client restoration first added captured rank names, first
 thresholds, and both templates for 33 vanilla tracks in
-`config/World/Vanilla/titles.json`. These rows use one test point.
+`config/flavors/Vanilla/World/titles.json`. These rows use one test point.
 
 The early in-game checks reported missing descriptions. The server log
 confirmed the world had loaded all 12 catalog rows. Offline resolution of
@@ -591,7 +591,7 @@ in the investigation.
 
 For the nine reported rows with rank-zero data, both encoded strings and
 all other track fields except the test points match their cited retail
-packets in `config/World/Vanilla/vanilla-title-wire.json`. The Cantha and Elona
+packets in `config/flavors/Vanilla/World/vanilla-title-wire.json`. The Cantha and Elona
 Cartographer rows and the Tyrian and Canthan Skill Hunter rows even have
 one point in those retail packets. This establishes the source data for
 these rows. Their missing information in the owner's client test remains

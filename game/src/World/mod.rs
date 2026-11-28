@@ -112,7 +112,7 @@ pub struct World {
     realm: u32,
     maps: Vec<MapEntry>,
     /// The chat command surface: the names a player may type and the operation each runs, read from
-    /// `config/Server/commands.json` (`docs/decisions/0011-the-command-surface-is-content.md`).
+    /// `config/flavors/Vanilla/Server/commands.json` (`docs/decisions/0011-the-command-surface-is-content.md`).
     commands: crate::chat::commands::Table,
     /// The operations every surface reaches (`game/src/Chat/Operations.rs`). The program builds the
     /// registry before the rows are read, so a row naming an operation this world does not have is
@@ -295,7 +295,7 @@ impl World {
 
     /// The chat command surface: the names a player may type, and the operation each one runs.
     ///
-    /// Read from `config/Server/commands.json` at start-up (`docs/decisions/0011-the-command-surface-is-content.md`);
+    /// Read from `config/flavors/Vanilla/Server/commands.json` at start-up (`docs/decisions/0011-the-command-surface-is-content.md`);
     /// a world with no such file answers no command and said so when it started.
     pub fn commands(&self) -> &crate::chat::commands::Table {
         &self.commands
@@ -947,14 +947,15 @@ mod tests {
 
         let log = Log::new();
         let Some(config) =
-            Config::load_json("../worldserver/worldserver.json", false, Policy::default()).ok()
+            Config::load_json("../config/flavors/Vanilla/worldserver.json", false, Policy::default()).ok()
         else {
             panic!("the world program's own configuration reads");
         };
         let (world_pack, _) = config
-            .value_string("WorldPack", "config/World/Vanilla")
+            .value_string("WorldPack", "World")
             .expect("WorldPack is a string");
-        let pack = crate::maps::pack::Pack::load(std::path::Path::new("..").join(&world_pack), &log)
+        // The pack is the flavor's own content: relative to the folder the settings are in.
+        let pack = crate::maps::pack::Pack::load(config.flavor_path(&world_pack), &log)
             .expect("the world pack reads");
         let (records, spawns) = pack.load_maps().expect("the pack's maps");
         let arch_list = pack.arches().expect("the pack's arches");

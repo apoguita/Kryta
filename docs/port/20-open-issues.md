@@ -27,7 +27,7 @@ Written on 2026-11-23, after the documentation was read and corrected in full.
 | # | issue | where it is recorded |
 |---|---|---|
 | 10 | **Custom titles: the client side is rebuilt and confirmed; the server side is open.** The patch on disk now only redirects the client and makes it load `Kryta.dll` by itself; the DLL finds the client's title functions by byte pattern, from offsets the server provides, and is sent the title text over its own link to the login program (`docs/port/22-client-platform.md`). The owner tested it on 2026-11-23 ("everything seems to be working"), and the first implementation was removed. What is left for titles is items 10a and 10b, and the points under "Not built" and "Choices made while building" on that page. | `docs/port/22-client-platform.md` |
-| 10b | **The title files mix two things, because of a bad implementation.** The titles are loaded from the JSON files, and the values are loaded from them as well (`config/World/Vanilla/titles.json`, `config/World/Vanilla/vanilla-title-wire.json`: the files carry points, thresholds and display states beside the title definitions). This needs to be fixed. | `config/World/Vanilla/README.md`; `game/src/Characters/Titles.rs` |
+| 10b | **The title files mix two things, because of a bad implementation.** The titles are loaded from the JSON files, and the values are loaded from them as well (`config/flavors/Vanilla/World/titles.json`, `config/flavors/Vanilla/World/vanilla-title-wire.json`: the files carry points, thresholds and display states beside the title definitions). This needs to be fixed. | `config/flavors/Vanilla/World/README.md`; `game/src/Characters/Titles.rs` |
 | 10c | **A displaced client gets no notice.** Only one login per account is ever permitted: a new login closes any old connection (owner, 2026-11-23). Both programs enforce it (`authserver/src/Server/logins.rs`, `game/src/Accounts/Logins.rs`), and the owner tested it. The displaced client is not sent retail's notice (`ENetError` 0x23, "another client has connected using your account"), because no source shows the message that carries it; its connection is closed and it reports the loss in its own words. | `docs/port/09-parity-audit.md`, the one-login row |
 | 10d | **The character "Player One" ends the client on entering a map.** The client raises its own assertion, `id < s_items.Count()` at `P:\Code\Gw\Composite\Data\CpsData.cpp(432)`, with the id `0x47C34`, while loading map 148. It happens with the old `Gw.custom.exe` and with the new client alike, and the other character of the same account ("Test Subject") loads; so it is that character's rows, not the client: the data is corrupt (owner, 2026-11-23). Its nine `item_instance` rows have `item_type` 0, `model_id` 0 and no name, where the working character's rows have all three - rows written before those columns were filled. Nothing in the server refuses or repairs such a character before sending it to a client. Found 2026-11-23; the rows are left as they are. | the client's `ArenaNet.log` under `Documents\Guild Wars` |
 | 10a | **Titles are not finished.** Title earning and persistence do not exist: every metric is zero and nothing is recorded per character. | `docs/port/19-title-research.md`; `docs/port/09-parity-audit.md`, section 5 |
@@ -37,6 +37,18 @@ Written on 2026-11-23, after the documentation was read and corrected in full.
 | 14 | **The placement rule lacks one fact.** The login does not know the kind of the map a client asks for, so the outpost rule is ported but not in force. Three ways to supply it: the login reads the world's content, the character row carries the map's kind, or the rule is applied in the world. | `docs/port/09-parity-audit.md`, section 7a |
 | 15 | **Profession change.** On `0x8060` this tree omits GWPS's `0x015A` and `0x014B`, as ASURA does. Adopting them is open. | `docs/port/02-wire.md`, "The creation screen's conversation" |
 | 16 | **Smaller items the audit lists:** the unread `createFlags` in the creation confirm, the creation error code the client has no text for, the seven armour-colour messages nobody reads, the missing reference client, and three unported ASURA tests. | `docs/port/09-parity-audit.md`, section 8 |
+
+## Flavors: a later phase
+
+The owner, 2026-11-27: what is left of flavors is work for a later phase, after map support. What
+is built is `docs/decisions/0016-a-server-is-a-flavor.md`.
+
+| # | issue | where |
+|---|---|---|
+| 37 | **A second flavor has never been run.** Only `Vanilla` exists. Nobody has copied a flavor, chosen it, restarted the stack and connected a client, and the panel's Flavors and Settings pages have not been used in a browser. | `docs/decisions/0016-a-server-is-a-flavor.md`; `tools/manage/src/areas/flavors.rs` |
+| 38 | **Characters are not a flavor's.** The databases are the machine's (`config/machine.json`), so every flavor shows the same accounts and characters, and a character saved on a map another flavor lacks or has changed is not handled. Not decided. | `config/machine.json.dist` |
+| 39 | **The panel does not rename or remove a flavor**, and does not move a value between a flavor and the machine. | `docs/port/23-control-panel.md` |
+| 40 | **A flavor is not packed for distribution**, and neither is the map pack a user loads ahead of time or a map served from a path the server names. | `docs/port/24-custom-maps.md`, "The delivery plan" |
 
 ## The repository
 

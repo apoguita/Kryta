@@ -52,18 +52,48 @@ const PORT_ENV: &str = "AC_WORLD_SERVER_PORT";
 /// The status interval, so the program's own liveness reaches this test's log quickly.
 const STATUS_ENV: &str = "AC_STATUS_INTERVAL";
 
-/// The configuration this run starts the program with: the machine's own `worldserver.json`, with
-/// the program's logger and its console appender raised to `Debug`.
+/// The Vanilla flavor's folder, from the workspace root the program is started in.
+const FLAVOR: &str = "config/flavors/Vanilla";
+
+/// Lay `over` on `under`: a section is merged key by key, anything else replaces.
+fn lay_over(under: &mut serde_json::Value, over: &serde_json::Value) {
+    match (under, over) {
+        (serde_json::Value::Object(under), serde_json::Value::Object(over))
+            if !over.contains_key("value") =>
+        {
+            for (key, value) in over {
+                lay_over(under.entry(key.clone()).or_insert(serde_json::Value::Null), value);
+            }
+        }
+        (under, over) => *under = over.clone(),
+    }
+}
+
+/// The configuration this run starts the program with: the Vanilla flavor's `worldserver.json` with
+/// the machine's own values laid over it, and the program's logger and its console appender raised
+/// to `Debug`.
 ///
 /// What one connection did - "is loading", a redirect, a refusal - is a `Debug` line
 /// (`docs/port/03-tracing.md`), and these tests read block sizes out of those lines. A logger's level
 /// is read from the file and has no environment override, so the run gets a file of its own under
-/// `target/`. Answers the path, relative to the workspace root the program is started in.
+/// `target/`. That file is in no flavor's folder, so what the program would have taken from the
+/// flavor is written into it: the machine's section of `config/machine.json`, and the flavor's own
+/// paths spelled from the workspace root. Answers the path, relative to that root.
 fn debug_config() -> String {
-    let text = std::fs::read_to_string("worldserver.json")
+    let root = std::path::Path::new("..");
+    let text = std::fs::read_to_string(root.join(FLAVOR).join("worldserver.json"))
         .expect("the world program's own configuration");
     let mut document: serde_json::Value =
         serde_json::from_str(&text).expect("worldserver.json is JSON");
+    if let Ok(machine) = std::fs::read_to_string(root.join("config/machine.json")) {
+        let machine: serde_json::Value =
+            serde_json::from_str(&machine).expect("machine.json is JSON");
+        lay_over(&mut document, &machine["worldserver"]);
+    }
+    for key in ["WorldPack", "InventoryFile", "EquipmentFile", "EquippedSlotsFile", "CommandsFile"] {
+        let stated = document[key]["value"].as_str().expect("a flavor path").to_string();
+        document[key]["value"] = serde_json::json!(format!("{FLAVOR}/{stated}"));
+    }
     document["Logger"]["server"]["value"][0] = serde_json::json!(5);
     document["Appender"]["Console"]["value"][1] = serde_json::json!(5);
     let relative = "target/end-to-end-worldserver.json";
@@ -401,7 +431,7 @@ type Pools = (
 /// The world's content is the pack's files (`docs/decisions/0014-the-world-content-is-a-pack.md`), so
 /// a test that needs a map's file id or its spawn points reads them where the program does.
 fn world_pack() -> (Vec<game::world::MapEntry>, Vec<game::maps::MapSpawn>) {
-    game::maps::pack::Pack::load("../config/World/Vanilla", &Log::new())
+    game::maps::pack::Pack::load("../config/flavors/Vanilla/World", &Log::new())
         .expect("the world pack reads")
         .load_maps()
         .expect("the pack's maps")
@@ -411,7 +441,7 @@ fn world_pack() -> (Vec<game::world::MapEntry>, Vec<game::maps::MapSpawn>) {
 /// does not, because a map with no graph answers `NoGraph` by design
 /// (`docs/decisions/0015-headless-navigation-assets.md`).
 fn cache_has_graph(map_id: u32) -> bool {
-    let config = Config::load_json("worldserver.json", false, Policy::default())
+    let config = Config::load_json("../config/flavors/Vanilla/worldserver.json", false, Policy::default())
         .expect("the world program's own configuration");
     let (dump, _) = config
         .value_string("PathGraphs", "data/path-graphs.bin")
@@ -428,7 +458,7 @@ fn cache_has_graph(map_id: u32) -> bool {
 /// Open the pools the program's configuration names: characters, world and login.
 fn open_pools() -> Pools {
     let log = Log::new();
-    let config = Config::load_json("worldserver.json", false, Policy::default())
+    let config = Config::load_json("../config/flavors/Vanilla/worldserver.json", false, Policy::default())
         .expect("the world program's own configuration");
     let mut opened = Vec::new();
     for kind in [
@@ -561,7 +591,7 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         // and the instance table - right after the record, which is where a live server sends them
         // (`ASURA/crates/asura-world/src/map.rs:22-58`).
         let grid = game::maps::cartography::init_frames(game::maps::cartography::grid_for(148));
-        let hosted = game::maps::pack::Pack::load("../config/World/Vanilla", &Log::new())
+        let hosted = game::maps::pack::Pack::load("../config/flavors/Vanilla/World", &Log::new())
             .expect("the world pack reads")
             .load_maps()
             .expect("the pack's maps")
@@ -635,9 +665,9 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         // bags, the templates the world database holds, and the items the confirm wrote. This is the
         // block the client sees, so it is compared byte for byte, not only by its headers.
         let tables = game::creation::Tables::load(
-            "../config/World/Vanilla/creation/inventory.json",
-            "../config/World/Vanilla/creation/equipment.json",
-            Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
+            "../config/flavors/Vanilla/World/creation/inventory.json",
+            "../config/flavors/Vanilla/World/creation/equipment.json",
+            Some(std::path::Path::new("../config/flavors/Vanilla/World/creation/worn_slots.json")),
             &Log::new(),
         )
         .expect("the creation data");
@@ -818,9 +848,9 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         // equip and a destroy. Each one is a row in the character database and an answer to the
         // client; the items are the ones the confirm wrote, read back through the same repository.
         let tables = game::creation::Tables::load(
-            "../config/World/Vanilla/creation/inventory.json",
-            "../config/World/Vanilla/creation/equipment.json",
-            Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
+            "../config/flavors/Vanilla/World/creation/inventory.json",
+            "../config/flavors/Vanilla/World/creation/equipment.json",
+            Some(std::path::Path::new("../config/flavors/Vanilla/World/creation/worn_slots.json")),
             &Log::new(),
         )
         .expect("the creation data");

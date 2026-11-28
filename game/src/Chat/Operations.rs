@@ -9,7 +9,7 @@
 //! not reach a function through a dispatcher arm: it names the operation, supplies the arguments the
 //! registration declares and the caller it is, and receives the operation's answer - text, frames, or
 //! a transfer to start - or a refusal with a code. Adding an operation is a registration; adding a
-//! command that runs an existing operation is a row in `config/Server/commands.json`; neither edits a door
+//! command that runs an existing operation is a row in `config/flavors/Vanilla/Server/commands.json`; neither edits a door
 //! (`docs/port/14-operator-surfaces.md`).
 //!
 //! Every command this tree answers - the chat commands included - is a row in that file naming one of
@@ -386,7 +386,7 @@ pub fn chat_stuck(
     Ok(Outcome::Frames(vec![frame]))
 }
 
-/// Register the operations the chat surface's own rows name (`config/Server/commands.json`).
+/// Register the operations the chat surface's own rows name (`config/flavors/Vanilla/Server/commands.json`).
 ///
 /// They live here, beside the world's own, so a program names them once and every surface - chat,
 /// console, API, and Lua when it arrives - reaches the same function.

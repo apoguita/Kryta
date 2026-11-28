@@ -7,7 +7,7 @@ ported from a source under Rule 0. Those repository rules are not displaced by t
 
 ## 1. Settled direction
 
-One registered Rust API function performs each operation. `config/Server/commands.json` maps a GM command and
+One registered Rust API function performs each operation. `config/flavors/Vanilla/Server/commands.json` maps a GM command and
 its aliases to that function: `tp` -> teleport, for example. The embedded server console, standalone
 CLI, authorized in-game chat, management application and Lua
 when it is available can call the same function, with the same execution. A command mapping to a Rust
@@ -113,7 +113,7 @@ The Configuration Manager delivery order is binding:
 
 `tools/manage` is a JSON service with static pages; no UI framework is selected or introduced, and
 there is no build step. The 2026-11-23 rebuild replaced the server-rendered pages: the menu shows
-Overview, Services, Console, Accounts, Players, Content, Navigation, Settings, Schema and Recordings,
+Overview, Services, Flavors, Console, Accounts, Players, Content, Navigation, Settings, Schema and Recordings,
 each registered once, and no page pretends to be a pending roadmap step.
 
 The shell is responsive and keeps the operator workstation look (`Kryta Control`); its stylesheet and
@@ -149,7 +149,7 @@ line and its declared positional values; a call is an `Invocation` (`operation`,
 with its kind and vouched-for name) and an answer is the operation's text or a `Refusal` carrying a
 stable code (`unknown_operation`, `invalid_arguments`, `refused`) and the message a person reads. The
 registry refuses a duplicate name, checks the value count against the declaration before the world is
-touched, and every `config/Server/commands.json` row binds a typed name to a registration by its
+touched, and every `config/flavors/Vanilla/Server/commands.json` row binds a typed name to a registration by its
 `operation` key - the chat operations (`chat.transfer`, `chat.maps`, `chat.stuck`) are registrations
 like any other - with `surfaces` deciding who may type it. A door never holds
 a command: the console resolves a line through the rows and the control endpoint resolves JSON through
@@ -569,7 +569,7 @@ administrator authentication.
 
 The game library owns a registry of named operations and their metadata; worldserver constructs it
 and the world owns execution. Each registration supplies one implementation, stable name, help,
-input specification and required context. Command names and aliases in `config/Server/commands.json` resolve
+input specification and required context. Command names and aliases in `config/flavors/Vanilla/Server/commands.json` resolve
 to those registrations; reject duplicate names and unknown mappings during validation. Add an operation
 by registering its implementation, without adding a dispatcher match arm or changing other callers.
 The command adapter owns command-line parsing; API calls carry structured input. Neither changes the
@@ -658,7 +658,7 @@ blocking the API and settings manager on playback or a map renderer.
    paths - unknown operation, invalid arguments, refused credential, full queue, no answer - are proven
    (`docs/port/05-tooling.md`). No client-facing change was made.
 2. **Shared execution.** **Landed.** Every surface - the chat line, the console, the control endpoint -
-   resolves the same rows in `config/Server/commands.json`, and every row names a registration; there is no enum
+   resolves the same rows in `config/flavors/Vanilla/Server/commands.json`, and every row names a registration; there is no enum
    of commands and no match on one. The chat operations answer with `Text`, `Frames` or a `Transfer` and
    the surface performs it, so `/maps` and the console's map list are one function, and `/stuck`'s frame
    and `/tp`'s transfer stay the engine's own. Proof: the console and API tests invoke the same

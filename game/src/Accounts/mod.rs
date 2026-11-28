@@ -392,7 +392,7 @@ mod tests {
     fn repository() -> Option<DatabaseAccounts> {
         let log = Log::new();
         let config =
-            Config::load_json("../authserver/authserver.json", false, Policy::default()).ok()?;
+            Config::load_json("../config/flavors/Vanilla/authserver.json", false, Policy::default()).ok()?;
         let settings = read_settings(&config, DatabaseKind::Login).ok()?;
         let mut pool = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log).ok()?;
         pool.ping().ok()?;

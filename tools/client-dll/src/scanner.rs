@@ -183,6 +183,16 @@ impl Scanner {
         })
     }
 
+    /// The four bytes at a running address as a little-endian number, when a known section holds
+    /// all of them: what the image says before anything has run.
+    pub fn read_u32(&self, address: u32) -> Option<u32> {
+        let mut bytes = [0u8; 4];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = self.byte(i64::from(address) + index as i64)?;
+        }
+        Some(u32::from_le_bytes(bytes))
+    }
+
     /// Whether `pattern` under `mask` sits at `address`.
     fn matches(&self, address: i64, pattern: &[u8], mask: Option<&[u8]>, length: usize) -> bool {
         (0..length).all(|index| {

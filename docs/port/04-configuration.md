@@ -28,11 +28,15 @@ The rest of this page says how a file is written, which files exist, and where e
 `config/README.md` describes the `config/` folders.
 
 ```text
-worldserver/worldserver.json     the game program's settings - the one file it reads
-authserver/authserver.json       the login program's settings
-config/Server/                   what a machine chooses and answers (commands.json, admin.json today)
-config/World/<pack>/             what a world contains; Vanilla is the faithful base
-config/Client/                   what a patched client's DLL is given (offsets/titles.json and offsets/files.json today)
+config/flavor.json               which flavor this machine runs
+config/machine.json              what this machine alone knows; laid over the flavor's settings
+config/Server/                   what a machine chooses for itself (admin.json today)
+config/flavors/<flavor>/         everything one server setup defines; Vanilla is the faithful base
+  worldserver.json               the game program's settings
+  authserver.json                the login program's settings
+  World/                         what a world contains: the world pack
+  Server/                        the chat command surface (commands.json)
+  Client/                        what a patched client's DLL is given (offsets/titles.json, files.json and maps.json today)
 data/sql/, data/path-graphs.bin  the archive's and the database's: schema (no rows), extracted graphs
 ```
 
@@ -140,15 +144,37 @@ Configuration, and nothing else:
 
 | file | is | read by |
 |---|---|---|
-| `authserver/authserver.json` | the auth program's own configuration | `authserver`, `-c` |
-| `worldserver/worldserver.json` | the game program's own configuration | `worldserver`, `-c` |
+| `config/flavor.json` | the flavor this machine runs: the name of a folder under `config/flavors/` | `authserver`, `worldserver` and `kryta-cli`, when started without `-c` |
+| `config/flavors/Vanilla/authserver.json` | the login program's settings in the Vanilla flavor: everything about it that is not one machine's own | `authserver`; found through `config/flavor.json`, or named with `-c` |
+| `config/flavors/Vanilla/worldserver.json` | the game program's settings in the Vanilla flavor, the same way | `worldserver` and `kryta-cli`; found through `config/flavor.json`, or named with `-c`. `authserver` reads its `WorldPack` (`ClientLink.TitleWorldConfig`), and the panel reads it (`WorldConfigFile`) |
+| `config/machine.json` | what one machine alone knows, for every flavor it runs: database logins, the addresses and ports the programs bind, the world's id, the control endpoint, the paths of the machine's own files. One section for each program, named as its settings file is; a key stated there wins over the flavor's | every reader of a settings file that is in a flavor's folder (`Config::load_json`), after the flavor's file |
 | `data/realms.json` | the worlds a login may send a player to, merged over the `realmlist` table | `authserver`, `WorldsFile` |
-| `tools/manage/manage.json` | the Configuration Manager's own configuration: bind, port, token, database strings, world-control credential location, and supervisor stack-file location | `kryta-manage` and `kryta-management-service`, `-c` |
+| `tools/manage/manage.json` | the Configuration Manager's own configuration: bind, port, token, database strings, world-control credential location, supervisor stack-file location, and `ConfigFolder`, the folder whose `flavor.json`, `machine.json` and `flavors/` its Flavors and Settings pages read and write | `kryta-manage` and `kryta-management-service`, `-c` |
 | `tools/supervisor/stack.json` | the services this machine runs - each one's program, arguments and port - the terminal's owner (`console_service`) and the supervisor's `control_port` | `kryta-supervisor`, `-c`, defaulting to this path; `tools/manage` reads its `control_port` through `SupervisorStackFile` |
 
-The `.dist` files are committed. The live `authserver.json`, `worldserver.json` and `manage.json` are
-not, because they hold a database password: copy the `.dist`, edit it, keep it. `data/realms.json` and
-`tools/supervisor/stack.json` hold no secret and are committed as they are.
+A flavor's files are committed and shared: they hold no secret
+(`docs/decisions/0016-a-server-is-a-flavor.md`). `config/machine.json` and `tools/manage/manage.json`
+are not committed, because they hold a database password; their `.dist` files are: copy the `.dist`,
+edit it, keep it. `data/realms.json` and `tools/supervisor/stack.json` hold no secret and are
+committed as they are.
+
+**How a program's settings are read.** Started without `-c`, a program reads `config/flavor.json`
+for the flavor's name and then its own file in that flavor's folder. Whenever the file it reads is in
+a flavor's folder (`config/flavors/<flavor>/<program>.json`), the section of `config/machine.json`
+named as the program is (`authserver`, `worldserver`) is laid over it, key by key, and the machine's
+value wins; the environment variable of a key still wins over both. So any setting can be pinned for
+one machine without touching the flavor. A settings file anywhere else is read as it is, with no
+flavor and nothing laid over it. In the table below, `authserver.json` and `worldserver.json` mean a
+program's settings read this way; the shipped split is that the listener addresses and ports, the
+world's id and public address, the database connection strings, the control endpoint, `PidFile`,
+`LogsDir`, `WorldsFile`, `CaptureFile` and `PathGraphs` are in `config/machine.json.dist`, and every
+other key is in the flavor.
+
+**A flavor's own paths are relative to its folder.** `WorldPack`, `InventoryFile`, `EquipmentFile`,
+`EquippedSlotsFile`, `CommandsFile`, `ClientLink.Directory` and `ClientLink.TitleWorldConfig` name
+the flavor's own content, so a flavor that is copied or renamed still reads its own files
+(`Config::flavor_path`). A machine's paths (`PathGraphs`, `WorldsFile`, `LogsDir`) are relative to
+where the program is started, as before.
 
 **A setting is in a file only once the program reads it.** The file states what the ported stages use
 and nothing else, so no key sits there configuring nothing: the thread pool, SOAP and the world's own
@@ -175,7 +201,7 @@ not state keeps the table's value.
 | the login listener: port, bind address, thread count, trace | `authserver.json` |
 | the portal: enabled, where it answers | `authserver.json` |
 | the client link: enabled (`ClientLink.Enable`), where it answers (`ClientLink.Bind`, `127.0.0.1:6650`), the folder of what a client's DLL is given (`ClientLink.Directory`), and the world configuration whose pack supplies the custom title text it is sent (`ClientLink.TitleWorldConfig`), and a wait before each part of a map file it sends, 0 in use and above 0 only to try a slow link (`ClientLink.MapPartPauseMs`) | `authserver.json` |
-| where each place the client's DLL hooks is found in the client: byte patterns and the steps from a match to an address, in Py4GW Reforged's offset format. Every `*.json` in the folder is one document, sent to each client's DLL over the link; a new client build is handled by editing these files (`docs/port/22-client-platform.md`) | `config/Client/offsets/titles.json` (custom titles) and `config/Client/offsets/files.json` (the client's file functions, for the maps the server hosts), under `ClientLink.Directory`. A missing folder or a file that breaks the format stops the login program |
+| where each place the client's DLL hooks is found in the client: byte patterns and the steps from a match to an address, in Py4GW Reforged's offset format. Every `*.json` in the folder is one document, sent to each client's DLL over the link; a new client build is handled by editing these files (`docs/port/22-client-platform.md`) | `config/flavors/Vanilla/Client/offsets/titles.json` (custom titles), `config/flavors/Vanilla/Client/offsets/files.json` (the client's file functions, for the maps the server hosts) `config/flavors/Vanilla/Client/offsets/maps.json` (the client's lookup of a map's row, for the rows the pack states, and the two lists a map id past the client's own is left out of) and `config/flavors/Vanilla/Client/offsets/text.json` (the function a coded string is handed to for decoding, for a map's name and description as text of the pack's own), under `ClientLink.Directory`. A missing folder or a file that breaks the format stops the login program |
 | the login database: connection string, worker and synchronous connections, trace | `authserver.json` |
 | the character database: connection string, worker and synchronous connections | `authserver.json`, `worldserver.json`, under `CharacterDatabaseInfo` and `CharacterDatabase` |
 | the world listener: bind address (`BindIP`), port (`WorldServerPort`, 6113 in the shipped file), thread count and byte trace (`Network.Threads`, `Network.Trace`), and the world id it serves as (`RealmID`) | `worldserver.json`, top level |
@@ -184,7 +210,7 @@ not state keeps the table's value.
 | the login database, in the world program: connection string, worker and synchronous connections | `worldserver.json`, under `LoginDatabaseInfo` and `LoginDatabase` - the world reads it for the travel record its own program cannot be told by another program |
 | the world list: every field of every world, including a world the table does not hold | `data/realms.json`, merged over `realmlist` |
 | the intervals this program reports and refreshes at | `authserver.json` |
-| which bag the login's character list draws each character's armour from (`EquippedBag`, 5): the id the world's creation inventory gives the equipped bag (type 2, model 21 in `config/World/Vanilla/creation/inventory.json`). The two must agree, and nothing checks that they do: a different number lists every character with no armour | `authserver.json`, read by `authserver/src/main.rs` and handed to `game/src/Characters/Repository.rs` (`with_equipped_bag`) |
+| which bag the login's character list draws each character's armour from (`EquippedBag`, 5): the id the world's creation inventory gives the equipped bag (type 2, model 21 in `config/flavors/Vanilla/World/creation/inventory.json`). The two must agree, and nothing checks that they do: a different number lists every character with no armour | `authserver.json`, read by `authserver/src/main.rs` and handed to `game/src/Characters/Repository.rs` (`with_equipped_bag`) |
 | where a travel request is placed: the map id that is the creation instance (`CreationMap`, 0), and the outpost a character with no map anywhere enters (`FallbackOutpost`, 148) | `authserver.json`, read by `game/src/Maps/Placement.rs` through the login session |
 | the world loop's floor: how long may pass before the loop does not bother to update (`MinWorldUpdateTime`, 1 ms - the reference's own key of the same name in `worldserver.conf`, its `WorldUpdateLoop` sleeping the remainder at `Main.cpp:586-616`) | `worldserver.json`, top level |
 | the world's numbers, every one a game rule with a default (`docs/game-rules.md`): a district's allotment (R5), a party's cap (R15), the spawn scatter (R13), whether instances tick (R33), the simulation tick's interval (R33, 100 ms by default, ASURA's own `intervals.json`), how often the instance table is swept (R33/R40, 1 s by default), the compass range (R34), the disconnect hold (R37), the mission button (R56), the number a ping reply carries (20, the value GWPS's own trace carries) | `worldserver.json`, the `World` section |
@@ -193,13 +219,13 @@ not state keeps the table's value.
 | what a redirect's `is_explorable` carries (`TravelExplorable`: `0` for every travel by default, `1` for every travel, or `auto` for the destination's own kind); ASURA reads the same three words from `ASURA_TRAVEL_EXPLORABLE` and defaults to `0` because that is the value an explorable's load completes at (`ASURA/crates/asura-world/src/travel.rs:21-69`) | `worldserver.json`, the `World` section |
 | the outpost a fresh character starts in and has unlocked (`StartingOutpost`, 148 - the one unlock of R12, and the same fact the login's `FallbackOutpost` names) | `worldserver.json`, the `World` section |
 | half the side of a point doorway's box (`PointBoxHalfExtent`, 250 world units): a doorway stated as a wall never uses it, and `0` disables point doorways (`ASURA/config/Server/portals.json`, `point_box_half_extent`) | `worldserver.json`, the `World` section |
-| the world itself: every map record, the entry points where a character may stand, and the arches a step crosses - the tree is classified here as one unit, so a file inside it needs no row of its own | `worldserver.json`, `WorldPack`, naming `config/World/Vanilla`, whose `config/World/Vanilla/maps/` folder is the tree (`<campaign>/<area>/<kind>/<map id>/{basic,spawns,portals}.json`). The folder of a map made outside the game also carries its map files, named by the record's `map_file_id` as eight hexadecimal digits: `<file id>.stripped.ffna`, the map as its editor built it, and `<file id>.ffna`, the finished map, which the world reads the map's walk graph from and the login program hosts for its clients over the link, with a checksum (`docs/port/24-custom-maps.md`, "The delivery plan"). These two are the only files of the pack that are not JSON: they are the client's own map format. A folder that is not its record's `map_id`, a pack with no `maps/`, or a map file that is not a map, stops the program - serving half a world is worse than not serving (`docs/decisions/0014-the-world-content-is-a-pack.md`) |
-| the creation screen's content: the bags and items a client is given, and what a new character wears per campaign and profession | `worldserver.json`, `InventoryFile` and `EquipmentFile`, naming `config/World/Vanilla/creation/inventory.json` and `config/World/Vanilla/creation/equipment.json` |
-| campaign starting maps for panel character creation | `config/World/Vanilla/character_spawn.json`, copied from `ASURA/config/World/Vanilla/character_spawn.json`; a null map refuses creation |
-| vanilla title IDs and custom definitions | `config/World/Vanilla/titles.json` under the configured `WorldPack` |
-| captured vanilla title test states, rank thresholds, and encoded progress and hover references | `config/World/Vanilla/vanilla-title-wire.json`, read with the title catalog |
-| which slot of the client's equipped bag each kind of item is worn in | `worldserver.json`, `EquippedSlotsFile`, naming `config/World/Vanilla/creation/worn_slots.json`. The index is the client's own (its nine-slot equipped array, the placement inside the equipped bag, the agent's worn list), so it is content and not a table compiled in - a wrong one draws the character without the piece (`docs/game-rules.md` E234) |
-| the chat command surface: the names a player may type, what each takes, and which operation it runs | `worldserver.json`, `CommandsFile`, naming `config/Server/commands.json`. The surface is **content**, so the setting is only where the file is; the rows themselves are data (`docs/decisions/0011-the-command-surface-is-content.md`) |
+| the world itself: every map record, the entry points where a character may stand, and the arches a step crosses - the tree is classified here as one unit, so a file inside it needs no row of its own | `worldserver.json`, `WorldPack`, naming `config/flavors/Vanilla/World`, whose `config/flavors/Vanilla/World/maps/` folder is the tree (`<campaign>/<area>/<kind>/<map id>/{basic,spawns,portals}.json`). The folder of a map made outside the game also carries its map files, named by the record's `map_file_id` as eight hexadecimal digits: `<file id>.stripped.ffna`, the map as its editor built it, and `<file id>.ffna`, the finished map, which the world reads the map's walk graph from and the login program hosts for its clients over the link, with a checksum (`docs/port/24-custom-maps.md`, "The delivery plan"). These two are the only files of the pack that are not JSON: they are the client's own map format. A map's `basic.json` may also state `client_row`: the fields of the row the client itself holds for that map id (its kind, region, world-map place and the rest, by the names of `MAP_ROW_FIELDS` in `tools/client-link/src/lib.rs`), which the login program sends over the link and the client's DLL answers the client with; a field it does not state keeps the client's own value, and a name the row does not have stops the login program (`docs/port/24-custom-maps.md`, "The map's row in the client"). In place of `name_id` and `description_id`, which are ids of the client's own texts, `client_row` may state `name` and `description` as text; stating both the text and its id stops the login program. A map of the pack's own takes a `map_id` from 10000 up, states its whole row, and states no `instance_value` (`docs/decisions/0017-a-maps-client-row-is-stated-in-the-pack.md`). A folder that is not its record's `map_id`, a pack with no `maps/`, or a map file that is not a map, stops the program - serving half a world is worse than not serving (`docs/decisions/0014-the-world-content-is-a-pack.md`) |
+| the creation screen's content: the bags and items a client is given, and what a new character wears per campaign and profession | `worldserver.json`, `InventoryFile` and `EquipmentFile`, naming `config/flavors/Vanilla/World/creation/inventory.json` and `config/flavors/Vanilla/World/creation/equipment.json` |
+| campaign starting maps for panel character creation | `config/flavors/Vanilla/World/character_spawn.json`, copied from `ASURA/config/World/Vanilla/character_spawn.json`; a null map refuses creation |
+| vanilla title IDs and custom definitions | `config/flavors/Vanilla/World/titles.json` under the configured `WorldPack` |
+| captured vanilla title test states, rank thresholds, and encoded progress and hover references | `config/flavors/Vanilla/World/vanilla-title-wire.json`, read with the title catalog |
+| which slot of the client's equipped bag each kind of item is worn in | `worldserver.json`, `EquippedSlotsFile`, naming `config/flavors/Vanilla/World/creation/worn_slots.json`. The index is the client's own (its nine-slot equipped array, the placement inside the equipped bag, the agent's worn list), so it is content and not a table compiled in - a wrong one draws the character without the piece (`docs/game-rules.md` E234) |
+| the chat command surface: the names a player may type, what each takes, and which operation it runs | `worldserver.json`, `CommandsFile`, naming `config/flavors/Vanilla/Server/commands.json`. The surface is **content**, so the setting is only where the file is; the rows themselves are data (`docs/decisions/0011-the-command-surface-is-content.md`) |
 | the first game account: the login name the client types and the token the portal hands it | `config/Server/admin.json`, the file the login program reads at every start (`AdminAccountFile`) and uses to insert one `account` row only when the table states none. It is a client's account, and a row like every other user's |
 | the administrator: the one operator identity, held in a file so the database can never lock it out | not built. `docs/decisions/0013-the-admin-identity-is-a-file.md` decides it: a file the manager reads, never an `account` row; `admin.json` above is not it |
 | the extracted graphs a serving world answers movement from | `worldserver.json`, `PathGraphs`, defaulting to `data/path-graphs.bin`. It is a portable `ASURAPG1` cache; it may omit maps, but the serving process never reads `Gw.dat` (`docs/decisions/0015-headless-navigation-assets.md`) |
@@ -223,16 +249,19 @@ Two consequences of taking that seriously, both now in the code:
 
 | what it is | examples | where it lives |
 |---|---|---|
-| **the world** | maps, spawn points, doorways, starting items, titles | JSON files in the world pack, `config/World/<pack>/` |
-| **the server's own content** | the chat commands, the first game account | JSON files in `config/Server/` |
-| **what a patched client is given** | where its DLL finds the client's functions | JSON files in `config/Client/` |
-| **a program's settings** | ports, database addresses, logging, and today the game's numbers too | that program's JSON file: `worldserver.json`, `authserver.json` |
+| **the world** | maps, spawn points, doorways, starting items, titles | JSON files in the world pack, `config/flavors/<flavor>/World/` |
+| **the server's own content** | the chat commands | JSON files in the flavor, `config/flavors/<flavor>/Server/` |
+| **what one machine chooses for itself** | the first game account | JSON files in `config/Server/` |
+| **what a patched client is given** | where its DLL finds the client's functions | JSON files in the flavor, `config/flavors/<flavor>/Client/` |
+| **a program's settings** | ports, database addresses, logging, and today the game's numbers too | that program's JSON file in the flavor, `config/flavors/<flavor>/worldserver.json` and `authserver.json`, with `config/machine.json` over it for what one machine alone knows |
 | **what happens while the server runs** | accounts, characters, the items they carry, open instances, unlocks | database rows |
 | **what the game client dictates** | packet sizes and layouts, the file check's bytes, the account settings block | named constant tables in the code, each citing its recording |
 
-A world pack is one folder and it is the whole world. To make a different world, copy `Vanilla`, edit
-the copy, and name the copy in `WorldPack` (`config/World/README.md`,
-`docs/decisions/0014-the-world-content-is-a-pack.md`). One pack is loaded per start.
+A flavor is one folder and it is the whole server setup: both programs' settings, its world pack,
+its command surface and what its clients' DLL is given (`config/flavors/README.md`,
+`docs/decisions/0016-a-server-is-a-flavor.md`). To make a different server, copy `Vanilla` under
+another name and name it in `config/flavor.json`: its settings and its paths come with it. One
+flavor is loaded per start, and its name is what the server tells its clients.
 
 ## How the files are read
 

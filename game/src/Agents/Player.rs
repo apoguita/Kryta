@@ -301,7 +301,7 @@ mod tests {
         // (`recordings/client/session/login-to-spawn-20261124-180308.jsonl`).
         let settings = crate::world::world_config::WorldConfig::default();
         let titles = crate::characters::titles::VanillaTitles::load(
-            "../config/World/Vanilla/titles.json",
+            "../config/flavors/Vanilla/World/titles.json",
         )
         .expect("the titles file");
         let blob = [0x05u8, 0x00, 0x66, 0x11];

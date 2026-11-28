@@ -1,0 +1,105 @@
+{
+  "note": "machine.json.dist - what one machine alone knows, for every flavor it runs (docs/decisions/0016-a-server-is-a-flavor.md). Copy it to config/machine.json and put this machine's values in the copy: the copy is never committed and never part of a flavor, because it holds passwords and addresses. It has one section for each program, named as the program's settings file is. A key stated here wins over the same key in the flavor's file, so any setting can be pinned for one machine by writing it in the program's section.",
+
+  "authserver": {
+    "RealmServerPort": {
+      "value": 6112,
+      "doc": "Where the login program answers login connections. Reference: GetOption<int32>(\"RealmServerPort\", 3724). It is 6112 here because that is the port this client was launched against and reaches; 3724 is the reference's default and no client of this game asks for it."
+    },
+    "BindIP": {
+      "value": "0.0.0.0",
+      "doc": "The address the listener binds. 0.0.0.0 is every interface."
+    },
+    "PidFile": {
+      "value": "",
+      "doc": "Written when a PID is wanted for a service manager. Empty writes nothing."
+    },
+    "Portal": {
+      "Bind": {
+        "value": "127.0.0.1:6601",
+        "doc": "Where the portal's endpoints answer. The client was launched with -portal 127.0.0.1 and speaks to localhost:6601."
+      }
+    },
+    "ClientLink": {
+      "Bind": {
+        "value": "127.0.0.1:6650",
+        "doc": "Where the client link answers. Kryta.dll dials the -portal host of the client's command line on port 6650 unless a Kryta.json beside the client names another address."
+      }
+    },
+    "AdminAccountFile": {
+      "value": "config/Server/admin.json",
+      "doc": "The first game account: the login name and the portal token (config/Server/README.md). Read at every start; it writes an account row only when the account table is empty."
+    },
+    "WorldsFile": {
+      "value": "data/realms.json",
+      "doc": "The file a world can also be described in, merged over the realmlist table: a row with an id the table holds overrides it field by field, a row with a new id is added. Empty means the table alone."
+    },
+    "LoginDatabaseInfo": {
+      "value": "127.0.0.1;5432;kryta;change-me;kryta_login",
+      "doc": "host;port;user;password;database, as the reference spells it. The fourth field is a password: it is masked in every log line the program prints. The role and the databases were created for this project."
+    },
+    "CharacterDatabaseInfo": {
+      "value": "127.0.0.1;5432;kryta;change-me;kryta_characters",
+      "doc": "host;port;user;password;database - a login's answer lists the account's characters, and those are rows in this database. The fourth field is a password, masked in every log line."
+    },
+    "LogsDir": {
+      "value": "",
+      "doc": "Where file appenders write. Empty means the working directory."
+    }
+  },
+
+  "worldserver": {
+    "RealmID": {
+      "value": 2,
+      "doc": "Which world this process is: the id a login hands a client as its map_token, and the id a realmlist row carries. A connection that names another world is closed."
+    },
+    "WorldServerPort": {
+      "value": 6113,
+      "doc": "Where gameplay connections are accepted. The login names this address and port in its 0x0009, and the front door copies a client's gameplay connection here."
+    },
+    "BindIP": {
+      "value": "127.0.0.1",
+      "doc": "The address the listener binds."
+    },
+    "Control": {
+      "Enable": { "value": false, "doc": "Enable authenticated local world control for the standalone CLI and tools/manage." },
+      "Port": { "value": 7878, "doc": "Local control port; always binds to 127.0.0.1." },
+      "CredentialFile": { "value": "", "doc": "Path to a restricted file containing at least 32 ASCII letters or digits." },
+      "TimeoutSeconds": { "value": 5, "doc": "Maximum wait for a local control request or world response; must be positive." }
+    },
+    "CaptureFile": {
+      "value": "",
+      "doc": "Where to record the wire: every game message both directions, as plaintext JSONL with two-byte headers. Empty is off. The file is evidence, and it holds payloads unsanitised, so it belongs under recordings/ or a scratch path, and a reader takes its layer from the file's own header (docs/port/02-wire.md, Three kinds of capture)."
+    },
+    "PathGraphs": {
+      "value": "data/path-graphs.bin",
+      "doc": "The extracted ASURAPG1 path-graph cache the server reads at start-up. It may contain only the maps that have been dumped; an undumped or custom map answers NoGraph, and worldserver never reads Gw.dat. The manager's navigation tool inspects and updates this file."
+    },
+    "World": {
+      "PublicAddress": {
+        "value": "127.0.0.1:6112",
+        "doc": "The address a travelling client is told to reconnect to, as host:port - the redirect (0x01A6) carries it as a Winsock sockaddr_in. The working implementation publishes one (its --public argument, ASURA/crates/asura-world/src/main.rs:73). This stack's client dials the address it was launched against, which is the login port, and the front door copies that connection to the world, so the default is that address."
+      }
+    },
+    "PidFile": {
+      "value": "",
+      "doc": "Written when a PID is wanted for a service manager. Empty writes nothing."
+    },
+    "LogsDir": {
+      "value": "",
+      "doc": "Where file appenders write. Empty means the working directory."
+    },
+    "LoginDatabaseInfo": {
+      "value": "127.0.0.1;5432;kryta;change-me;kryta_login",
+      "doc": "host;port;user;password;database - the login's own tables: accounts, the world list, and the travel record a login writes and this program claims. The world reads this database the way the reference's world program reads its login database; the two programs never talk to each other."
+    },
+    "WorldDatabaseInfo": {
+      "value": "127.0.0.1;5432;kryta;change-me;kryta_world",
+      "doc": "host;port;user;password;database - the world's own tables, which is what the game is made of rather than what its players did. The fourth field is a password: it is masked in every log line."
+    },
+    "CharacterDatabaseInfo": {
+      "value": "127.0.0.1;5432;kryta;change-me;kryta_characters",
+      "doc": "host;port;user;password;database - characters, their items and their progress. A player's rows, not a designer's."
+    }
+  }
+}

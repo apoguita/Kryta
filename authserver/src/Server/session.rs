@@ -2214,7 +2214,7 @@ mod tests {
 
         let _serial = database::updater::apply::test_lock("auth");
         let config = common::configuration::Config::load_json(
-            "../authserver/authserver.json",
+            "../config/flavors/Vanilla/authserver.json",
             false,
             common::configuration::Policy::default(),
         )

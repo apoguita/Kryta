@@ -1,0 +1,12 @@
+{
+  "doc": "The test map's own spawn point, the one the owner stood on in the run of 2026-11-27 (docs/port/24-custom-maps.md): it lies in a trapezoid of plane 0 of the map's walk graph.",
+  "map_id": 10000,
+  "spawns": [
+    {
+      "idx": 0,
+      "plane": 0,
+      "x": 4599.12,
+      "y": 2760.34
+    }
+  ]
+}

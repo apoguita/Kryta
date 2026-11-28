@@ -2,7 +2,7 @@
 
 A client patched for Kryta loads `Kryta.dll` when it starts, and the DLL opens its own connection to
 the server - the client link (`docs/port/22-client-platform.md`). This folder holds what the server
-sends the DLL over that link. It is named by `ClientLink.Directory` in `authserver/authserver.json`,
+sends the DLL over that link. It is named by `ClientLink.Directory` in the flavor's `authserver.json`,
 and `authserver` reads it once, at start-up.
 
 | folder | holds |
@@ -41,4 +41,6 @@ every offset in this folder against that file and prints the addresses.
 | file | concern |
 |---|---|
 | `offsets/files.json` | the client's own functions for opening an archive file, reading it whole and letting it go. The maps the server hosts for its clients hook the first and call the second (`docs/port/24-custom-maps.md`); a build they do not fit runs without that feature |
+| `offsets/maps.json` | the client's lookup of a map's row in its own table of maps. The rows a map's record states in `client_row` are answered through a hook on it (`docs/port/24-custom-maps.md`, "The map's row in the client"); a build it does not fit shows the client's own rows. Also the client's record of the content value each map was loaded with, hooked so that a map id past the client's own maps is left out of it |
+| `offsets/text.json` | the client's function every coded string is handed to for decoding into text (Py4GW Reforged's `ValidateAsyncDecodeStr`, pattern unchanged). A map whose record states a name or a description of its own is shown with that text through a hook on it; a build it does not fit shows the client's own text |
 | `offsets/titles.json` | the three places the custom title feature hooks: the title rank message's call to its worker, the hover text's call to its formatter, and the title table lookup |

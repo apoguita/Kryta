@@ -159,7 +159,7 @@ mod tests {
         let _serial = database::updater::apply::test_lock("world");
         let log = Log::new();
         let Some(config) =
-            Config::load_json("../worldserver/worldserver.json", false, Policy::default()).ok()
+            Config::load_json("../config/flavors/Vanilla/worldserver.json", false, Policy::default()).ok()
         else {
             panic!("the world program's configuration is not readable");
         };
@@ -188,7 +188,7 @@ mod tests {
         let _serial = database::updater::apply::test_lock("world");
         let log = Log::new();
         let Some(config) =
-            Config::load_json("../worldserver/worldserver.json", false, Policy::default()).ok()
+            Config::load_json("../config/flavors/Vanilla/worldserver.json", false, Policy::default()).ok()
         else {
             panic!("the world program's configuration is not readable");
         };

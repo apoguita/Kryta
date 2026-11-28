@@ -377,44 +377,53 @@ impl WorldSession {
         // The alias table, not the map names: GWPS accepts `lakeside` as well as
         // `lakeside county`, so matching against a map's own name would refuse half the aliases its
         // own `/maps` prints.
-        let Some(target) = crate::chat::travel_target(argument) else {
-            // `GmCommands.c:172-177`: "Unknown map name. Type /maps." - GWPS's own sentence,
-            // sent on the answer channel (`GmChat.c:116-143`).
-            self.answer_line(state, io, peer, crypt, "Unknown map name. Type /maps.")
-                .await;
-            return;
+        // The map and what the log calls it: GWPS's table first, and then this world's own pack
+        // (`chat::pack_target`, this tree's own: a map `/maps` lists by its own name, or by id).
+        let (map_id, label) = match crate::chat::travel_target(argument) {
+            Some(target) => {
+                if !target.hosted {
+                    // `GmCommands.c:180-190`: GWPS refuses a target with no `GmMapConfig` rather
+                    // than letting its map load fall back to Kamadan.
+                    self.say(
+                        LogLevel::Debug,
+                        format!(
+                            "Gameplay connection from {peer}: That map has no config; the server would fall back, so the teleport is refused ({}).",
+                            target.label
+                        ),
+                    );
+                    return;
+                }
+                (target.map_id, target.label.to_string())
+            }
+            None => match crate::chat::pack_target(argument, self.world.maps()) {
+                Some(map) => (map.id, map.name.clone()),
+                None => {
+                    // `GmCommands.c:172-177`: "Unknown map name. Type /maps." - GWPS's own
+                    // sentence, sent on the answer channel (`GmChat.c:116-143`).
+                    self.answer_line(state, io, peer, crypt, "Unknown map name. Type /maps.")
+                        .await;
+                    return;
+                }
+            },
         };
-        if !target.hosted {
-            // `GmCommands.c:180-190`: GWPS refuses a target with no `GmMapConfig` rather than
-            // letting its map load fall back to Kamadan.
-            self.say(
-                LogLevel::Debug,
-                format!(
-                    "Gameplay connection from {peer}: That map has no config; the server would fall back, so the teleport is refused ({}).",
-                    target.label
-                ),
-            );
-            return;
-        }
         let Some(destination) = self
             .world
             .maps()
             .iter()
-            .find(|map| map.id == target.map_id && map.is_hostable())
+            .find(|map| map.id == map_id && map.is_hostable())
             .cloned()
         else {
-            // The table knows the map; this world hosts no row for it. GWPS pre-spawns one
+            // The map is named; this world hosts no row for it. GWPS pre-spawns one
             // server per map, so its answer would be a transfer; this one can only say so.
             self.say(
                 LogLevel::Debug,
                 format!(
-                    "Gameplay connection from {peer}: {} ({}) is not hosted by this world; the teleport is refused.",
-                    target.label, target.map_id
+                    "Gameplay connection from {peer}: {label} ({map_id}) is not hosted by this world; the teleport is refused."
                 ),
             );
             return;
         };
-        if target.map_id == state.map_id() {
+        if map_id == state.map_id() {
             // `GmCommands.c:198-202`. **The command's own refusal, not a travel policy**: the
             // client-driven requests (`0x80B1`) are carried out without this check, because there the
             // client has already decided and a second opinion is a gate. A typed alias that names the

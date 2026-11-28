@@ -64,7 +64,7 @@ The local WowWarband checkout provides these concrete references:
 ## Chat is the server's command line, and its text now reaches the client
 
 Chat carries player conversation and server commands. Command names and aliases are content:
-`config/Server/commands.json` maps a name to an operation, and the current reader resolves that operation through
+`config/flavors/Vanilla/Server/commands.json` maps a name to an operation, and the current reader resolves that operation through
 the shared registry (`game/src/Chat/Commands.rs`, `game/src/Chat/Operations.rs`). A mapped GM command
 calls the registered Rust function; Lua is not required for that call
 (`docs/decisions/0011-the-command-surface-is-content.md`).
@@ -240,8 +240,8 @@ chosen map files and destination-owned arrivals.
 
 Kryta adopted that direction in `docs/decisions/0014-the-world-content-is-a-pack.md`, which
 supersedes `0009-world-schema.md`: a world's map content is a pack of JSON files under
-`config/World/<pack>/`, read at start-up by `game/src/Maps/Pack.rs`, and the pack the world serves is
-named by its `WorldPack` setting. This tree has one pack, `config/World/Vanilla/`. The world database's
+`config/flavors/<flavor>/World/`, read at start-up by `game/src/Maps/Pack.rs`, and the pack the world serves is
+named by its `WorldPack` setting. This tree has one pack, `config/flavors/Vanilla/World/`. The world database's
 content tables are empty by design (`data/sql/base/db_world/0013-content-is-the-pack.sql`). One pack
 per launch is not yet a profile: profile selection, isolation and distribution remain undesigned
 (above).
@@ -282,7 +282,7 @@ current limits and proof are in `docs/port/10-separation-guide.md`. Chat works: 
 text frames, the answer path and the broadcast are in, its frames come from measurement rather than
 ASURA's table (`docs/decisions/0012-chat-text-is-sent.md`), and both halves were read on the owner's live
 client - the server's answers and a player's own line. The command rows and their arguments are in
-`config/Server/commands.json`, and every row names a registered operation
+`config/flavors/Vanilla/Server/commands.json`, and every row names a registered operation
 (`game/src/Chat/Operations.rs`), so the chat line, the console and the control endpoint are one
 execution path; the alias table and the `/maps` text are still Rust, which is where a rule belongs until
 this document's scripting layer takes it. A Lua runtime, content loading, world APIs, a command

@@ -60,11 +60,6 @@ fn text(config: &Config, key: &str, default: &str) -> Result<String, String> {
         .map_err(|error| error.to_string())
 }
 
-/// A text setting that is `None` when left empty.
-fn optional(config: &Config, key: &str, default: &str) -> Result<Option<String>, String> {
-    Ok(Some(text(config, key, default)?).filter(|value| !value.is_empty()))
-}
-
 fn run(config_path: &std::path::Path) -> Result<(), String> {
     let mut config = Config::load_json(config_path, false, Policy::default())
         .map_err(|error| error.to_string())?;
@@ -142,8 +137,7 @@ fn open(config: &mut Config, guard: Guard, log: &Log) -> Result<Manage, String> 
         worlds: Arc::new(worlds),
         schemas: schemas(login, character_pool, world_pool),
         // Relative to where the tool is started, which is the repository root.
-        world_config: optional(config, "WorldConfigFile", "worldserver/worldserver.json")?,
-        auth_config: optional(config, "AuthConfigFile", "authserver/authserver.json")?,
+        config_folder: text(config, "ConfigFolder", common::configuration::startup::CONFIG_FOLDER)?,
         path_graphs_file: text(config, "PathGraphsFile", "data/path-graphs.bin")?,
         map_archive_file: text(config, "MapArchiveFile", "")?,
         control: control(config)?,

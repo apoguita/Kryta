@@ -24,7 +24,7 @@ const FRESH_DATABASE: &str = "kryta_world_fresh";
 
 /// The world database's connection fields, as the world program's own file states them.
 fn world_database_info() -> (String, u16, String, String) {
-    let config = Config::load_json("worldserver.json", false, Policy::default())
+    let config = Config::load_json("../config/flavors/Vanilla/worldserver.json", false, Policy::default())
         .expect("the world program's own configuration");
     let (info, _) = config
         .value_string("WorldDatabaseInfo", "")
@@ -76,7 +76,7 @@ fn start_world_on(reader: &mut Option<Receiver<String>>) -> Child {
     let (host, port, user, password) = world_database_info();
     let info = format!("{host};{port};{user};{password};{FRESH_DATABASE}");
     let mut child = Command::new(env!("CARGO_BIN_EXE_worldserver"))
-        .args(["-c", "worldserver/worldserver.json"])
+        .args(["-c", "config/flavors/Vanilla/worldserver.json"])
         .current_dir("..")
         .env("AC_WORLD_DATABASE_INFO", info)
         .env("AC_WORLD_SERVER_PORT", "0")

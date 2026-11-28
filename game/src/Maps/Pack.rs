@@ -46,6 +46,28 @@ pub struct Pack {
     arrivals: Vec<Arrival>,
     /// The map files the pack carries, for the maps made outside the game.
     map_files: Vec<MapFiles>,
+    /// What the pack states of its maps' rows in the client.
+    client_rows: Vec<ClientRow>,
+}
+
+/// What one map's record states of the row the client itself holds for the map: its name, kind,
+/// region and world-map place (`docs/port/24-custom-maps.md`, "The map's row in the client"). The
+/// client's table is compiled into it and cannot be edited, so the record's `client_row` is where
+/// a row is stated, and `Kryta.dll` answers the client with it. A field the record does not state
+/// keeps the client's own value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientRow {
+    /// The map.
+    pub map_id: u32,
+    /// The fields stated, by the row's field names, each a 32-bit value. The names are checked by
+    /// the program that sends them (`authserver/src/Server/client_link.rs`, `host_map_rows`).
+    pub fields: Vec<(String, u32)>,
+    /// `client_row.name`: the map's name as text of the pack's own, in place of a `name_id` of
+    /// the client's text files.
+    pub name: Option<String>,
+    /// `client_row.description`: the same for the map's description, in place of a
+    /// `description_id`.
+    pub description: Option<String>,
 }
 
 /// The map files one map's folder carries (`docs/port/24-custom-maps.md`).
@@ -153,6 +175,12 @@ impl Pack {
         &self.map_files
     }
 
+    /// What the pack states of its maps' rows in the client: one entry for each map whose record
+    /// has a `client_row`.
+    pub fn client_rows(&self) -> &[ClientRow] {
+        &self.client_rows
+    }
+
     /// One map's folder: its record, its spawn points and its doorways.
     fn read_map(&mut self, folder: &Path, log: &Log) -> Result<(), String> {
         let id = folder
@@ -205,6 +233,35 @@ impl Pack {
             if stripped.is_some() || finished.is_some() {
                 self.map_files.push(MapFiles { map_id: id, file_id, stripped, finished });
             }
+        }
+
+        if let Some(stated) = record.fields("client_row")? {
+            let mut fields = Vec::with_capacity(stated.len());
+            let (mut own_name, mut own_description) = (None, None);
+            for (name, text) in stated {
+                // The two fields that are text of the pack's own and not a number of the row.
+                if name == "name" {
+                    own_name = Some(text);
+                    continue;
+                }
+                if name == "description" {
+                    own_description = Some(text);
+                    continue;
+                }
+                let value = text.trim().parse::<u32>().map_err(|_| {
+                    format!(
+                        "> Config: client_row.{name} in {} is '{text}', which is not a 32-bit whole number",
+                        basic.display()
+                    )
+                })?;
+                fields.push((name, value));
+            }
+            self.client_rows.push(ClientRow {
+                map_id: id,
+                fields,
+                name: own_name,
+                description: own_description,
+            });
         }
 
         let spawns = folder.join("spawns.json");
@@ -330,23 +387,24 @@ mod tests {
 
     fn shipped() -> Pack {
         let log = Log::new();
-        Pack::load("../config/World/Vanilla", &log).expect("the shipped pack reads")
+        Pack::load("../config/flavors/Vanilla/World", &log).expect("the shipped pack reads")
     }
 
     #[test]
     fn the_shipped_pack_is_the_whole_catalogue() {
         let pack = shipped();
         let (maps, spawns) = pack.load_maps().expect("the maps");
-        assert_eq!(maps.len(), 265, "every map record the client can resolve");
+        // 265 records of the game's own maps, and the test map made outside the game (map 10000).
+        assert_eq!(maps.len(), 266, "every map record of the pack");
         // The count is the pack's own statement of what it states; map 148 states three of them.
-        assert_eq!(spawns.len(), 467, "and every entry point the pack states");
+        assert_eq!(spawns.len(), 468, "and every entry point the pack states");
         assert_eq!(pack.arches().expect("the arches").len(), 28);
         assert_eq!(pack.arrivals().expect("the arrivals").len(), 28);
 
         // A record that states a kind and a blob is a map this world can host; one that states only
         // an instance value is a destination the client can name and this world cannot load.
         let hostable = maps.iter().filter(|map| map.kind.is_some()).count();
-        assert_eq!(hostable, 145, "the hostable records");
+        assert_eq!(hostable, 146, "the hostable records");
     }
 
     /// An arrival names the map it comes from, under the file's own key (`from`, ASURA's
@@ -399,11 +457,22 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// A custom map's folder carries its map files under its file id, and the shipped pack, whose
-    /// maps are the game's own, carries none.
+    /// A custom map's folder carries its map files under its file id. In the shipped pack the
+    /// game's own maps carry none, and the one map made outside the game carries its finished file
+    /// and states its whole row in the client.
     #[test]
     fn a_folder_carries_the_map_files_its_file_id_names() {
-        assert!(shipped().map_files().is_empty(), "the game's own maps have no file here");
+        let pack = shipped();
+        let files = pack.map_files();
+        assert_eq!(files.len(), 1, "only the map made outside the game has a file here");
+        assert_eq!((files[0].map_id, files[0].file_id), (10_000, 389_376));
+        assert!(files[0].finished.is_some() && files[0].stripped.is_none());
+        let rows = pack.client_rows();
+        assert_eq!(rows.len(), 1);
+        // Every field of the row: 29 numbers, and the name and the description as its own text.
+        assert_eq!((rows[0].map_id, rows[0].fields.len()), (10_000, 29));
+        assert_eq!(rows[0].name.as_deref(), Some("Kryta Test Vale"));
+        assert!(rows[0].description.is_some());
 
         let root = std::env::temp_dir().join("kryta-pack-test-map-files");
         std::fs::remove_dir_all(&root).ok();

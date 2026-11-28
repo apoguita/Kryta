@@ -60,6 +60,31 @@ pub fn read_string(config: &Config, name: &str, default: &str) -> Result<String,
     Ok(value)
 }
 
+/// The folder the configuration is in, from where a program is started: the repository's root.
+pub const CONFIG_FOLDER: &str = "config";
+
+/// Load a program's settings: the file `-c` named, or, when it named none, the program's file in
+/// the flavor this machine runs (`config/flavor.json`, then
+/// `config/flavors/<flavor>/<program>.json`). Either way a file in a flavor's folder has the
+/// machine's own values laid over it (`docs/decisions/0016-a-server-is-a-flavor.md`).
+pub fn load_settings(
+    file: Option<&std::path::Path>,
+    program: &str,
+    policy: Policy,
+) -> Result<Config, String> {
+    match file {
+        Some(file) => Config::load_json(file, false, policy),
+        None => Config::load_active(CONFIG_FOLDER, program, policy),
+    }
+    .map_err(|error| error.to_string())
+}
+
+/// Read one setting that names a file or folder of the flavor's own content: the path is relative
+/// to the flavor's folder ([`Config::flavor_path`]).
+pub fn read_flavor_path(config: &Config, name: &str, default: &str) -> Result<String, String> {
+    Ok(config.flavor_path(&read_string(config, name, default)?))
+}
+
 /// The severity policy a program loads its configuration with: the default, changed by
 /// `--config-policy` when the command line gave one.
 ///

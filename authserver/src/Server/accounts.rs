@@ -107,7 +107,7 @@ mod tests {
     fn pool() -> Option<(Arc<Mutex<DatabaseWorkerPool>>, Log)> {
         let log = Log::new();
         let config =
-            Config::load_json("../authserver/authserver.json", false, Default::default()).ok()?;
+            Config::load_json("../config/flavors/Vanilla/authserver.json", false, Default::default()).ok()?;
         let settings = read_settings(&config, DatabaseKind::Login).ok()?;
         let pool = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log).ok()?;
         Some((Arc::new(Mutex::new(pool)), log))

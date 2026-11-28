@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn captured_title_metadata_reaches_the_stock_packets_without_importing_points() {
         let path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/World/Vanilla/titles.json");
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/flavors/Vanilla/World/titles.json");
         let vanilla = VanillaTitles::load(path).unwrap();
         let frames = load_frames(&vanilla);
         let track_at = |id: u32| {
@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn custom_title_configuration_sets_the_sheet_and_displayed_rank() {
         let path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/World/Vanilla/titles.json");
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/flavors/Vanilla/World/titles.json");
         let titles = VanillaTitles::load(path).unwrap();
         let sample = titles.sheet().find(|row| row.metric == "jumps").unwrap();
         assert_eq!(sample.name, "Hog Jumper");
@@ -496,7 +496,7 @@ mod tests {
     #[test]
     fn the_catalog_can_add_another_custom_title_without_server_code() {
         let mut input: serde_json::Value =
-            serde_json::from_str(include_str!("../../../config/World/Vanilla/titles.json"))
+            serde_json::from_str(include_str!("../../../config/flavors/Vanilla/World/titles.json"))
                 .unwrap();
         let custom = input["custom_tracks"].as_array_mut().unwrap();
         custom.retain(|row| row["id"] == 48);
@@ -508,7 +508,7 @@ mod tests {
         }));
         let doc = Document::parse(&input.to_string(), "second-custom-title.json").unwrap();
         let wire = Document::parse(
-            include_str!("../../../config/World/Vanilla/vanilla-title-wire.json"),
+            include_str!("../../../config/flavors/Vanilla/World/vanilla-title-wire.json"),
             "vanilla-title-wire.json",
         )
         .unwrap();
@@ -547,7 +547,7 @@ mod tests {
     #[test]
     fn the_custom_catalog_holds_only_custom_text_and_lookup_ids() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../config/World/Vanilla/titles.json");
+            .join("../config/flavors/Vanilla/World/titles.json");
         let titles = VanillaTitles::load(path).unwrap();
         let body: serde_json::Value = serde_json::from_slice(&titles.custom_catalog()).unwrap();
         let custom = body["custom_tracks"].as_array().unwrap();
@@ -564,7 +564,7 @@ mod tests {
     #[test]
     fn a_hundred_custom_titles_fit_after_the_vanilla_table() {
         let mut input: serde_json::Value =
-            serde_json::from_str(include_str!("../../../config/World/Vanilla/titles.json"))
+            serde_json::from_str(include_str!("../../../config/flavors/Vanilla/World/titles.json"))
                 .unwrap();
         let template = input["custom_tracks"][0].clone();
         let custom = input["custom_tracks"].as_array_mut().unwrap();
@@ -579,7 +579,7 @@ mod tests {
         }
         let doc = Document::parse(&input.to_string(), "hundred-custom-titles.json").unwrap();
         let wire = Document::parse(
-            include_str!("../../../config/World/Vanilla/vanilla-title-wire.json"),
+            include_str!("../../../config/flavors/Vanilla/World/vanilla-title-wire.json"),
             "vanilla-title-wire.json",
         )
         .unwrap();

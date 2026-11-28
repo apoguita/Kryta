@@ -17,6 +17,8 @@ mod crash;
 mod file_hooks;
 mod hooks;
 mod log;
+mod map_row_hooks;
+mod text_hooks;
 mod title_hooks;
 
 use std::ffi::c_void;
@@ -34,7 +36,7 @@ use crate::patterns::Patterns;
 use crate::scanner::Scanner;
 
 /// The port the link is served on when nothing says otherwise: `ClientLink.Bind` in
-/// `authserver/authserver.json.dist`.
+/// `config/machine.json.dist`, section `authserver`.
 const DEFAULT_LINK_PORT: u16 = 6650;
 
 /// How many times the first connection is tried, and how long between tries. The stack may still be
@@ -276,6 +278,67 @@ fn run() -> Result<(), String> {
             false
         }
     };
+    // The rows the server states for its maps (`docs/port/24-custom-maps.md`, "The map's row in
+    // the client"). A build the offset does not fit runs without them: every map is then the
+    // client's own row, and the log says so.
+    let rows_hooked = match addresses.get(map_row_hooks::RESOLVER) {
+        // SAFETY: the address was resolved, in this process, from the offset that describes it,
+        // and `install` checks the function before it replaces it.
+        Some(&lookup) => match unsafe { map_row_hooks::install(lookup) } {
+            Ok(rows) => {
+                log::line(format!("map rows: hook installed; the client's own table has {rows} rows"));
+                true
+            }
+            Err(error) => {
+                log::line(format!("map rows: not installed: {error}"));
+                false
+            }
+        },
+        None => {
+            log::line("map rows: not answered: the row offset did not resolve in this build");
+            false
+        }
+    };
+    // The texts the server states for its maps (`docs/port/24-custom-maps.md`, step R4). A build
+    // the offset does not fit shows the client's own text, and the log says so.
+    if rows_hooked {
+        match addresses.get(text_hooks::RESOLVER) {
+            // SAFETY: the address was resolved, in this process, from the offset that describes
+            // it, and `install` checks the function before it replaces it.
+            Some(&decode) => match unsafe { text_hooks::install(decode) } {
+                Ok(()) => log::line("map names: hook installed"),
+                Err(error) => log::line(format!("map names: not installed: {error}")),
+            },
+            None => log::line("map names: not installed: the offset did not resolve in this build"),
+        }
+    }
+    // A map id past the client's own maps is kept out of the client's record of fetched maps,
+    // which has no slot for it. Without this a map of the server's own cannot be entered under
+    // such an id, and the log says so.
+    if rows_hooked {
+        match addresses.get(map_row_hooks::STORE_RESOLVER) {
+            // SAFETY: the address was resolved, in this process, from the offset that describes
+            // it, the row hook is in, and `install_store` checks the function first.
+            Some(&store) => match unsafe { map_row_hooks::install_store(store) } {
+                Ok(()) => log::line("map rows: the record of fetched maps is hooked"),
+                Err(error) => log::line(format!("map rows: the record of fetched maps is not hooked: {error}")),
+            },
+            None => log::line(
+                "map rows: the record of fetched maps is not hooked: its offset did not resolve in this build",
+            ),
+        }
+        // The same for the help guide's list of places entered.
+        match addresses.get(map_row_hooks::GUIDE_RESOLVER) {
+            // SAFETY: as above, for `install_guide`.
+            Some(&guide) => match unsafe { map_row_hooks::install_guide(guide) } {
+                Ok(()) => log::line("map rows: the help guide's places are hooked"),
+                Err(error) => log::line(format!("map rows: the help guide's places are not hooked: {error}")),
+            },
+            None => log::line(
+                "map rows: the help guide's places are not hooked: the offset did not resolve in this build",
+            ),
+        }
+    }
     drop(scanner);
     // The files being fetched, by file id.
     let mut fetching: std::collections::HashMap<u32, crate::map_cache::Fetch> =
@@ -292,6 +355,17 @@ fn run() -> Result<(), String> {
                 match title_hooks::set_catalog(&custom_tracks) {
                     Ok(count) => log::line(format!("titles: {count} custom title(s) received")),
                     Err(error) => log::line(format!("titles: the list was refused: {error}")),
+                }
+            }
+            Ok(Message::MapRows { rows }) => {
+                if rows_hooked {
+                    let count = map_row_hooks::set_rows(&rows);
+                    log::line(format!("map rows: {count} map(s) are answered with the server's row"));
+                } else if !rows.is_empty() {
+                    log::line(format!(
+                        "map rows: the server states {} map(s), and this client shows its own rows for them",
+                        rows.len()
+                    ));
                 }
             }
             Ok(Message::Maps { flavor, files }) => {

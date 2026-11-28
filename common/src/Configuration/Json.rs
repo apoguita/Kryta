@@ -318,6 +318,35 @@ impl Record<'_> {
         }
     }
 
+    /// A field that is itself an object of plain fields, as each field's name and text, in the
+    /// file's order: a table whose names the reader does not fix. `None` when the row does not
+    /// state it. The commentary names (`doc`, `note`, ...) inside it are not fields.
+    pub fn fields(&self, field: &str) -> Result<Option<Vec<(String, String)>>, String> {
+        let Some(value) = self.value.get(field).filter(|value| !value.is_null()) else {
+            return Ok(None);
+        };
+        let Some(object) = value.as_object() else {
+            return Err(format!(
+                "> Config: {}.{field} in {} is a {}, but it is an object of fields",
+                self.at,
+                self.filename.display(),
+                kind(value)
+            ));
+        };
+        let inner = Record {
+            at: format!("{}.{field}", self.at),
+            filename: self.filename,
+            value,
+        };
+        let mut fields = Vec::new();
+        for name in object.keys().filter(|name| !METADATA.contains(&name.as_str())) {
+            if let Some(text) = inner.text(name)? {
+                fields.push((name.clone(), text));
+            }
+        }
+        Ok(Some(fields))
+    }
+
     /// A field a row cannot be without.
     pub fn required(&self, field: &str) -> Result<String, String> {
         self.text(field)?.ok_or_else(|| {

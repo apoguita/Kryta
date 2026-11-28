@@ -5,7 +5,7 @@
 //! removed once these were confirmed), wrote into the executable's file at fixed addresses of build
 //! 39167 (`rank_hook`, `hover_hook`, `metadata_hook`, `:44-74`), doing the same thing at the same
 //! three places. The line numbers cited here are that file's. What changed is how they get there: the places are found by
-//! byte pattern from the offsets the server sends (`config/Client/offsets/titles.json`), and the
+//! byte pattern from the offsets the server sends (`config/flavors/Vanilla/Client/offsets/titles.json`), and the
 //! hooks are installed while the client runs.
 //!
 //! | place | kind | what the hook does |
@@ -205,7 +205,7 @@ pub const RESOLVERS: [&str; 6] = [
 ///
 /// # Safety
 ///
-/// The addresses must be the places `config/Client/offsets/titles.json` describes, in this process.
+/// The addresses must be the places `config/flavors/Vanilla/Client/offsets/titles.json` describes, in this process.
 pub unsafe fn install(addresses: [u32; 6]) -> Result<(), String> {
     let [rank_call, rank_worker, hover_call, hover_formatter, hover_return, metadata] = addresses;
     RANK_WORKER.store(rank_worker, Ordering::Release);

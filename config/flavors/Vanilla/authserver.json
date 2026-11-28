@@ -1,10 +1,5 @@
 {
-  "note": "authserver.json.dist - the auth program's own configuration. Reference: src/server/apps/authserver/authserver.conf.dist, whose setting names these are; the format is this project's (docs/decisions/0005-json-configuration.md). One file per program: this program reads this file and no other. Only the settings the ported stages read are here - a setting arrives with the stage that reads it, so a key in this file is one the program actually uses.",
-
-  "RealmServerPort": {
-    "value": 6112,
-    "doc": "Where this program answers login connections. Reference: GetOption<int32>(\"RealmServerPort\", 3724). It is 6112 here because that is the port this client was launched against and reaches; 3724 is the reference's default and no client of this game asks for it."
-  },
+  "note": "authserver.json - the login program's settings in this flavor (docs/decisions/0016-a-server-is-a-flavor.md). Reference: src/server/apps/authserver/authserver.conf.dist, whose setting names these are; the format is this project's (docs/decisions/0005-json-configuration.md). This file is part of the flavor and is shared with it, so it holds nothing one machine alone knows: the database logins, the addresses and ports the program binds, and the paths of the machine's own files are in config/machine.json, section authserver, and a key stated there wins over this file. A path that names this flavor's own content is relative to this folder. Only the settings the ported stages read are here - a setting arrives with the stage that reads it, so a key in this file is one the program actually uses.",
 
   "CreationMap": {
     "value": 0,
@@ -16,16 +11,7 @@
   },
   "EquippedBag": {
     "value": 5,
-    "doc": "The id of the bag a character wears things in. The login's character list draws each character's armour from the items in this bag (slots 2 to 6: body, legs, head, boots, gloves). It must be the bag the world's creation inventory gives type 2 and model 21 (config/World/Vanilla/creation/inventory.json); a different number lists every character with no armour."
-  },
-  "BindIP": {
-    "value": "0.0.0.0",
-    "doc": "The address the listener binds. 0.0.0.0 is every interface."
-  },
-
-  "PidFile": {
-    "value": "",
-    "doc": "Written when a PID is wanted for a service manager. Empty writes nothing."
+    "doc": "The id of the bag a character wears things in. The login's character list draws each character's armour from the items in this bag (slots 2 to 6: body, legs, head, boots, gloves). It must be the bag the world's creation inventory gives type 2 and model 21 (config/flavors/Vanilla/World/creation/inventory.json); a different number lists every character with no armour."
   },
 
   "StatusInterval": {
@@ -43,30 +29,22 @@
   "Portal": {
     "Enable": {
       "value": true,
-      "doc": "The portal the client takes its identity from before it logs in: four HTTP endpoints. This program serves it (docs/decisions/0003-portal-host.md), and the accounts it answers from are data/accounts.json."
-    },
-    "Bind": {
-      "value": "127.0.0.1:6601",
-      "doc": "Where those endpoints answer. The client was launched with -portal 127.0.0.1 and speaks to localhost:6601."
+      "doc": "The portal the client takes its identity from before it logs in: four HTTP endpoints. This program serves it (docs/decisions/0003-portal-host.md), and the accounts it answers from are data/accounts.json. Where it answers is the machine's (config/machine.json, authserver.Portal.Bind)."
     }
   },
 
   "ClientLink": {
     "Enable": {
       "value": true,
-      "doc": "The link Kryta.dll opens from inside a patched client when the client starts (docs/port/22-client-platform.md). This program serves it: over it a client is given the offsets its DLL finds the client's functions by, and the custom title text. A patched client does not start without it."
-    },
-    "Bind": {
-      "value": "127.0.0.1:6650",
-      "doc": "Where the link answers. Kryta.dll dials the -portal host of the client's command line on port 6650 unless a Kryta.json beside the client names another address."
+      "doc": "The link Kryta.dll opens from inside a patched client when the client starts (docs/port/22-client-platform.md). This program serves it: over it a client is given the offsets its DLL finds the client's functions by, and the custom title text. A patched client does not start without it. Where it answers is the machine's (config/machine.json, authserver.ClientLink.Bind)."
     },
     "Directory": {
-      "value": "config/Client",
-      "doc": "The folder of what a client's DLL is given: every *.json under its offsets folder is one offset document (config/Client/README.md). Read once at start-up; a missing folder or a broken file stops the program."
+      "value": "Client",
+      "doc": "The folder of what a client's DLL is given, relative to this flavor's folder: every *.json under its offsets folder is one offset document (Client/README.md). Read once at start-up; a missing folder or a broken file stops the program."
     },
     "TitleWorldConfig": {
-      "value": "worldserver/worldserver.json",
-      "doc": "World program configuration whose WorldPack supplies the custom title text a client's DLL is sent. An empty value sends none."
+      "value": "worldserver.json",
+      "doc": "The world program's settings file, relative to this flavor's folder. Its WorldPack supplies the custom title text and the map files a client's DLL is sent. An empty value sends none."
     },
     "MapPartPauseMs": {
       "value": 0,
@@ -97,16 +75,6 @@
     "doc": "How often the world list is refreshed, in seconds. Reference: RealmsStateUpdateDelay, whose default is this."
   },
 
-  "WorldsFile": {
-    "value": "data/realms.json",
-    "doc": "The file a world can also be described in, merged over the realmlist table: a row with an id the table holds overrides it field by field, a row with a new id is added. Empty means the table alone."
-  },
-
-  "LoginDatabaseInfo": {
-    "value": "127.0.0.1;5432;kryta;change-me;kryta_login",
-    "doc": "host;port;user;password;database, as the reference spells it. The fourth field is a password: it is masked in every log line this program prints, and this file is not committed with a real one. The role and the databases were created for this project."
-  },
-
   "LoginDatabase": {
     "WorkerThreads": {
       "value": 2,
@@ -118,11 +86,6 @@
     }
   },
 
-  "CharacterDatabaseInfo": {
-    "value": "127.0.0.1;5432;kryta;change-me;kryta_characters",
-    "doc": "host;port;user;password;database - a login's answer lists the account's characters, and those are rows in this database. The fourth field is a password, masked in every log line."
-  },
-
   "CharacterDatabase": {
     "WorkerThreads": {
       "value": 2,
@@ -132,11 +95,6 @@
       "value": 1,
       "doc": "Synchronous connections to it."
     }
-  },
-
-  "LogsDir": {
-    "value": "",
-    "doc": "Where file appenders write. Empty means the working directory."
   },
 
   "Appender": {

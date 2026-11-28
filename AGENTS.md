@@ -194,7 +194,7 @@ Here `authserver` links `game` as well as `shared`
 | `modules/` | `mod-*`, out of tree | `modules/` |
 | `authserver/`, `worldserver/` | the two programs, each with its own config file; `worldserver` also builds `kryta-cli`, the control client | `src/server/apps/` |
 | `data/` | `sql/`, the schema; `path-graphs.bin`, the extracted path graphs; `realms.json`, the login's world list. **Schema only**: nothing here seeds a row (rule 7) | `data/` |
-| `config/` | the world's content and the machine's values, as JSON files with a README in each folder: `Server/` for what a machine chooses, `World/<pack>/` for what a world contains, `Client/` for what a patched client's DLL is given (`config/README.md`) | none - this tree's own |
+| `config/` | the world's content and the machine's values, as JSON files with a README in each folder: `flavors/<flavor>/` for everything one server setup defines - its `World/` content, its `Server/` command surface and the `Client/` files a patched client's DLL is given - and `Server/` for what a machine chooses for itself (`config/README.md`, `docs/decisions/0016-a-server-is-a-flavor.md`) | none - this tree's own |
 | `tools/` | three workspace programs - `supervisor/` (`kryta-supervisor`, starts and stops the stack), `manage/` (`kryta-manage`, the control panel) and `management-service/` (`kryta-management-service`, serves the panel) - the client platform's two crates - `client-dll/` (`Kryta.dll`, what Kryta adds to the game client) and `client-link/` (the messages between that DLL and the server; `docs/port/22-client-platform.md`) - and the scripts: the client patch and sniffer in `client/`, the capture readers in `capture/`, the imports (`docs/port/05-tooling.md`) | none - this tree's own |
 | `recordings/` | the captures this tree cites, copied from ASURA's `recordings/` (`recordings/README.md`) | none - this tree's own |
 | `docs/evidence/` | measurements this tree cites, and `asura-history/`, the recovered archive of ASURA's documents: history, not instruction | none - this tree's own |
@@ -281,7 +281,7 @@ the client is the judge rather than a test.
 | titles: the research, the client builds, and the slice that is implemented | `docs/port/19-title-research.md` |
 | what is not settled: every open issue, in one list | `docs/port/20-open-issues.md` |
 | what the code is like: its style, its design, and where it is patched | `docs/port/21-code-assessment.md` |
-| the client platform: `Kryta.dll`, its link to the server, the offsets, and what is built | `docs/port/22-client-platform.md`; the code is `tools/client-dll/`, `tools/client-link/`, `authserver/src/Server/client_link.rs`, `config/Client/` |
+| the client platform: `Kryta.dll`, its link to the server, the offsets, and what is built | `docs/port/22-client-platform.md`; the code is `tools/client-dll/`, `tools/client-link/`, `authserver/src/Server/client_link.rs`, `config/flavors/Vanilla/Client/` |
 | the control panel: what it is today, what is wrong with it, and the direction for rebuilding it | `docs/port/23-control-panel.md` |
 | how the game works: the owner's rules and the evidence for them | `docs/game-rules.md` |
 | every other source, its local copy, and which question goes to which | `docs/research-sources.md`, `research/` |
@@ -296,6 +296,6 @@ the client is the judge rather than a test.
 | the login conversation | `authserver/src/` |
 | the game program | `worldserver/src/` |
 | the hook registry | `game/src/Scripting/`; `scripts/src/AddScripts.rs` registers content against it |
-| one config file per program | `authserver/authserver.json.dist`, `worldserver/worldserver.json.dist`, `tools/manage/manage.json.dist`, `tools/supervisor/stack.json.dist` |
+| one config file per program, in the flavor the machine runs | `config/flavors/Vanilla/authserver.json`, `config/flavors/Vanilla/worldserver.json`, with `config/flavor.json` naming the flavor and `config/machine.json.dist` for what one machine alone knows (`docs/decisions/0016-a-server-is-a-flavor.md`); `tools/manage/manage.json.dist`, `tools/supervisor/stack.json.dist` |
 | the stack, the panel and the control client | `tools/supervisor/`, `tools/manage/`, `tools/management-service/`, `kryta-cli` in `worldserver/` |
 | this machine's cargo | `C:\Users\Apo\.cargo\bin\cargo.exe` |

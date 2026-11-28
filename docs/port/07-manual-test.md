@@ -25,7 +25,7 @@ not committed when it holds a password).
 
 Starting from nothing: the programs create their own tables. The migrations in `data/sql/base/` are
 schema only; the maps, their spawn points and the item definitions are the world pack under
-`config/World/Vanilla/`, read at start-up and never seeded
+`config/flavors/Vanilla/World/`, read at start-up and never seeded
 (`docs/decisions/0014-the-world-content-is-a-pack.md`) - so a fresh machine only needs the database
 server, a role that may create its databases and the three databases themselves (empty is enough). The
 world's fresh start-up is proven by `cargo test -p worldserver --test fresh_world -- --ignored`; it
@@ -51,8 +51,8 @@ running. The list it starts is `tools/supervisor/stack.json`.
 The same programs by hand, each in its own window, if that is preferred:
 
 ```powershell
-cargo run -p authserver  -- -c authserver/authserver.json
-cargo run -p worldserver -- -c worldserver/worldserver.json
+cargo run -p authserver
+cargo run -p worldserver
 cargo run -p kryta-management-service -- -c tools/manage/manage.json   # optional: http://127.0.0.1:6602/
 ```
 

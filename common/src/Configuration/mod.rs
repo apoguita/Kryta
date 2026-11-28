@@ -217,9 +217,149 @@ pub struct Config {
     policy: Policy,
     dry_run: bool,
     complaints: Vec<Complaint>,
+    /// The flavor this configuration belongs to, when its file is in a flavor's folder.
+    flavor: Option<Flavor>,
+}
+
+/// One server's build and setup, as a folder: `config/flavors/<name>/`
+/// (`docs/decisions/0016-a-server-is-a-flavor.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Flavor {
+    /// The flavor's name: the folder's.
+    pub name: String,
+    /// The flavor's folder.
+    pub folder: PathBuf,
+}
+
+/// The folder every flavor is in, under the configuration folder.
+pub const FLAVORS: &str = "flavors";
+/// The file that names the flavor a machine runs, under the configuration folder:
+/// `{ "flavor": "Vanilla" }`.
+pub const ACTIVE_FLAVOR_FILE: &str = "flavor.json";
+/// The file of one machine's own values, under the configuration folder. It has one section for
+/// each program, named as the program's settings file is (`authserver`, `worldserver`), and a key
+/// stated there wins over the flavor's. It is never part of a flavor and never distributed.
+pub const MACHINE_FILE: &str = "machine.json";
+
+/// Whether `text` can name a flavor: 1 to 64 ASCII letters, digits, `_` and `-`. The same rule as
+/// `client_link::is_flavor_name`, because the name is a folder on the server and on every client.
+pub fn is_flavor_name(text: &str) -> bool {
+    (1..=64).contains(&text.len())
+        && text.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+impl Flavor {
+    /// The flavor a settings file belongs to: the file is `<config>/flavors/<name>/<file>`. `None`
+    /// for a file anywhere else.
+    pub fn of_settings_file(file: &Path) -> Option<Self> {
+        let folder = file.parent()?;
+        let name = folder.file_name()?.to_str()?;
+        let flavors = folder.parent()?;
+        (flavors.file_name()? == FLAVORS && is_flavor_name(name)).then(|| Self {
+            name: name.to_string(),
+            folder: folder.to_path_buf(),
+        })
+    }
+
+    /// The flavor this machine runs, as `<config>/flavor.json` names it.
+    pub fn active(config_folder: &Path) -> Result<Self, String> {
+        let file = config_folder.join(ACTIVE_FLAVOR_FILE);
+        let document = json::Document::read(&file).map_err(|error| error.to_string())?;
+        let (options, _) = document.settings();
+        let name = options
+            .get("flavor")
+            .ok_or_else(|| format!("{} names no 'flavor'", file.display()))?;
+        if !is_flavor_name(name) {
+            return Err(format!(
+                "{}: '{name}' is not a flavor name: use 1 to 64 letters, digits, '_' and '-'",
+                file.display()
+            ));
+        }
+        let folder = config_folder.join(FLAVORS).join(name);
+        if !folder.is_dir() {
+            return Err(format!(
+                "{} names the flavor '{name}', and there is no folder {}",
+                file.display(),
+                folder.display()
+            ));
+        }
+        Ok(Self { name: name.clone(), folder })
+    }
+
+    /// A program's settings file in this flavor: `<folder>/<program>.json`.
+    pub fn settings_file(&self, program: &str) -> PathBuf {
+        self.folder.join(format!("{program}.json"))
+    }
+
+    /// The configuration folder this flavor is under: where `flavor.json` and `machine.json` are.
+    pub fn config_folder(&self) -> PathBuf {
+        self.folder
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_default()
+    }
 }
 
 impl Config {
+    /// Read a program's settings in the flavor this machine runs: `<config>/flavor.json` names the
+    /// flavor, and the file is `<config>/flavors/<flavor>/<program>.json`, read by
+    /// [`Config::load_json`].
+    pub fn load_active(
+        config_folder: impl AsRef<Path>,
+        program: &str,
+        policy: Policy,
+    ) -> Result<Self, ConfigError> {
+        let flavor = Flavor::active(config_folder.as_ref()).map_err(ConfigError::Malformed)?;
+        Self::load_json(flavor.settings_file(program), false, policy)
+    }
+
+    /// The flavor this configuration belongs to, when its file is in a flavor's folder.
+    pub fn flavor(&self) -> Option<&Flavor> {
+        self.flavor.as_ref()
+    }
+
+    /// A path a flavor's settings state for the flavor's own content (`WorldPack`, `CommandsFile`):
+    /// relative to the flavor's folder, so a flavor that is copied or renamed still names its own
+    /// files. A configuration that is not in a flavor's folder, an absolute path and an empty value
+    /// are answered as they are.
+    pub fn flavor_path(&self, value: &str) -> String {
+        match &self.flavor {
+            Some(flavor) if !value.is_empty() && Path::new(value).is_relative() => flavor
+                .folder
+                .join(value)
+                .to_string_lossy()
+                .replace('\\', "/"),
+            _ => value.to_string(),
+        }
+    }
+
+    /// Lay the machine's own values over a flavor's: the section of `<config>/machine.json` named
+    /// as this settings file is. A key stated there wins. A machine with no such file, or no such
+    /// section, changes nothing; a file that does not parse is refused.
+    fn overlay_machine(&mut self) -> Result<(), ConfigError> {
+        let Some(flavor) = &self.flavor else {
+            return Ok(());
+        };
+        let Some(program) = self.filename.file_stem().and_then(|stem| stem.to_str()) else {
+            return Ok(());
+        };
+        let file = flavor.config_folder().join(MACHINE_FILE);
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            return Ok(());
+        };
+        let document = json::Document::parse(&text, &file)?;
+        let (options, complaints) = document.settings();
+        let prefix = format!("{program}.");
+        for (key, value) in options {
+            if let Some(key) = key.strip_prefix(&prefix) {
+                self.options.insert(key.to_string(), value);
+            }
+        }
+        self.complaints.extend(complaints);
+        Ok(())
+    }
+
     /// Read a file.
     ///
     /// Reference: `ConfigMgr::LoadAppConfigs` -> `LoadInitial` -> `ParseFile`.
@@ -312,14 +452,18 @@ impl Config {
         let document = json::Document::parse(&text, &filename)?;
 
         let (options, complaints) = document.settings();
-        let config = Self {
+        let mut config = Self {
             filename: filename.clone(),
             options,
             critical: BTreeSet::new(),
             policy,
             dry_run: false,
             complaints,
+            // A settings file in a flavor's folder is that flavor's, and the machine's own values
+            // are laid over it (`docs/decisions/0016-a-server-is-a-flavor.md`).
+            flavor: Flavor::of_settings_file(&filename),
         };
+        config.overlay_machine()?;
 
         if config.options.is_empty() {
             // A file that stated keys and had every one of them refused is not empty: saying "Empty
@@ -409,6 +553,7 @@ impl Config {
             policy,
             dry_run: false,
             complaints,
+            flavor: None,
         }
     }
 
@@ -420,6 +565,7 @@ impl Config {
             policy,
             dry_run: false,
             complaints: Vec::new(),
+            flavor: None,
         }
     }
 
@@ -821,6 +967,97 @@ mod tests {
         assert!(described.iter().any(|(key, value)| key == "RealmServerPort" && value == "6112"));
         assert!(described.iter().any(|(key, value)| key == "LoginDatabaseInfo" && value.contains("********")));
         assert!(!described.iter().any(|(_, value)| value.contains("secret")));
+    }
+
+    /// A configuration folder with one flavor, the file that names it and a machine file, as
+    /// `docs/decisions/0016-a-server-is-a-flavor.md` lays them out.
+    fn flavored(name: &str, machine: Option<&str>) -> PathBuf {
+        let config = std::env::temp_dir().join(format!("kryta-flavor-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&config);
+        let flavor = config.join(FLAVORS).join("fantasy_modded");
+        std::fs::create_dir_all(&flavor).unwrap();
+        std::fs::write(config.join(ACTIVE_FLAVOR_FILE), r#"{ "flavor": { "value": "fantasy_modded" } }"#)
+            .unwrap();
+        std::fs::write(
+            flavor.join("worldserver.json"),
+            r#"{ "WorldPack": "World", "BindIP": "0.0.0.0", "World": { "PartySizeCap": 8 } }"#,
+        )
+        .unwrap();
+        if let Some(machine) = machine {
+            std::fs::write(config.join(MACHINE_FILE), machine).unwrap();
+        }
+        config
+    }
+
+    /// A program started with no settings file reads its own in the flavor the machine runs, with
+    /// the machine's own values over it; and a flavor's own path is relative to its folder.
+    #[test]
+    fn a_program_reads_its_settings_in_the_flavor_the_machine_runs() {
+        let folder = flavored(
+            "active",
+            Some(
+                r#"{ "note": "this machine",
+                     "worldserver": { "BindIP": "127.0.0.1", "World": { "PublicAddress": "10.0.0.5:6112" },
+                                      "WorldDatabaseInfo": "h;1;u;secret;d" },
+                     "authserver": { "BindIP": "192.168.0.1" } }"#,
+            ),
+        );
+        let config = Config::load_active(&folder, "worldserver", Policy::default()).unwrap();
+        let flavor = config.flavor().expect("the file is in a flavor's folder");
+        assert_eq!(flavor.name, "fantasy_modded");
+        assert_eq!(flavor.config_folder(), folder);
+
+        // The machine's value wins, a key only the machine states is there, a key only the flavor
+        // states is kept, and another program's section is not this program's.
+        assert_eq!(config.raw("BindIP"), Some("127.0.0.1"));
+        assert_eq!(config.raw("World.PublicAddress"), Some("10.0.0.5:6112"));
+        assert_eq!(config.raw("WorldDatabaseInfo"), Some("h;1;u;secret;d"));
+        assert_eq!(config.raw("World.PartySizeCap"), Some("8"));
+        assert!(config.keys().all(|key| !key.starts_with("authserver") && key != "note"));
+
+        let pack = flavor.folder.join("World").to_string_lossy().replace('\\', "/");
+        assert_eq!(config.flavor_path("World"), pack);
+        assert_eq!(config.flavor_path(""), "", "an empty value stays empty");
+        let absolute = std::env::temp_dir().join("elsewhere").to_string_lossy().into_owned();
+        assert_eq!(config.flavor_path(&absolute), absolute, "an absolute path is the operator's");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// A flavor with no machine file is read as it is; a machine file that does not parse is
+    /// refused; and a settings file outside any flavor's folder has no flavor and nothing laid over.
+    #[test]
+    fn the_machine_file_is_optional_and_a_broken_one_is_refused() {
+        let folder = flavored("no-machine", None);
+        let config = Config::load_active(&folder, "worldserver", Policy::default()).unwrap();
+        assert_eq!(config.raw("BindIP"), Some("0.0.0.0"));
+
+        std::fs::write(folder.join(MACHINE_FILE), "{ not json").unwrap();
+        assert!(Config::load_active(&folder, "worldserver", Policy::default()).is_err());
+        let _ = std::fs::remove_dir_all(&folder);
+
+        let loose = json_file("loose", r#"{ "WorldPack": "config/flavors/Vanilla/World" }"#);
+        let config = Config::load_json(&loose, false, Policy::default()).unwrap();
+        assert!(config.flavor().is_none());
+        assert_eq!(config.flavor_path("World"), "World", "no flavor: the path is as it was written");
+    }
+
+    /// The file that names the flavor must name a plain name that has a folder.
+    #[test]
+    fn the_active_flavor_must_be_a_plain_name_with_a_folder() {
+        let folder = flavored("names", None);
+        assert_eq!(Flavor::active(&folder).unwrap().name, "fantasy_modded");
+        for (text, why) in [
+            (r#"{ "flavor": "..\\.." }"#, "is not a flavor name"),
+            (r#"{ "flavor": "missing" }"#, "there is no folder"),
+            (r#"{ "other": 1 }"#, "names no 'flavor'"),
+        ] {
+            std::fs::write(folder.join(ACTIVE_FLAVOR_FILE), text).unwrap();
+            let error = Flavor::active(&folder).unwrap_err();
+            assert!(error.contains(why), "{error}");
+        }
+        assert!(is_flavor_name("Vanilla") && is_flavor_name("fantasy_modded-2"));
+        assert!(!is_flavor_name("") && !is_flavor_name("two words") && !is_flavor_name(&"x".repeat(65)));
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     /// A JSON file goes through the same getters as the reference's format, which is the whole

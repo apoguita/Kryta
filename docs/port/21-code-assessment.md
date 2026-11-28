@@ -102,7 +102,7 @@ Size of fix: medium.
 
 ### 4. Titles are bolted on (checked)
 
-- Definitions and values are one record. `config/World/Vanilla/titles.json` gives each custom track its
+- Definitions and values are one record. `config/flavors/Vanilla/World/titles.json` gives each custom track its
   `points` and `selected`, and `vanilla-title-wire.json` gives 15 of 45 tracks a captured character's
   values (Hero at 1,448 points), so every character is sent the same progress
   (`game/src/Characters/Titles.rs:48-63`, `:219-226`).

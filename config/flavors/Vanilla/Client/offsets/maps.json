@@ -1,0 +1,53 @@
+{
+  "note": "The client's own lookup of a map's row: its table of one 124-byte row for each map id (name, kind, region, world-map place), which is compiled into the client and cannot be edited (docs/port/24-custom-maps.md, 'The map's row in the client'). Kryta.dll replaces this one function so that a map whose record states a client_row is answered with it. The pattern is Py4GW Reforged Native's area_info_ref (offsets/map.json at 82e4746), given here with offset 0 so that it names the instruction and not the table address after it; Reforged reads the table's address from it and this document finds the function it is in. Measured in build 39167 (time stamp 0x6AE951C4): the instruction is at 0x5A6793, the function at 0x5A6770, it compares the map id with 0x382 (898 rows) and the table is at 0x96CF48.",
+  "namespace": "maps",
+  "patterns": {
+    "row_lookup_ref": {
+      "doc": "imul eax, esi, 0x7c; pop esi; add eax, <table>: the end of the function that answers a map's row.",
+      "pattern": "\\x6B\\xC6\\x7C\\x5E\\x05",
+      "mask": "xxxxx",
+      "offset": "0x0",
+      "section": "text"
+    },
+    "fetched_store_ref": {
+      "doc": "mov edi, [ebp+8]; mov esi, ecx; cmp edi, <rows>; jl +0x14; push <line>: the start of the function that records, for a map id, the content value its load ended with. Measured in build 39167 at 0x850E07; the function is at 0x850E00, compares with 0x382 and asserts 'mission < MISSIONS', MsCliMan.cpp line 368 (the owner's crash report of 2026-11-27, entering map 10000).",
+      "pattern": "\\x8B\\x7D\\x08\\x8B\\xF1\\x81\\xFF\\x00\\x00\\x00\\x00\\x7C\\x14\\x68",
+      "mask": "xxxxxxx??xxxxx",
+      "offset": "0x0",
+      "section": "text"
+    },
+    "guide_place_ref": {
+      "doc": "push ebx; push edi; mov edi, [ebp+8]; cmp edi, <rows>; jl +0x14; push <line>; mov edx, <file>: inside the function that adds a map to the help guide's list of places entered. Measured in build 39167 at 0x4FC110; the function is at 0x4FC0F0 and asserts 'missionId < MISSIONS', GmHelpGuide.cpp line 2025 (the owner's crash report of 2026-11-28, loading into map 10000).",
+      "pattern": "\\x53\\x57\\x8B\\x7D\\x08\\x81\\xFF\\x00\\x00\\x00\\x00\\x7C\\x14\\x68\\x00\\x00\\x00\\x00\\xBA",
+      "mask": "xxxxxxx??xxxxx??xxx",
+      "offset": "0x0",
+      "section": "text"
+    }
+  },
+  "resolvers": {
+    "row_lookup": {
+      "doc": "const Row* __cdecl (u32 map_id): the function that holds that instruction. It asserts on a map id past the table's end.",
+      "on_fail": "continue",
+      "steps": [
+        { "name": "scan_ref", "op": "scan", "pattern": "row_lookup_ref", "out": "scan" },
+        { "name": "to_function_start", "op": "to_function_start", "in": "scan", "scan_range": "0x40", "out": "final" }
+      ]
+    },
+    "fetched_store": {
+      "doc": "void __thiscall (u32 map_id, u32 value): the client's record of which content value each map was last loaded with, one slot for each of its own maps. Kryta.dll leaves a map id past the client's table out of it, because the record has no slot for one.",
+      "on_fail": "continue",
+      "steps": [
+        { "name": "scan_ref", "op": "scan", "pattern": "fetched_store_ref", "out": "scan" },
+        { "name": "to_function_start", "op": "to_function_start", "in": "scan", "scan_range": "0x20", "out": "final" }
+      ]
+    },
+    "guide_place": {
+      "doc": "void __cdecl (u32 map_id, u32 kind): adds a map to the help guide's list of the last places entered. Kryta.dll leaves a map id past the client's table out of it.",
+      "on_fail": "continue",
+      "steps": [
+        { "name": "scan_ref", "op": "scan", "pattern": "guide_place_ref", "out": "scan" },
+        { "name": "to_function_start", "op": "to_function_start", "in": "scan", "scan_range": "0x40", "out": "final" }
+      ]
+    }
+  }
+}

@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use common::configuration::{Config, Policy};
+use common::configuration::{Config, Flavor, Policy};
 use common::logging::{Log, LogLevel};
 use database::database::DatabaseWorkerPool;
 
@@ -37,11 +37,10 @@ pub struct Manage {
     pub(crate) worlds: Arc<shared::worlds::WorldList>,
     /// The databases whose updater records the schema area shows.
     pub(crate) schemas: Vec<DatabaseSchema>,
-    /// The world program's settings file, shown and changed by the settings area. Its `WorldPack` names the
-    /// content the world serves.
-    pub(crate) world_config: Option<String>,
-    /// The login program's settings file, shown and changed by the settings area.
-    pub(crate) auth_config: Option<String>,
+    /// The configuration folder: where `flavor.json`, `machine.json` and `flavors/` are
+    /// (`docs/decisions/0016-a-server-is-a-flavor.md`). The panel follows the flavor that
+    /// `flavor.json` names, read at each request, so a flavor chosen here is what every page shows.
+    pub(crate) config_folder: String,
     /// The portable graph cache the navigation area inspects and updates.
     pub(crate) path_graphs_file: String,
     /// An explicit client archive used only by the offline dump action.
@@ -74,25 +73,30 @@ impl Manage {
         self.log.out(LogLevel::Info, "manage", text);
     }
 
-    /// The world program's settings, read from its own file.
+    /// The flavor this machine runs, as `<ConfigFolder>/flavor.json` names it now.
+    pub fn flavor(&self) -> Result<Flavor, String> {
+        Flavor::active(std::path::Path::new(&self.config_folder))
+    }
+
+    /// The world program's settings, read from its file in the active flavor with the machine's
+    /// values over them, as the program itself reads them.
     pub fn world_settings(&self) -> Result<Config, String> {
-        let path = self.world_config.as_deref().ok_or_else(|| {
-            "the world program's settings file is not named in manage.json (WorldConfigFile)"
-                .to_string()
-        })?;
+        let path = self.flavor()?.settings_file("worldserver");
         Config::load_json(path, false, Policy::default()).map_err(|error| error.to_string())
     }
 
     /// The folder of the world's pack (`docs/decisions/0014-the-world-content-is-a-pack.md`).
     pub fn world_pack_path(&self) -> Result<String, String> {
-        let (pack_path, _) = self
-            .world_settings()?
-            .value_string("WorldPack", "config/World/Vanilla")
+        let settings = self.world_settings()?;
+        let (pack_path, _) = settings
+            .value_string("WorldPack", "World")
             .map_err(|error| error.to_string())?;
         if pack_path.trim().is_empty() {
             return Err("the world program names no WorldPack".to_string());
         }
-        Ok(pack_path)
+        // The pack is the flavor's own content: relative to the folder the settings are in
+        // (`docs/decisions/0016-a-server-is-a-flavor.md`).
+        Ok(settings.flavor_path(&pack_path))
     }
 
     /// The world's own map pack, read through the pack reader the world uses, so an area shows the
@@ -116,12 +120,12 @@ impl Manage {
         let read = |key: &str, default: &str| {
             config
                 .value_string(key, default)
-                .map(|(value, _)| value)
+                .map(|(value, _)| config.flavor_path(&value))
                 .map_err(|error| error.to_string())
         };
-        let inventory = read("InventoryFile", "config/World/Vanilla/creation/inventory.json")?;
-        let equipment = read("EquipmentFile", "config/World/Vanilla/creation/equipment.json")?;
-        let worn = read("EquippedSlotsFile", "config/World/Vanilla/creation/worn_slots.json")?;
+        let inventory = read("InventoryFile", "World/creation/inventory.json")?;
+        let equipment = read("EquipmentFile", "World/creation/equipment.json")?;
+        let worn = read("EquippedSlotsFile", "World/creation/worn_slots.json")?;
         game::creation::Tables::load(
             &inventory,
             &equipment,

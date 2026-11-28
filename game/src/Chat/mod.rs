@@ -8,7 +8,7 @@
 //! the alias rule and the answer `/maps` prints.
 //!
 //! **The command surface is a file, not this module.** Which names exist, what each takes and which
-//! operation it runs are rows in `config/Server/commands.json`, read by [`commands::Table`]; GWPS's own
+//! operation it runs are rows in `config/flavors/Vanilla/Server/commands.json`, read by [`commands::Table`]; GWPS's own
 //! two dispatch points - `GameSrv_TryHandleGmCommand` (`GmCommands.c`, which owns `/tp`, `/teleport` and
 //! `/maps`) and `GameSrv_HandleChatCommand` (`GmChat.c`, which owns `/stuck`) - are that file's rows, and
 //! Rust keeps only the operations they name (`docs/decisions/0011-the-command-surface-is-content.md`).
@@ -55,6 +55,26 @@ pub fn travel_target(argument: &str) -> Option<&'static TravelTarget> {
     TRAVEL_TARGETS
         .iter()
         .find(|target| target.alias == wanted)
+}
+
+/// The map `/tp` reaches when GWPS's table does not name the argument: a map of this world's pack,
+/// by the alias `/maps` prints for it (its own name, [`MapEntry::alias`]) or by its map id.
+///
+/// This is not GWPS's: its table is fixed, and its `/tp` knows nothing else. It is this tree's own
+/// (owner, 2026-11-27), because a world's maps are its pack's (`docs/decisions/0014-the-world-
+/// content-is-a-pack.md`) and [`maps_answer`] already lists every hosted map by that alias - a
+/// name `/maps` prints and `/tp` refuses is the fault this removes. The table is asked first, so
+/// every alias of GWPS's keeps its meaning. A creation instance is not a place and is never
+/// answered.
+pub fn pack_target<'a>(argument: &str, maps: &'a [MapEntry]) -> Option<&'a MapEntry> {
+    let wanted = alias_key(argument);
+    if wanted.is_empty() {
+        return None;
+    }
+    let by_id = wanted.parse::<u32>().ok();
+    maps.iter()
+        .filter(|map| !map.is_creation())
+        .find(|map| by_id == Some(map.id) || map.alias() == wanted)
 }
 
 /// GWPS's `/maps`, line for line (`GmCommand_ListTargets`), as the working implementation
@@ -172,6 +192,23 @@ mod tests {
         assert!(travel_target("lakesidecounty").is_none());
         assert!(travel_target("").is_none());
         assert!(travel_target("   ").is_none());
+    }
+
+    /// A map the table does not name is reached by the alias `/maps` prints for it, or by its id.
+    #[test]
+    fn a_map_of_the_pack_is_found_by_its_own_name_or_its_id() {
+        let maps = vec![
+            map(169, map_kind::OUTPOST, "Kryta  Test Vale"),
+            map(0, map_kind::CREATION, "Character creation"),
+        ];
+        assert_eq!(pack_target("kryta test vale", &maps).map(|m| m.id), Some(169));
+        assert_eq!(pack_target("  Kryta Test   Vale ", &maps).map(|m| m.id), Some(169));
+        assert_eq!(pack_target("169", &maps).map(|m| m.id), Some(169));
+        assert!(pack_target("170", &maps).is_none());
+        assert!(pack_target("", &maps).is_none());
+        // The creation instance is not a place, by its name or by its id.
+        assert!(pack_target("character creation", &maps).is_none());
+        assert!(pack_target("0", &maps).is_none());
     }
 
     /// `/maps` with this world's one map: the table's own alias for it, and no row for the creation

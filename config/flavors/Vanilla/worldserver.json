@@ -1,15 +1,5 @@
 {
-  "note": "worldserver.json.dist - the game program's own configuration. Reference: src/server/apps/worldserver/worldserver.conf.dist, whose setting names these are; the format is this project's (docs/decisions/0005-json-configuration.md). One file per program: this program reads this file and no other. Only the settings the ported stages read are here - a setting arrives with the stage that reads it, so a key in this file is one the program actually uses.",
-
-  "RealmID": {
-    "value": 2,
-    "doc": "Which world this process is: the id a login hands a client as its map_token, and the id a realmlist row carries. A connection that names another world is closed."
-  },
-
-  "WorldServerPort": {
-    "value": 6113,
-    "doc": "Where gameplay connections are accepted. The login names this address and port in its 0x0009, and the front door copies a client's gameplay connection here."
-  },
+  "note": "worldserver.json - the game program's settings in this flavor (docs/decisions/0016-a-server-is-a-flavor.md). Reference: src/server/apps/worldserver/worldserver.conf.dist, whose setting names these are; the format is this project's (docs/decisions/0005-json-configuration.md). This file is part of the flavor and is shared with it, so it holds nothing one machine alone knows: the database logins, the world's id, the addresses and ports the program binds, the control endpoint and the paths of the machine's own files are in config/machine.json, section worldserver, and a key stated there wins over this file. A path that names this flavor's own content is relative to this folder. Only the settings the ported stages read are here - a setting arrives with the stage that reads it, so a key in this file is one the program actually uses.",
 
   "Console": {
     "Enable": {
@@ -22,18 +12,6 @@
     }
   },
 
-  "Control": {
-    "Enable": { "value": false, "doc": "Enable authenticated local world control for the standalone CLI." },
-    "Port": { "value": 7878, "doc": "Local control port; always binds to 127.0.0.1." },
-    "CredentialFile": { "value": "", "doc": "Path to a restricted file containing at least 32 ASCII letters or digits." },
-    "TimeoutSeconds": { "value": 5, "doc": "Maximum wait for a local control request or world response; must be positive." }
-  },
-
-  "CaptureFile": {
-    "value": "",
-    "doc": "Where to record the wire: every game message both directions, as plaintext JSONL with two-byte headers. Empty is off. The file is evidence, and it holds payloads unsanitised, so it belongs under recordings/ or a scratch path, and a reader takes its layer from the file's own header (docs/port/02-wire.md, Three kinds of capture)."
-  },
-
   "StatusInterval": {
     "value": 30,
     "doc": "How often the program says what it is doing: up time, accepted connections, the maps it hosts and the instances it holds open. The auth program's timer reads the same key."
@@ -42,11 +20,6 @@
   "MinWorldUpdateTime": {
     "value": 1,
     "doc": "How long may pass before the world's loop does not bother to update, in milliseconds. The reference's own key of the same name (worldserver.conf, 1 ms): WorldUpdateLoop sleeps the remainder rather than updating twice inside it (Main.cpp:586-616). The loop is what calls the world's update, which tells the scripts every tick and sweeps the instance table on its own World.SweepIntervalMs."
-  },
-
-  "BindIP": {
-    "value": "127.0.0.1",
-    "doc": "The address the listener binds."
   },
 
   "Network": {
@@ -61,29 +34,27 @@
   },
 
   "WorldPack": {
-    "value": "config/World/Vanilla",
-    "doc": "The world pack whose maps, entry points and doorways this world serves - the folder that holds maps/. What a world is is a file (docs/decisions/0014-the-world-content-is-a-pack.md); a record whose folder is not its map id, or a pack with no maps folder, stops the program rather than serving half a world."
-  },  "InventoryFile": {
-    "value": "config/World/Vanilla/creation/inventory.json",
-    "doc": "The bags and items a character-creation screen is given - a record list, read at start-up. A client with no items has no inventory model to draw."
+    "value": "World",
+    "doc": "The world pack whose maps, entry points and doorways this world serves - the folder that holds maps/, relative to this flavor's folder. What a world is is a file (docs/decisions/0014-the-world-content-is-a-pack.md); a record whose folder is not its map id, or a pack with no maps folder, stops the program rather than serving half a world."
   },
 
-  "PathGraphs": {
-    "value": "data/path-graphs.bin",
-    "doc": "The extracted ASURAPG1 path-graph cache the server reads at start-up. It may contain only the maps that have been dumped; an undumped or custom map answers NoGraph, and worldserver never reads Gw.dat. The manager's navigation tool inspects and updates this file."
+  "InventoryFile": {
+    "value": "World/creation/inventory.json",
+    "doc": "The bags and items a character-creation screen is given - a record list, read at start-up, relative to this flavor's folder. A client with no items has no inventory model to draw."
   },
+
   "EquipmentFile": {
-    "value": "config/World/Vanilla/creation/equipment.json",
+    "value": "World/creation/equipment.json",
     "doc": "What a new character wears per campaign and profession - a record list of sets, read at start-up."
   },
 
   "EquippedSlotsFile": {
-    "value": "config/World/Vanilla/creation/worn_slots.json",
+    "value": "World/creation/worn_slots.json",
     "doc": "Which slot of the client's equipped bag each kind of item is worn in - a record list, read at start-up. The number is the client's own: a kind no row names is not worn, and a piece whose slot is wrong is a piece the character is drawn without."
   },
 
   "CommandsFile": {
-    "value": "config/Server/commands.json",
+    "value": "Server/commands.json",
     "doc": "The chat command surface: the names a player may type, what each takes, and which server operation it runs. A record list, read at start-up; a name it grants with no operation behind it is refused then, not when a player types it (docs/decisions/0011-the-command-surface-is-content.md)."
   },
 
@@ -145,10 +116,6 @@
       "value": 288,
       "doc": "How fast a player agent walks, in units a second: the create message carries it and the client walks the model at it."
     },
-    "PublicAddress": {
-      "value": "127.0.0.1:6112",
-      "doc": "The address a travelling client is told to reconnect to, as host:port - the redirect (0x01A6) carries it as a Winsock sockaddr_in. The working implementation publishes one (its --public argument, ASURA/crates/asura-world/src/main.rs:73). This stack's client dials the address it was launched against, which is the login port, and the front door copies that connection to the world, so the default is that address."
-    },
     "StartingOutpost": {
       "value": 148,
       "doc": "The outpost a fresh character is placed in and has unlocked (R12, R14) - the one unlock a character starts with, and the map its own row names as its start. The login's placement names the same fact for a character with no map anywhere (authserver.json, FallbackOutpost); a different number here would hand a new character an unlock the login never sends it to."
@@ -175,21 +142,6 @@
     }
   },
 
-  "PidFile": {
-    "value": "",
-    "doc": "Written when a PID is wanted for a service manager. Empty writes nothing."
-  },
-
-  "LogsDir": {
-    "value": "",
-    "doc": "Where file appenders write. Empty means the working directory."
-  },
-
-  "LoginDatabaseInfo": {
-    "value": "127.0.0.1;5432;kryta;change-me;kryta_login",
-    "doc": "host;port;user;password;database - the login's own tables: accounts, the world list, and the travel record a login writes and this program claims. The world reads this database the way the reference's world program reads its login database; the two programs never talk to each other."
-  },
-
   "LoginDatabase": {
     "WorkerThreads": {
       "value": 2,
@@ -201,11 +153,6 @@
     }
   },
 
-  "WorldDatabaseInfo": {
-    "value": "127.0.0.1;5432;kryta;change-me;kryta_world",
-    "doc": "host;port;user;password;database - the world's own tables, which is what the game is made of rather than what its players did. The fourth field is a password: it is masked in every log line, and this file is not committed with a real one."
-  },
-
   "WorldDatabase": {
     "WorkerThreads": {
       "value": 2,
@@ -215,11 +162,6 @@
       "value": 1,
       "doc": "Synchronous connections, used where the caller cannot wait."
     }
-  },
-
-  "CharacterDatabaseInfo": {
-    "value": "127.0.0.1;5432;kryta;change-me;kryta_characters",
-    "doc": "host;port;user;password;database - characters, their items and their progress. A player's rows, not a designer's."
   },
 
   "CharacterDatabase": {

@@ -19,7 +19,9 @@ mod command_line;
 #[path = "RemoteAccess/mod.rs"]
 mod remote_access;
 
-use common::configuration::startup::{policy, print_usage, read, read_bool, read_string, report};
+use common::configuration::startup::{
+    policy, print_usage, read, read_bool, read_flavor_path, read_string, report,
+};
 use common::configuration::Config;
 use common::logging::{Log, LogLevel};
 use common::utilities::create_pid_file;
@@ -32,9 +34,12 @@ use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-/// The config file read when `-c` names none.
-/// Reference: `_ACORE_CORE_CONFIG  "worldserver.json"`, with this project's own file format: JSON.
-const DEFAULT_CONFIG: &str = "worldserver.json";
+/// The config file read when `-c` names none: this program's file in the flavor the machine runs
+/// (`docs/decisions/0016-a-server-is-a-flavor.md`). The reference reads `worldserver.conf` beside
+/// the program (`_ACORE_CORE_CONFIG`).
+const DEFAULT_CONFIG: &str = "config/flavors/<flavor>/worldserver.json";
+/// This program's name, as its settings file and its section of `config/machine.json` are named.
+const PROGRAM: &str = "worldserver";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -204,8 +209,11 @@ struct Background {
 fn read_configuration(options: &Options) -> Result<Config, String> {
     let policy = policy(options.config_policy.as_deref())?;
 
-    let mut config =
-        Config::load_json(&options.config, false, policy).map_err(|error| error.to_string())?;
+    let mut config = common::configuration::startup::load_settings(
+        options.config.as_deref(),
+        PROGRAM,
+        policy,
+    )?;
     config.set_dry_run(options.dry_run);
 
     for complaint in config.complaints() {
@@ -472,7 +480,7 @@ fn load_world(
 /// Read the map pack into the world, then the titles, and answer the pack and the maps this world
 /// can put a client in.
 ///
-/// The maps are the pack's (`config/World/Vanilla/maps/...`): what a world *is* is a file, and a row
+/// The maps are the pack's (`config/flavors/Vanilla/World/maps/...`): what a world *is* is a file, and a row
 /// is what a server writes (`docs/decisions/0014-the-world-content-is-a-pack.md`). Read once, held for
 /// the life of the program, and the log says which source answered. The databases are opened for
 /// the state they hold - instances, characters, items, travels - and not for content.
@@ -481,7 +489,9 @@ fn load_maps(
     log: &Log,
     world: &mut game::world::World,
 ) -> Result<(game::maps::pack::Pack, Vec<game::world::MapEntry>), String> {
-    let world_pack = read_string(config, "WorldPack", "config/World/Vanilla")?;
+    // The flavor's own content, so relative to the flavor's folder
+    // (`docs/decisions/0016-a-server-is-a-flavor.md`).
+    let world_pack = read_flavor_path(config, "WorldPack", "World")?;
     let pack = game::maps::pack::Pack::load(&world_pack, log)?;
     let maps = world.load_maps(&pack, &format!("the map pack at {world_pack}"), log)?;
     world.load_titles(std::path::Path::new(&world_pack).join("titles.json"), log)?;
@@ -531,27 +541,17 @@ fn read_content_files(config: &Config) -> Result<ContentFiles, String> {
     // The creation screen's own content: the bags and items a client is given, and what a new
     // character wears per campaign and profession. Reference: the same `SetInitialWorldSettings`
     // pass that loads a world's maps; a creation screen's equipment is content like any other.
-    let inventory = read_string(
-        config,
-        "InventoryFile",
-        "config/World/Vanilla/creation/inventory.json",
-    )?;
-    let equipment = read_string(
-        config,
-        "EquipmentFile",
-        "config/World/Vanilla/creation/equipment.json",
-    )?;
+    // All four are the flavor's own content, so each is relative to the flavor's folder.
+    let inventory = read_flavor_path(config, "InventoryFile", "World/creation/inventory.json")?;
+    let equipment = read_flavor_path(config, "EquipmentFile", "World/creation/equipment.json")?;
     // Which slot each kind of item is worn in. Content, like the two above: the number is the
     // client's own, and a wrong one draws a character without the piece it holds.
-    let worn_slots = read_string(
-        config,
-        "EquippedSlotsFile",
-        "config/World/Vanilla/creation/worn_slots.json",
-    )?;
+    let worn_slots =
+        read_flavor_path(config, "EquippedSlotsFile", "World/creation/worn_slots.json")?;
     // The chat command surface: the names a player may type and the operation each one runs. Content,
     // not a setting - the file is where the surface lives, and `CommandsFile` says where that file is
     // (`docs/decisions/0011-the-command-surface-is-content.md`).
-    let commands = read_string(config, "CommandsFile", "config/Server/commands.json")?;
+    let commands = read_flavor_path(config, "CommandsFile", "Server/commands.json")?;
     Ok(ContentFiles {
         inventory,
         equipment,
@@ -766,7 +766,7 @@ fn load_creation(
 /// Give the world its maps' doorways, which is what a step is judged against.
 ///
 /// `game/Maps/Portals.rs`, `ASURA/crates/asura-world/src/portals.rs`. They come from the pack's
-/// `portals.json` (`config/World/Vanilla/maps/**`), read once like the maps themselves; a map with no
+/// `portals.json` (`config/flavors/Vanilla/World/maps/**`), read once like the maps themselves; a map with no
 /// `portals.json` has no doorway, and every step in it crosses nothing.
 fn load_doorways(pack: &game::maps::pack::Pack, log: &Log, world: &mut game::world::World) {
     match pack.arches() {
@@ -1150,8 +1150,9 @@ struct Options {
     version: bool,
     /// `-d`, `--dry-run`. Apply the database updates and stop.
     dry_run: bool,
-    /// `-c`, `--config`. The file to read.
-    config: PathBuf,
+    /// `-c`, `--config`. The file to read; none reads this program's file in the flavor the
+    /// machine runs.
+    config: Option<PathBuf>,
     /// `--config-policy`. Overrides the severity policy for unknown config keys.
     config_policy: Option<String>,
 }
@@ -1162,10 +1163,7 @@ impl Options {
     /// Reference: `command_line_parser(...).allow_unregistered()`. An argument this program
     /// does not know is kept rather than refused, so it does not return an error for one.
     fn parse(args: &[String]) -> Result<Self, String> {
-        let mut options = Self {
-            config: PathBuf::from(DEFAULT_CONFIG),
-            ..Self::default()
-        };
+        let mut options = Self::default();
 
         let mut rest = args.iter();
         while let Some(arg) = rest.next() {
@@ -1174,9 +1172,9 @@ impl Options {
                 "-v" | "--version" => options.version = true,
                 "-d" | "--dry-run" => options.dry_run = true,
                 "-c" | "--config" => {
-                    options.config = PathBuf::from(
+                    options.config = Some(PathBuf::from(
                         rest.next().ok_or("--config needs a path")?,
-                    );
+                    ));
                 }
                 "--config-policy" => {
                     options.config_policy =
@@ -1184,7 +1182,7 @@ impl Options {
                 }
                 other => {
                     if let Some(value) = other.strip_prefix("--config=") {
-                        options.config = PathBuf::from(value);
+                        options.config = Some(PathBuf::from(value));
                     } else if let Some(value) = other.strip_prefix("--config-policy=") {
                         options.config_policy = Some(value.to_string());
                     }
@@ -1314,13 +1312,13 @@ mod tests {
 
     #[test]
     fn the_config_file_defaults_to_the_reference_name() {
-        assert_eq!(parse(&[]).config, PathBuf::from("worldserver.json"));
+        assert_eq!(parse(&[]).config, None);
     }
 
     #[test]
     fn a_config_path_is_read_in_both_forms() {
-        assert_eq!(parse(&["-c", "a.conf"]).config, PathBuf::from("a.conf"));
-        assert_eq!(parse(&["--config=b.conf"]).config, PathBuf::from("b.conf"));
+        assert_eq!(parse(&["-c", "a.conf"]).config, Some(PathBuf::from("a.conf")));
+        assert_eq!(parse(&["--config=b.conf"]).config, Some(PathBuf::from("b.conf")));
     }
 
     #[test]

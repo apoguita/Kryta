@@ -37,8 +37,8 @@ pub enum NotWorn {
 ///
 /// `held` is the character's own rows and `templates` the world's item table; the equipped bag and the
 /// worn-slot table are the caller's, because which bag a character wears things in and which slot a
-/// kind occupies both come from the content, not from the item (`config/World/Vanilla/creation/inventory.json`,
-/// `config/World/Vanilla/creation/worn_slots.json`).
+/// kind occupies both come from the content, not from the item (`config/flavors/Vanilla/World/creation/inventory.json`,
+/// `config/flavors/Vanilla/World/creation/worn_slots.json`).
 pub fn equip_place(
     held: &[HeldItem],
     templates: &[ItemDefinition],

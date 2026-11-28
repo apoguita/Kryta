@@ -32,6 +32,9 @@ pub struct ClientLink {
     /// The map files this server hosts for its clients (`docs/port/24-custom-maps.md`, "The
     /// delivery plan").
     maps: Vec<HostedMap>,
+    /// What the world pack states of its maps' rows in the client
+    /// (`docs/port/24-custom-maps.md`, "The map's row in the client").
+    map_rows: Vec<client_link::MapRow>,
     /// The server's flavor, its world pack's name; none when it runs no pack.
     flavor: Option<String>,
     /// How long the server waits before each part of a map file it sends
@@ -83,9 +86,68 @@ impl ClientLink {
             offsets,
             custom_tracks,
             maps: Vec::new(),
+            map_rows: Vec::new(),
             flavor: None,
             map_part_pause: std::time::Duration::ZERO,
         })
+    }
+
+    /// Take what a world pack states of its maps' rows in the client.
+    ///
+    /// The client holds a row for each map id - its name, kind, region and world-map place - in a
+    /// table compiled into it, which cannot be edited; a map's record states its row in
+    /// `client_row`, and `Kryta.dll` answers the client with it (owner, 2026-11-27: "that is why
+    /// we have the json config files"). A field name the row does not have stops the program, as
+    /// a broken file does (rule 7). Returns how many maps state a row.
+    pub fn host_map_rows(&mut self, rows: &[game::maps::pack::ClientRow]) -> Result<usize, String> {
+        self.map_rows.clear();
+        for row in rows {
+            let mut fields = Vec::with_capacity(row.fields.len());
+            for (name, value) in &row.fields {
+                let field = client_link::MAP_ROW_FIELDS
+                    .iter()
+                    .position(|known| known == name)
+                    .ok_or_else(|| {
+                        format!(
+                            "map {}: client_row.{name} is not a field of the client's map row; the fields are {}",
+                            row.map_id,
+                            client_link::MAP_ROW_FIELDS.join(", ")
+                        )
+                    })?;
+                fields.push((field, *value));
+            }
+            fields.sort_unstable();
+            // A name or a description of the pack's own stands in place of the id of one of the
+            // client's texts, so a row that states both is a broken file.
+            for (key, text, id) in [
+                ("name", &row.name, client_link::MAP_ROW_NAME_ID),
+                ("description", &row.description, client_link::MAP_ROW_DESCRIPTION_ID),
+            ] {
+                let Some(text) = text else { continue };
+                if text.is_empty() || text.contains('\0') {
+                    return Err(format!("map {}: client_row.{key} is empty", row.map_id));
+                }
+                if fields.iter().any(|(field, _)| *field == id) {
+                    return Err(format!(
+                        "map {}: client_row states both {key} and {}; a map has one or the other",
+                        row.map_id,
+                        client_link::MAP_ROW_FIELDS[id]
+                    ));
+                }
+            }
+            self.map_rows.push(client_link::MapRow {
+                map_id: row.map_id,
+                fields,
+                name: row.name.clone(),
+                description: row.description.clone(),
+            });
+        }
+        Ok(self.map_rows.len())
+    }
+
+    /// How many maps' rows are stated.
+    pub fn map_rows(&self) -> usize {
+        self.map_rows.len()
     }
 
     /// Send map files slowly: wait this long before each part. It stands in for a slow link or a
@@ -316,6 +378,17 @@ impl Session for ClientLinkSession {
                 format!("{client}: listed {} map file(s).", self.link.maps.len()),
             );
 
+            // 6. The rows the pack states for its maps, also sent when there are none: a client
+            // answers a map that is not here from its own table.
+            let rows = Message::MapRows { rows: self.link.map_rows.clone() };
+            if io.write_all(&rows.encode()).await.is_err() {
+                return;
+            }
+            self.say(
+                LogLevel::Info,
+                format!("{client}: stated the row of {} map(s).", self.link.map_rows.len()),
+            );
+
             // The connection stays open for as long as the client runs. A client asks for the map
             // files it does not hold; any other message is logged and the link goes on.
             loop {
@@ -388,7 +461,7 @@ mod tests {
     use super::*;
 
     fn shipped() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/Client")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/flavors/Vanilla/Client")
     }
 
     #[test]
@@ -439,6 +512,13 @@ mod tests {
         let track = serde_json::json!({ "id": 48, "name": "Hog Jumper" });
         let mut link = ClientLink::load(&shipped(), vec![track]).unwrap();
         link.host_maps("Vanilla", maps).unwrap();
+        let row = game::maps::pack::ClientRow {
+            map_id: 148,
+            fields: vec![("y".to_string(), 600), ("type".to_string(), 2), ("x".to_string(), 500)],
+            name: Some("A Name Of Its Own".to_string()),
+            description: None,
+        };
+        assert_eq!(link.host_map_rows(&[row]).unwrap(), 1);
         link.set_map_part_pause(pause);
         let link = Arc::new(link);
         let factory: shared::network::socket::SessionFactory = Arc::new(move || {
@@ -469,7 +549,7 @@ mod tests {
         // Every document in the folder is sent, in the order of their file names.
         let namespaces: Vec<&str> =
             documents.iter().filter_map(|document| document["namespace"].as_str()).collect();
-        assert_eq!(namespaces, ["files", "titles"]);
+        assert_eq!(namespaces, ["files", "maps", "text", "titles"]);
 
         let report = Message::Resolved {
             found: vec!["titles.rank_call".to_string()],
@@ -484,6 +564,18 @@ mod tests {
         assert_eq!(
             client_link::read(&mut stream).unwrap(),
             Message::Maps { flavor: Some("Vanilla".to_string()), files: Vec::new() }
+        );
+        // And the rows its pack states, here the kind and world-map place of map 148.
+        assert_eq!(
+            client_link::read(&mut stream).unwrap(),
+            Message::MapRows {
+                rows: vec![client_link::MapRow {
+                    map_id: 148,
+                    fields: vec![(3, 2), (16, 500), (17, 600)],
+                    name: Some("A Name Of Its Own".to_string()),
+                    description: None,
+                }],
+            }
         );
 
         drop(stream);
@@ -502,6 +594,7 @@ mod tests {
             panic!("the titles were not followed by the map list");
         };
         assert_eq!(flavor.as_deref(), Some("Vanilla"), "the server names its flavor");
+        assert!(matches!(client_link::read(stream).unwrap(), Message::MapRows { .. }));
         files
     }
 
@@ -670,6 +763,24 @@ mod tests {
             finished: None,
         };
         assert_eq!(link.host_maps("Vanilla", &[stripped_only]).unwrap(), 0);
+
+        // A row that names a field the client's row does not have stops the load as well.
+        let misnamed = game::maps::pack::ClientRow {
+            map_id: 148,
+            fields: vec![("colour".to_string(), 1)],
+            name: None,
+            description: None,
+        };
+        // And so does a row that states a name of its own beside a name id.
+        let twice = game::maps::pack::ClientRow {
+            map_id: 148,
+            fields: vec![("name_id".to_string(), 7)],
+            name: Some("Twice".to_string()),
+            description: None,
+        };
+        assert!(link.host_map_rows(&[twice]).err().unwrap().contains("both name and name_id"));
+        let error = link.host_map_rows(&[misnamed]).err().unwrap();
+        assert!(error.contains("client_row.colour"), "{error}");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! One item's definition: what it is, once, however many of it exist.
 //!
-//! The record lists a creation screen starts from (`config/World/Vanilla/creation/inventory.json`,
-//! `config/World/Vanilla/creation/equipment.json`) carry the whole item, because that is what the
+//! The record lists a creation screen starts from (`config/flavors/Vanilla/World/creation/inventory.json`,
+//! `config/flavors/Vanilla/World/creation/equipment.json`) carry the whole item, because that is what the
 //! client is told about it. A definition is the same fields without the per-instance ones - the
 //! runtime id, the bag and the slot. The world builds its definitions from that content at start-up
 //! and holds them in memory; nothing is written to a table (`AGENTS.md` rule 7,

@@ -1,7 +1,7 @@
 //! The server's maps inside the client: one detour on the client's archive open.
 //!
 //! The client opens every archive file through one function, `files.open_file_by_file_id_func`
-//! (`config/Client/offsets/files.json`); in build 39167 it is at `0x470DB0`, and its one caller of
+//! (`config/flavors/Vanilla/Client/offsets/files.json`); in build 39167 it is at `0x470DB0`, and its one caller of
 //! the archive's own lookup (`0x471590`) is itself. Its second function, the open by name
 //! (`files.file_hash_to_rec_obj_func`, `0x470FB0`), sends a name that is an encoded file id to the
 //! first, and opens any other name as a real file on disk; both give back the same kind of handle,
@@ -150,7 +150,7 @@ unsafe extern "C" fn open_detour(
 ///
 /// # Safety
 ///
-/// The addresses must be the functions `config/Client/offsets/files.json` describes, in this
+/// The addresses must be the functions `config/flavors/Vanilla/Client/offsets/files.json` describes, in this
 /// process.
 pub unsafe fn install(addresses: [u32; 2], served: &'static Served) -> Result<(), String> {
     let [open_archive, open_by_name] = addresses;

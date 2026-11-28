@@ -11,13 +11,13 @@
     {
       "name": "auth",
       "program": "authserver",
-      "args": ["-c", "authserver/authserver.json"],
+      "args": [],
       "port": 6112
     },
     {
       "name": "world",
       "program": "worldserver",
-      "args": ["-c", "worldserver/worldserver.json"],
+      "args": [],
       "port": 6113
     },
     {

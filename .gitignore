@@ -15,10 +15,11 @@
 __pycache__/
 *.pyc
 
-# The configurations a machine actually runs on carry its credentials. The `.dist` files are
-# committed; these are copied from them by the operator and never leave the machine.
-/authserver/authserver.json
-/worldserver/worldserver.json
+# What one machine alone knows - database logins, addresses, ports - is config/machine.json. Its
+# `.dist` is committed; the operator copies it and the copy never leaves the machine. A flavor's
+# own settings (config/flavors/<flavor>/) hold no secret and are committed
+# (docs/decisions/0016-a-server-is-a-flavor.md).
+/config/machine.json
 *.pid
 
 # The reference's client archive is never committed

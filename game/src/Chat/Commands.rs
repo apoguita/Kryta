@@ -1,7 +1,7 @@
 //! The command table: which names a player or an operator may type, and the operation each one runs.
 //!
 //! Reference: `docs/decisions/0011-the-command-surface-is-content.md`. The command surface is content,
-//! so the rows live in a file (`config/Server/commands.json`) and Rust keeps only the operations. GWPS's
+//! so the rows live in a file (`config/flavors/Vanilla/Server/commands.json`) and Rust keeps only the operations. GWPS's
 //! own dispatch is two functions - `GameSrv_TryHandleGmCommand` (`GmCommands.c`, `/tp`, `/teleport`,
 //! `/maps`) and `GameSrv_HandleChatCommand` (`GmChat.c`, `/stuck`) - and the working implementation
 //! names that surface once in a Rust table (`ASURA/crates/asura-world/src/chat.rs:126-163`). This is
@@ -351,12 +351,12 @@ mod tests {
     /// operation the registry has.
     #[test]
     fn the_shipped_table_binds_its_rows_to_registered_operations() {
-        let document = Document::read("../config/Server/commands.json").expect("the shipped file parses");
+        let document = Document::read("../config/flavors/Vanilla/Server/commands.json").expect("the shipped file parses");
         let records = document.records("commands").expect("commands is a record list");
         assert_eq!(records.len(), 6);
 
         let registry = registry();
-        let table = Table::load("../config/Server/commands.json", &Log::new(), &registry)
+        let table = Table::load("../config/flavors/Vanilla/Server/commands.json", &Log::new(), &registry)
             .expect("the shipped table reads");
         assert_eq!(table.len(), 6);
 

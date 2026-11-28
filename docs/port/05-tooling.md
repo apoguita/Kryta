@@ -14,7 +14,7 @@ borrowed, and the borrow is the thing that breaks when that tree moves.
 
 Two consequences:
 
-- An imported row set is data, not a link: `config/World/Vanilla/creation/inventory.json` and `config/World/Vanilla/creation/equipment.json` are this
+- An imported row set is data, not a link: `config/flavors/Vanilla/World/creation/inventory.json` and `config/flavors/Vanilla/World/creation/equipment.json` are this
   tree's files, and `tools/import-creation-inventory.py` is the record of where they came from. Running
   it again is provenance, not a dependency - nothing in `cargo test` or either program calls it.
 - A tool that must depend on something external says so at the top of its own file, and says what
@@ -23,7 +23,7 @@ Two consequences:
 No Rust code in this tree names ASURA's tree or `research/` at run time; the mentions are citations in
 comments. What remains: `tools/client/sniff-capture.py` still honours the `ASURA_PY32` variable beside
 `KRYTA_PY32`, `tools/import-creation-inventory.py` defaults to `C:\Users\Apo\Documents\GitHub\ASURA`
-(the provenance run), and the `doc` of most rows in `config/World/Vanilla/vanilla-title-wire.json` (37 of
+(the provenance run), and the `doc` of most rows in `config/flavors/Vanilla/World/vanilla-title-wire.json` (37 of
 45 tracks, 82 of 98 ranks) cites a capture under `research/`, which is gitignored and so is not in a
 clone.
 
@@ -38,7 +38,7 @@ clone.
 | `tools/client/keys.txt` | the key material the patch writes: `generator`, `prime`, `server_private`, `server_public` | - | ASURA `client-patcher/keys.txt`; the prime and `server_private` are the same values as `shared/src/Cryptography/Handshake.rs` |
 | `tools/client/hosts-redirect.py` | sends the client's seven baked-in names to this machine, or puts them back; recognises a block an earlier tool left | an elevated shell to write the hosts file | ASURA `client-patcher/hosts-redirect.py`, itself from GWPS `tools/hosts-gwps.ps1` |
 | `tools/adapt-protocol-table.py` | moved the ported message table into `game/src/Server/Protocol/Tables.rs`, once | nothing; it is the record of the move | ASURA `crates/asura-protocol/src/packets.rs` |
-| `tools/import-creation-inventory.py` | imported the bags, items and profession sets into `config/World/Vanilla/creation/inventory.json` and `equipment.json`, once | a checkout of ASURA to read | ASURA `state/inventory/seed.rs` and `default_equipment.rs` |
+| `tools/import-creation-inventory.py` | imported the bags, items and profession sets into `config/flavors/Vanilla/World/creation/inventory.json` and `equipment.json`, once | a checkout of ASURA to read | ASURA `state/inventory/seed.rs` and `default_equipment.rs` |
 | `tools/split-protocol-table.py` | split the merged protocol table into `game/src/Server/Protocol/Tables.rs` (682 world rows) and `authserver/src/Protocol/Tables.rs` (100 login rows), once | nothing; it is the record of the move | this tree's own move |
 | `tools/extract-protocol-types.py` | moved the table's types into `shared/src/Packets/Types.rs`, once, after the split | nothing; it is the record of the move | this tree's own move |
 | `tools/repoint-table-names.py` | points each split table's name module at `shared::packets::types`; idempotent | nothing | this tree's own move |
@@ -48,7 +48,7 @@ clone.
 | `tools/capture/read.py` | reads a capture back in the layer it declares - `--describe`, `--header`, `--limit`, `--assume-layer`, `--self-test` - and refuses a file that states no layer | nothing; it is Python 3 and standard library only | ASURA `tools/capture-read.py` |
 | `tools/capture/diff.py` | compares two captures message by message: agreement count, then the first divergences with both payloads; refuses a struct-layer file against a wire-layer one, because the two widen fields differently | nothing; standard library only | new; the comparison workflow `0012-chat-text-is-sent.md` used by hand |
 | `tools/capture/capture_file.py` | the one implementation of the layer rules both of the above use | nothing | ASURA `tools/capture-read.py`'s layer half |
-| `worldserver --bin kryta-cli` | the standalone operator client: `list` asks the world which operations it registers, `<operation> [--arg name=value]...` calls one, `help` prints the usage, and `init-credential <file>` creates and restricts the service credential. The port and credential come from `Control.Port`/`Control.CredentialFile` in `worldserver/worldserver.json` (another file with `-c`), or from `--port` and `--credential-file`, so no plumbing is typed per call | a running world with `Control.Enable` and a credential file | new; the client ASURA's supervisor verbs are the precedent for |
+| `worldserver --bin kryta-cli` | the standalone operator client: `list` asks the world which operations it registers, `<operation> [--arg name=value]...` calls one, `help` prints the usage, and `init-credential <file>` creates and restricts the service credential. The port and credential come from `Control.Port`/`Control.CredentialFile` in the world program's settings - its file in the flavor `config/flavor.json` names, with `config/machine.json` over it (another file with `-c`), or from `--port` and `--credential-file`, so no plumbing is typed per call | a running world with `Control.Enable` and a credential file | new; the client ASURA's supervisor verbs are the precedent for |
 
 ## Capturing the server
 
@@ -109,7 +109,7 @@ The clients' own codes were checked too: `kryta-supervisor status` answers 1 whe
 
 ## One command surface, one registry
 
-`config/Server/commands.json` is the whole command surface: every row names a registered operation and the values
+`config/flavors/Vanilla/Server/commands.json` is the whole command surface: every row names a registered operation and the values
 it takes, and there is no enum of commands in Rust and no match on one. `game/src/Chat/Operations.rs`
 holds the registry, `chat.transfer`, `chat.maps` and `chat.stuck` are registrations like `world.status`,
 and a row whose operation the world does not register - or whose parameter count the operation does not
@@ -243,7 +243,8 @@ addresses the panel had before - `/accounts`, `/players/{uuid}`, `/status`, `/st
 | `#/players`, `#/players/{uuid}` | every character with the account that owns it and a data check; one character's identity, position, item rows and unlocked maps (R12); create, rename, level (1 to 20, R48), remove | done - a character is created from the creation record lists and the pack's campaign spawn data, by the panel's own copy of the creation; removal deletes the row with its own items and unlocks |
 | `#/content` | the world pack's maps with their entry points and arrivals (R13/R21), the creation items and sets, the title and metric sheets, the copies the world has open, and the world list | done - read only: content is the pack (`docs/decisions/0014-the-world-content-is-a-pack.md`), read through the same reader the world uses |
 | `#/navigation` | the extracted path-graph cache: inspection, and one selected map dumped in from `MapArchiveFile` | done - the cache is an operator asset, not state the running world owns |
-| `#/settings` | each program's own JSON, key by key, as the file states it | done - read only, passwords masked by the reader; `WorldConfigFile` and `AuthConfigFile` in `manage.json` say where the files are |
+| `#/flavors` | the flavors this machine holds, the one it runs, and making another as a copy | done - `ConfigFolder` in `manage.json` says where `flavor.json` and `flavors/` are; a chosen flavor runs from the next restart of the stack |
+| `#/settings` | the two programs' settings in the running flavor with the machine's values over them, key by key, each with the file that states it | done - a value is changed in the file that states it (the flavor's or `config/machine.json`); passwords are masked by the reader and are changed in the file |
 | `#/schema` | each database's own record of what its updater has applied, against the files on disk | done - read only; `changed` is the one to act on before a server refuses to start |
 | `#/recordings` | the capture command to run by hand with its instructions, what a capture needs, and the library with its index | done - the panel cannot run the client capture, which needs an elevated shell |
 
@@ -266,7 +267,7 @@ all eight registrations with their help and their values (`ListTargets`, `chat.m
 `kryta-cli world.status` answered `World 2: 265 map(s) loaded.`; `kryta-cli chat.stuck` refused with
 `needs a player session ... (refused)`; and `kryta-cli world.status --arg x=y` refused with
 `argument "x" is not one this operation takes (invalid_arguments)`. All four read the port and the
-credential from `worldserver/worldserver.json`, and the client names no command of its own - `list` asks
+credential from the world program's settings (its file in the flavor `config/flavor.json` names, with `config/machine.json` over it), and the client names no command of its own - `list` asks
 the world for `world.operations`, whose answer is the registry itself.
 The endpoint's contract was then exercised live, one raw request per case: `world.status` answered
 `{"ok":true,"result":"World 2: 265 map(s) loaded."}`; an unregistered name answered 404 with
@@ -300,7 +301,7 @@ What the DLL does, and what it needs:
 - When the client starts, the DLL connects to the login program's client link - the `-portal` host,
   port 6650 (`ClientLink.Bind` in `authserver.json`). A file `Kryta.json` beside the client,
   `{ "link": "host:port" }`, names another address.
-- The server sends it the offsets under `config/Client/`; it finds the client's title functions by
+- The server sends it the offsets under `config/flavors/Vanilla/Client/`; it finds the client's title functions by
   them, installs its hooks, and is sent the custom title text.
 - **The stack must be running before the client is started.** A client that cannot reach the link,
   or whose build the offsets do not fit, shows a message that says why and ends.
@@ -308,7 +309,7 @@ What the DLL does, and what it needs:
   few times a title hook answers the client, and any fault inside the client with where it happened.
 
 Edit the world pack's `titles.json` and restart the stack to change the title text. After a client
-update, see `config/Client/README.md`: the offsets are corrected on the server and nothing is
+update, see `config/flavors/Vanilla/Client/README.md`: the offsets are corrected on the server and nothing is
 rebuilt or redistributed.
 
 `--retire-title-probes` archives the old title test executables beside the client.

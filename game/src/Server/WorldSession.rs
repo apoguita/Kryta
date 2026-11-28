@@ -454,7 +454,7 @@ impl WorldSession {
         crate::creation::bags(self.world.creation()).to_vec()
     }
 
-    /// Which slot each kind of item is worn in, from the content (`config/World/Vanilla/creation/worn_slots.json`). Empty
+    /// Which slot each kind of item is worn in, from the content (`config/flavors/Vanilla/World/creation/worn_slots.json`). Empty
     /// when the world read no such file, and then nothing is worn: the caller refuses rather than
     /// choosing a slot.
     pub(crate) fn worn(&self) -> &[crate::creation::WornSlot] {
@@ -1513,7 +1513,7 @@ impl WorldSession {
         // wears nothing in is zero.
         // The nine-dword list is the client's wire order, which is not the equipped bag's own order:
         // a piece's cell in the bag and its position here are two numbers, and the table names both
-        // (`config/World/Vanilla/creation/worn_slots.json`).
+        // (`config/flavors/Vanilla/World/creation/worn_slots.json`).
         let mut equipped = [0u32; 9];
         if let Some(bag) = crate::creation::equipped_bag(self.world.creation()) {
             for item in inventory.items_in(bag.id) {
@@ -1972,9 +1972,9 @@ mod tests {
         // inventory model to draw.
         let (bags, items, sets) = world
             .load_creation(
-                    "../config/World/Vanilla/creation/inventory.json",
-                    "../config/World/Vanilla/creation/equipment.json",
-                    Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
+                    "../config/flavors/Vanilla/World/creation/inventory.json",
+                    "../config/flavors/Vanilla/World/creation/equipment.json",
+                    Some(std::path::Path::new("../config/flavors/Vanilla/World/creation/worn_slots.json")),
                     &Log::new(),
                 )
             .expect("the creation data");
@@ -2552,7 +2552,7 @@ Logger.root = 6,Console
         .expect("the test can speak");
         let mut configured = world();
         let titles_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../config/World/Vanilla/titles.json");
+            .join("../config/flavors/Vanilla/World/titles.json");
         let catalog: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&titles_path).unwrap()).unwrap();
         let mut expected_ids: Vec<_> = catalog["vanilla_ids"].as_array().unwrap().iter()
@@ -2946,7 +2946,7 @@ Logger.root = 6,Console
         let log = Log::new();
         let mut configured = world();
         let catalog = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../config/World/Vanilla/titles.json");
+            .join("../config/flavors/Vanilla/World/titles.json");
         configured.load_titles(catalog, &log).unwrap();
         let world = Arc::new(configured);
         let master = [0x5Au8; MASTER_SECRET_LEN];
@@ -3051,7 +3051,7 @@ Logger.root = 6,Console
         let _serial_auth = database::updater::apply::test_lock("auth");
         let _serial_characters = database::updater::apply::test_lock("characters");
         let log = Log::new();
-        let config = Config::load_json("../worldserver/worldserver.json", false, Policy::default())
+        let config = Config::load_json("../config/flavors/Vanilla/worldserver.json", false, Policy::default())
             .expect("the world program's own configuration");
 
         let settings = read_settings(&config, DatabaseKind::Login).expect("the login settings");
@@ -3449,7 +3449,7 @@ Logger.root = 6,Console
         let _serial_auth = database::updater::apply::test_lock("auth");
         let _serial_characters = database::updater::apply::test_lock("characters");
         let log = Log::new();
-        let config = Config::load_json("../worldserver/worldserver.json", false, Policy::default())
+        let config = Config::load_json("../config/flavors/Vanilla/worldserver.json", false, Policy::default())
             .expect("the world program's own configuration");
 
         let settings = read_settings(&config, DatabaseKind::Login).expect("the login settings");
@@ -3691,7 +3691,7 @@ Logger.root = 6,Console
             Policy::default(),
         );
         log.initialize(&speaking).expect("the test can speak");
-        let config = Config::load_json("../worldserver/worldserver.json", false, Policy::default())
+        let config = Config::load_json("../config/flavors/Vanilla/worldserver.json", false, Policy::default())
             .expect("the world program's own configuration");
         let settings =
             read_settings(&config, DatabaseKind::Character).expect("the character settings");

@@ -14,7 +14,8 @@
 //! ```
 //!
 //! The port and the credential come from the world program's own settings - `Control.Port` and
-//! `Control.CredentialFile` in `worldserver/worldserver.json` - so an operator types no plumbing.
+//! `Control.CredentialFile`, read from the world program's file in the flavor this machine runs with
+//! the machine's own values laid over it (`config/machine.json`) - so an operator types no plumbing.
 //! `--config`, `--port` and `--credential-file` override each of them.
 
 use std::collections::BTreeMap;
@@ -25,8 +26,19 @@ use std::time::Duration;
 
 use common::configuration::{Config, Policy};
 
-/// Where the world program's own settings are, unless told otherwise.
-const DEFAULT_CONFIG: &str = "worldserver/worldserver.json";
+/// Where the world program's own settings are when `config/flavor.json` cannot say: the base
+/// flavor's file.
+const DEFAULT_CONFIG: &str = "config/flavors/Vanilla/worldserver.json";
+
+/// Where the world program's own settings are, unless told otherwise: its file in the flavor this
+/// machine runs (`docs/decisions/0016-a-server-is-a-flavor.md`).
+fn default_config() -> std::path::PathBuf {
+    common::configuration::Flavor::active(std::path::Path::new(
+        common::configuration::startup::CONFIG_FOLDER,
+    ))
+    .map(|flavor| flavor.settings_file("worldserver"))
+    .unwrap_or_else(|_| std::path::PathBuf::from(DEFAULT_CONFIG))
+}
 
 /// What one command line asked for.
 #[derive(Debug, PartialEq, Eq)]
@@ -67,7 +79,7 @@ fn usage() -> String {
         "  kryta-cli init-credential <file>                create the service credential, restricted",
         "",
         "options for a call:",
-        "  --config <file>            the world program's settings (default: worldserver/worldserver.json)",
+        "  --config <file>            the world program's settings (default: its file in the flavor config/flavor.json names)",
         "  --port <n>                the control port, instead of Control.Port in that file",
         "  --credential-file <file>  the service credential, instead of Control.CredentialFile",
         "",
@@ -79,7 +91,7 @@ fn usage() -> String {
 
 /// Read the command line into what it asked for.
 fn parse(args: &[String]) -> Result<Mode, String> {
-    let mut config = std::path::PathBuf::from(DEFAULT_CONFIG);
+    let mut config = default_config();
     let mut port = None;
     let mut credential_file = None;
     let mut words: Vec<String> = Vec::new();
@@ -230,7 +242,7 @@ fn run() -> Result<(), String> {
         }
         Mode::InitCredential(path) => init_credential(&path),
         Mode::List => {
-            let (port, credential) = target(std::path::Path::new(DEFAULT_CONFIG), None, None)?;
+            let (port, credential) = target(&default_config(), None, None)?;
             let answer = call(port, &credential, "world.operations", &BTreeMap::new())?;
             println!("{answer}");
             Ok(())
@@ -307,7 +319,7 @@ mod tests {
             Mode::Call(call) => {
                 assert_eq!(call.operation, "world.status");
                 assert_eq!(call.arguments.get("destination").map(String::as_str), Some("ascalon"));
-                assert_eq!(call.config, std::path::PathBuf::from(DEFAULT_CONFIG));
+                assert_eq!(call.config, default_config());
                 assert_eq!(call.port, None);
             }
             other => panic!("a call, not {other:?}"),

@@ -111,7 +111,7 @@ impl WorldSession {
                 );
             }
             '/' => {
-                // The command surface is a file (`config/Server/commands.json`): the names, whether a name takes
+                // The command surface is a file (`config/flavors/Vanilla/Server/commands.json`): the names, whether a name takes
                 // an argument, and the operation it runs are data, and Rust keeps the operations
                 // (`docs/decisions/0011-the-command-surface-is-content.md`). GWPS's two
                 // dispatch points are that file's rows - `GmCommands.c` for `/tp`, `/teleport` and

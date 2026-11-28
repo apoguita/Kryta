@@ -1,0 +1,8 @@
+{
+  "note": "flavor.json - the flavor this machine runs (docs/decisions/0016-a-server-is-a-flavor.md). A flavor is one server's build and setup, and everything it defines is the folder config/flavors/<flavor>/. The programs read their settings from that folder when they are started without a settings file of their own. To run another flavor, change the name and restart.",
+
+  "flavor": {
+    "value": "Vanilla",
+    "doc": "The name of a folder under config/flavors/: 1 to 64 letters, digits, '_' and '-'. The server tells its clients this name, and a client keeps this flavor's maps in a folder of the same name."
+  }
+}

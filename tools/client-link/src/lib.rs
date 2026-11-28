@@ -39,7 +39,78 @@
 use serde_json::{Value, json};
 
 /// The version of this conversation. A server refuses a client that names another.
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 5;
+
+/// The fields of the client's own row for one map, in the order the row holds them, four bytes
+/// each: 124 bytes. The names are Py4GW Reforged Native's (`include/GW/context/map.h:87-118`,
+/// `AreaInfo`, at `82e4746`); the row's size is the `imul eax, esi, 0x7c` of the client's
+/// accessor, measured in build 39167 at `0x5A6793` (`docs/port/24-custom-maps.md`).
+pub const MAP_ROW_FIELDS: [&str; 31] = [
+    "campaign",
+    "continent",
+    "region",
+    "type",
+    "flags",
+    "thumbnail_id",
+    "min_party_size",
+    "max_party_size",
+    "min_player_size",
+    "max_player_size",
+    "controlled_outpost_id",
+    "fraction_mission",
+    "min_level",
+    "max_level",
+    "needed_pq",
+    "mission_maps_to",
+    "x",
+    "y",
+    "icon_start_x",
+    "icon_start_y",
+    "icon_end_x",
+    "icon_end_y",
+    "icon_start_x_dupe",
+    "icon_start_y_dupe",
+    "icon_end_x_dupe",
+    "icon_end_y_dupe",
+    "file_id",
+    "mission_chronology",
+    "ha_map_chronology",
+    "name_id",
+    "description_id",
+];
+
+/// What the server states of one map's row in the client: the fields it names, each with its
+/// value. A field it does not name keeps the value the client's own row has.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MapRow {
+    /// The map.
+    pub map_id: u32,
+    /// The fields stated, each as its place in [`MAP_ROW_FIELDS`] and its value.
+    pub fields: Vec<(usize, u32)>,
+    /// The map's name as text of the server's own, in place of a `name_id` of the client's text
+    /// files. The client is given it where it would show the text of that id.
+    pub name: Option<String>,
+    /// The map's description as text of the server's own, in place of a `description_id`.
+    pub description: Option<String>,
+}
+
+/// The place of `name_id` in [`MAP_ROW_FIELDS`].
+pub const MAP_ROW_NAME_ID: usize = 29;
+/// The place of `description_id` in [`MAP_ROW_FIELDS`].
+pub const MAP_ROW_DESCRIPTION_ID: usize = 30;
+
+impl MapRow {
+    /// The row a client answers with: `own`, the client's row for the map, with the stated fields
+    /// written over it.
+    pub fn over(&self, mut own: [u32; 31]) -> [u32; 31] {
+        for (field, value) in &self.fields {
+            if let Some(slot) = own.get_mut(*field) {
+                *slot = *value;
+            }
+        }
+        own
+    }
+}
 
 /// The most bytes of a map file one [`Message::MapPart`] carries. As hexadecimal text it is twice
 /// that, which with the rest of the message stays under [`MAX_FRAME`].
@@ -146,6 +217,13 @@ pub enum Message {
         /// The files.
         files: Vec<MapFile>,
     },
+    /// What the server states of its maps' rows in the client: the name, kind, region and
+    /// world-map place the client itself holds for a map id. Sent after the map list. A map that
+    /// is not here is answered from the client's own table.
+    MapRows {
+        /// One entry for each map whose record states a row.
+        rows: Vec<MapRow>,
+    },
     /// The client does not hold this file of the list, and asks for it.
     MapWanted {
         /// The file id.
@@ -234,6 +312,29 @@ impl Message {
                     }))
                     .collect::<Vec<_>>(),
             }),
+            Self::MapRows { rows } => json!({
+                "type": "map_rows",
+                "rows": rows
+                    .iter()
+                    .map(|row| {
+                        let fields: serde_json::Map<String, Value> = row
+                            .fields
+                            .iter()
+                            .filter_map(|(field, value)| {
+                                Some((MAP_ROW_FIELDS.get(*field)?.to_string(), json!(value)))
+                            })
+                            .collect();
+                        let mut stated = json!({ "map_id": row.map_id, "fields": fields });
+                        if let Some(name) = &row.name {
+                            stated["name"] = json!(name);
+                        }
+                        if let Some(description) = &row.description {
+                            stated["description"] = json!(description);
+                        }
+                        stated
+                    })
+                    .collect::<Vec<_>>(),
+            }),
             Self::MapWanted { file_id, sha256 } => {
                 json!({ "type": "map_wanted", "file_id": file_id, "sha256": sha256 })
             }
@@ -299,6 +400,48 @@ impl Message {
                     return Err(malformed("map files are listed without a flavor"));
                 }
                 Ok(Self::Maps { flavor, files })
+            }
+            "map_rows" => {
+                let rows = array(value, "rows")?
+                    .iter()
+                    .map(|row| {
+                        let stated = row
+                            .get("fields")
+                            .and_then(Value::as_object)
+                            .ok_or_else(|| malformed("'fields' is missing or is not an object"))?;
+                        // In the row's own order, whatever order the object came in.
+                        let mut fields = Vec::with_capacity(stated.len());
+                        for (name, value) in stated {
+                            let field = MAP_ROW_FIELDS
+                                .iter()
+                                .position(|known| known == name)
+                                .ok_or_else(|| malformed(format!("'{name}' is not a field of a map's row")))?;
+                            let value = value
+                                .as_u64()
+                                .and_then(|number| u32::try_from(number).ok())
+                                .ok_or_else(|| malformed(format!("'{name}' is not a 32-bit number")))?;
+                            fields.push((field, value));
+                        }
+                        fields.sort_unstable();
+                        // A text of the server's own stands in place of the id of one of the
+                        // client's, so a row states one or the other.
+                        let own_text = |key: &str, id: usize| match row.get(key) {
+                            None | Some(Value::Null) => Ok(None),
+                            Some(Value::String(text)) if text.is_empty() || text.contains('\0') => {
+                                Err(malformed(format!("'{key}' is empty or holds a zero")))
+                            }
+                            Some(Value::String(_)) if fields.iter().any(|(field, _)| *field == id) => {
+                                Err(malformed(format!("'{key}' is stated beside '{}'", MAP_ROW_FIELDS[id])))
+                            }
+                            Some(Value::String(text)) => Ok(Some(text.clone())),
+                            Some(_) => Err(malformed(format!("'{key}' is not text"))),
+                        };
+                        let name = own_text("name", MAP_ROW_NAME_ID)?;
+                        let description = own_text("description", MAP_ROW_DESCRIPTION_ID)?;
+                        Ok(MapRow { map_id: number(row, "map_id")?, fields, name, description })
+                    })
+                    .collect::<Result<_, LinkError>>()?;
+                Ok(Self::MapRows { rows })
             }
             "map_wanted" => Ok(Self::MapWanted {
                 file_id: number(value, "file_id")?,
@@ -470,6 +613,18 @@ mod tests {
                     sha256: sha256_hex(b"abc"),
                 }],
             },
+            Message::MapRows { rows: Vec::new() },
+            Message::MapRows {
+                rows: vec![
+                    MapRow { map_id: 148, fields: vec![(2, 7), (16, 0x426), (29, 0x28EE)], ..MapRow::default() },
+                    MapRow {
+                        map_id: 10_000,
+                        fields: vec![(3, 10)],
+                        name: Some("Kryta Test Vale".to_string()),
+                        description: Some("A vale [made] outside the game.".to_string()),
+                    },
+                ],
+            },
             Message::MapWanted {
                 file_id: 0x5F100,
                 sha256: sha256_hex(b"abc"),
@@ -515,6 +670,45 @@ mod tests {
             "files": [{ "file_id": 1, "size": 3, "sha256": sha256_hex(b"abc") }],
         });
         assert!(Message::from_json(&nameless).is_err());
+    }
+
+    /// A map's row names its fields, a field the row does not have is refused, and the stated
+    /// fields are written over the client's own row and nothing else is.
+    #[test]
+    fn a_map_row_states_named_fields_over_the_clients_own() {
+        assert_eq!(MAP_ROW_FIELDS.len() * 4, 124, "the row is 124 bytes");
+        assert_eq!(MAP_ROW_FIELDS[16], "x");
+        assert_eq!(MAP_ROW_FIELDS[29], "name_id");
+
+        let stated = json!({
+            "type": "map_rows",
+            "rows": [{ "map_id": 148, "fields": { "y": 5, "region": 7, "x": 9 } }],
+        });
+        let Message::MapRows { rows } = Message::from_json(&stated).unwrap() else {
+            panic!("not map rows");
+        };
+        assert_eq!(
+            rows,
+            [MapRow { map_id: 148, fields: vec![(2, 7), (16, 9), (17, 5)], ..MapRow::default() }]
+        );
+
+        let mut own = [0u32; 31];
+        own[2] = 1;
+        own[3] = 10;
+        let answered = rows[0].over(own);
+        assert_eq!((answered[2], answered[3], answered[16], answered[17]), (7, 10, 9, 5));
+
+        for bad in [
+            json!({ "type": "map_rows", "rows": [{ "map_id": 1, "fields": { "colour": 1 } }] }),
+            json!({ "type": "map_rows", "rows": [{ "map_id": 1, "fields": { "x": -1 } }] }),
+            json!({ "type": "map_rows", "rows": [{ "map_id": 1 }] }),
+            // A name of the server's own stands in place of a name id, never beside one.
+            json!({ "type": "map_rows", "rows": [{ "map_id": 1, "fields": { "name_id": 7 }, "name": "a" }] }),
+            json!({ "type": "map_rows", "rows": [{ "map_id": 1, "fields": {}, "name": "" }] }),
+            json!({ "type": "map_rows", "rows": [{ "map_id": 1, "fields": {}, "description": 3 }] }),
+        ] {
+            assert!(Message::from_json(&bad).is_err(), "{bad}");
+        }
     }
 
     /// A part as large as a part may be still fits a frame, and a checksum that is not one is
